@@ -80,6 +80,7 @@ h1 { font-size: 28px; margin: 0 0 4px; }
 h2 { font-size: 19px; margin: 36px 0 12px; }
 h3 { font-size: 15px; margin: 20px 0 8px; }
 p { margin: 6px 0; }
+a { color: var(--accent); }
 .lede { color: var(--muted); margin-bottom: 20px; }
 code, pre, input { font: 13px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
 code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
