@@ -2,11 +2,11 @@
 // decides IDs, serials, MACs, client identities and every time-varying value.
 
 export const MODELS = {
-  MX250: { productType: 'appliance', firmware: 'wired-18-211-2' },
-  MX85: { productType: 'appliance', firmware: 'wired-18-211-2' },
-  MX75: { productType: 'appliance', firmware: 'wired-18-211-2' },
-  MX68: { productType: 'appliance', firmware: 'wired-18-211-2' },
-  MX67: { productType: 'appliance', firmware: 'wired-18-211-2' },
+  MX250: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 4000 },
+  MX85: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 1000 },
+  MX75: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 1000 },
+  MX68: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 600 },
+  MX67: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 450 },
   'MS390-48UX': { productType: 'switch', firmware: 'switch-17-1-4', ports: 48, uplinks: 8, accessSpeed: '1 Gbps', uplinkSpeed: '10 Gbps', psus: 2 },
   'MS250-48FP': { productType: 'switch', firmware: 'switch-17-1-4', ports: 48, uplinks: 4, accessSpeed: '1 Gbps', uplinkSpeed: '10 Gbps' },
   'MS130-48P': { productType: 'switch', firmware: 'switch-17-1-4', ports: 48, uplinks: 4, accessSpeed: '1 Gbps', uplinkSpeed: '10 Gbps' },

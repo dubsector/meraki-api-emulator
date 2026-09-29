@@ -77,6 +77,9 @@ export function networkEventsOnDay(net, day) {
   }
 
   list.sort((x, y) => x.t - y.t);
+  // Whole, strictly increasing microseconds so page cursors are exact.
+  let prev = -Infinity;
+  for (const e of list) prev = e.us = Math.max(Math.floor(e.t * 1e6), prev + 1);
   if (cache.size > 1500) cache.clear();
   cache.set(key, list);
   return list;

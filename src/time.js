@@ -69,3 +69,18 @@ export function parseTime(v) {
   const ms = Date.parse(v);
   return Number.isNaN(ms) ? NaN : ms / 1000;
 }
+
+// Integer microseconds, used for exact event cursors.
+export function isoUs(us) {
+  const s = Math.floor(us / 1e6);
+  return iso(s).slice(0, 19) + '.' + String(us - s * 1e6).padStart(6, '0') + 'Z';
+}
+
+// Parses an event cursor (ISO with up to 6 fractional digits, or epoch seconds) to microseconds.
+export function parseUs(v) {
+  if (/^\d+(\.\d+)?$/.test(v)) return Math.round(Number(v) * 1e6);
+  const m = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d:?\d\d)?$/.exec(v);
+  if (!m) return NaN;
+  const ms = Date.parse(m[1] + (m[3] || 'Z'));
+  return Number.isNaN(ms) ? NaN : ms * 1000 + Number((m[2] || '').padEnd(6, '0').slice(0, 6));
+}
