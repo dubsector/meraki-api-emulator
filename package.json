@@ -1,0 +1,32 @@
+{
+  "name": "meraki-api-sandbox",
+  "version": "0.1.0",
+  "description": "A local fake of the Cisco Meraki Dashboard API with a simulated organization, live-looking traffic, events and outages.",
+  "type": "module",
+  "bin": {
+    "meraki-api-sandbox": "bin/meraki-api-sandbox.js"
+  },
+  "main": "src/server.js",
+  "exports": {
+    ".": "./src/server.js"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "start": "node bin/meraki-api-sandbox.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "meraki",
+    "mock",
+    "sandbox",
+    "api",
+    "testing"
+  ],
+  "license": "MIT"
+}
