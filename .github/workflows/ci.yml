@@ -31,10 +31,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: docker build -t meraki-api-sandbox .
+      - run: docker build -t meraki-api-emulator .
       - name: Smoke test
         run: |
-          docker run -d --name sandbox -p 8765:8765 meraki-api-sandbox
+          docker run -d --name emulator -p 8765:8765 meraki-api-emulator
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8765/healthz && break; sleep 1; done
           curl -fsS -H 'X-Cisco-Meraki-API-Key: ci' http://127.0.0.1:8765/api/v1/organizations
-          docker logs sandbox
+          docker logs emulator

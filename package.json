@@ -1,10 +1,10 @@
 {
-  "name": "meraki-api-sandbox",
+  "name": "meraki-api-emulator",
   "version": "0.1.0",
   "description": "A local stand-in for the Cisco Meraki Dashboard API v1 with simulated networks, devices and traffic",
   "type": "module",
   "bin": {
-    "meraki-api-sandbox": "bin/meraki-api-sandbox.js"
+    "meraki-api-emulator": "bin/meraki-api-emulator.js"
   },
   "main": "src/server.js",
   "exports": {
@@ -17,7 +17,7 @@
     "README.md"
   ],
   "scripts": {
-    "start": "node bin/meraki-api-sandbox.js",
+    "start": "node bin/meraki-api-emulator.js",
     "test": "node --test \"test/**/*.test.js\""
   },
   "engines": {
@@ -27,7 +27,7 @@
     "meraki",
     "dashboard-api",
     "mock",
-    "sandbox",
+    "emulator",
     "simulator"
   ],
   "license": "MIT"

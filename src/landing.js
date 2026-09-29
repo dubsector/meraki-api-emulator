@@ -1,4 +1,4 @@
-// The page served at `/`: what the sandbox contains and a small request explorer.
+// The page served at `/`: what the emulator contains and a small request explorer.
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
@@ -61,7 +61,7 @@ export function landingPage(world, routes, { apiKey }) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Meraki API Sandbox</title>
+<title>Meraki API Emulator</title>
 <style>
 :root {
   --bg: #f7f8fa; --panel: #ffffff; --text: #1d2330; --muted: #5d6677; --border: #dde1e8;
@@ -112,7 +112,7 @@ button.send { padding: 8px 16px; border: 0; border-radius: 6px; background: var(
 </head>
 <body>
 <main>
-  <h1>Meraki API Sandbox</h1>
+  <h1>Meraki API Emulator</h1>
   <p class="lede">A local stand-in for the Cisco Meraki Dashboard API v1, serving simulated organizations, networks, devices and client traffic. Not affiliated with or endorsed by Cisco.</p>
 
   <div class="panel">
@@ -130,7 +130,7 @@ button.send { padding: 8px 16px; border: 0; border-radius: 6px; background: var(
     <div class="panel explorer">
       <form id="try">
         <label for="key">API key</label>
-        <input id="key" autocomplete="off" spellcheck="false" value="${apiKey ? '' : 'sandbox'}" placeholder="API key">
+        <input id="key" autocomplete="off" spellcheck="false" value="${apiKey ? '' : 'demo-key'}" placeholder="API key">
         <label for="path">Path</label>
         <div class="row">
           <input id="path" spellcheck="false" value="/organizations">
@@ -146,7 +146,7 @@ button.send { padding: 8px 16px; border: 0; border-radius: 6px; background: var(
 <script>
 const base = location.origin + '/api/v1';
 document.getElementById('base').textContent = base;
-document.getElementById('curl').textContent = "curl -H 'X-Cisco-Meraki-API-Key: sandbox' " + base + '/organizations';
+document.getElementById('curl').textContent = "curl -H 'X-Cisco-Meraki-API-Key: demo-key' " + base + '/organizations';
 const form = document.getElementById('try');
 const pathEl = document.getElementById('path');
 const statusEl = document.getElementById('status');

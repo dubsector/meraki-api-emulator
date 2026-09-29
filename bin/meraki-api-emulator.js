@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { API_PREFIX, createSandbox } from '../src/server.js';
+import { API_PREFIX, createEmulator } from '../src/server.js';
 
-const HELP = `Usage: meraki-api-sandbox [options]
+const HELP = `Usage: meraki-api-emulator [options]
 
 Serves a simulated Meraki Dashboard API v1 on ${API_PREFIX}.
 
@@ -21,10 +21,10 @@ Options:
   -h, --help              Show this help
   -v, --version           Show the version
 
-Each option can also be set with MERAKI_SANDBOX_<NAME>, for example
-MERAKI_SANDBOX_API_KEY or MERAKI_SANDBOX_FAULT_RATE.`;
+Each option can also be set with MERAKI_EMULATOR_<NAME>, for example
+MERAKI_EMULATOR_API_KEY or MERAKI_EMULATOR_FAULT_RATE.`;
 
-const env = (name) => process.env[`MERAKI_SANDBOX_${name}`];
+const env = (name) => process.env[`MERAKI_EMULATOR_${name}`];
 
 let values;
 try {
@@ -62,10 +62,10 @@ const quiet = values.quiet || env('QUIET') === '1' || env('QUIET') === 'true';
 const port = Number(values.port ?? process.env.PORT ?? env('PORT') ?? 8765);
 const host = values.host ?? process.env.HOST ?? env('HOST') ?? '127.0.0.1';
 
-let sandbox;
+let emulator;
 try {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('port must be between 0 and 65535');
-  sandbox = createSandbox({
+  emulator = createEmulator({
     seed: values.seed ?? env('SEED'),
     apiKey: values['api-key'] ?? env('API_KEY'),
     latency: values.latency ?? env('LATENCY'),
@@ -76,13 +76,13 @@ try {
     log: quiet ? null : (line) => console.log(`${new Date().toISOString()} ${line}`),
   });
 } catch (e) {
-  console.error(`meraki-api-sandbox: ${e.message}`);
+  console.error(`meraki-api-emulator: ${e.message}`);
   process.exit(2);
 }
 
-const { server, world, options } = sandbox;
+const { server, world, options } = emulator;
 server.on('error', (e) => {
-  console.error(`meraki-api-sandbox: ${e.message}`);
+  console.error(`meraki-api-emulator: ${e.message}`);
   process.exit(1);
 });
 server.listen(port, host, () => {
@@ -90,7 +90,7 @@ server.listen(port, host, () => {
   const shown = host === '0.0.0.0' || host === '::' ? 'localhost' : host.includes(':') ? `[${host}]` : host;
   const url = `http://${shown}:${addr.port}`;
   const lines = [
-    `Meraki API Sandbox on ${url}`,
+    `Meraki API Emulator on ${url}`,
     `  API base   ${url}${API_PREFIX}`,
     `  Auth       ${options.apiKey ? 'X-Cisco-Meraki-API-Key must match --api-key' : 'any non-empty X-Cisco-Meraki-API-Key'}`,
     `  Seed       ${options.seed}${options.now != null ? `, clock frozen at ${new Date(options.now * 1000).toISOString()}` : ''}`,

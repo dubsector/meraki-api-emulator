@@ -72,7 +72,7 @@ export function resolveOptions(o = {}) {
   };
 }
 
-export function createSandbox(options = {}) {
+export function createEmulator(options = {}) {
   const opts = resolveOptions(options);
   const clock = () => opts.now ?? Date.now() / 1000;
   const world = buildWorld({ seed: opts.seed, bootTime: clock() });
@@ -106,7 +106,7 @@ export function createSandbox(options = {}) {
     }
 
     if (req.method !== 'GET' && req.method !== 'HEAD') {
-      return send(res, 405, { errors: ['The sandbox is read-only. Only GET requests are supported.'] }, { Allow: 'GET, HEAD' });
+      return send(res, 405, { errors: ['The emulator is read-only. Only GET requests are supported.'] }, { Allow: 'GET, HEAD' });
     }
 
     if (opts.latency > 0) await sleep(opts.latency * (0.7 + Math.random() * 0.6));

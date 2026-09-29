@@ -1,4 +1,4 @@
-# Meraki API Sandbox
+# Meraki API Emulator
 
 A local stand-in for the Cisco Meraki Dashboard API v1. It serves two simulated organizations with networks, devices, clients and traffic that change through the day, so you can build and demo Meraki tooling without a real Meraki account.
 
@@ -9,9 +9,9 @@ Not affiliated with or endorsed by Cisco or Meraki. All names, addresses and IPs
 Needs Node.js 22 or newer. There are no dependencies to install.
 
 ```sh
-git clone https://github.com/dubsector/meraki-api-sandbox.git
-cd meraki-api-sandbox
-node bin/meraki-api-sandbox.js
+git clone https://github.com/dubsector/meraki-api-emulator.git
+cd meraki-api-emulator
+node bin/meraki-api-emulator.js
 ```
 
 Then open <http://localhost:8765> for an overview and a request explorer, or call the API directly:
@@ -23,15 +23,15 @@ curl -H 'X-Cisco-Meraki-API-Key: anything' http://localhost:8765/api/v1/organiza
 With Docker:
 
 ```sh
-docker build -t meraki-api-sandbox .
-docker run --rm -p 8765:8765 meraki-api-sandbox
+docker build -t meraki-api-emulator .
+docker run --rm -p 8765:8765 meraki-api-emulator
 ```
 
 ## Pointing a client at it
 
 Use `http://localhost:8765/api/v1` wherever the client asks for the Meraki base URL, and any non-empty API key. The key goes in `X-Cisco-Meraki-API-Key` or `Authorization: Bearer`, the same as the real API.
 
-For the [Cisco Meraki data source for Grafana](https://github.com/dubsector/grafana-ciscomeraki-datasource), set **Base URL** in the data source settings. If Grafana runs in Docker and the sandbox runs on the host, start the sandbox with `--host 0.0.0.0` and use `http://host.docker.internal:8765/api/v1`.
+For the [Cisco Meraki data source for Grafana](https://github.com/dubsector/grafana-ciscomeraki-datasource), set **Base URL** in the data source settings. If Grafana runs in Docker and the emulator runs on the host, start the emulator with `--host 0.0.0.0` and use `http://host.docker.internal:8765/api/v1`.
 
 ## What's in it
 
@@ -78,14 +78,14 @@ All are `GET` under `/api/v1`.
 | --- | --- | --- | --- |
 | `--port` | `PORT` | `8765` | Port to listen on |
 | `--host` | `HOST` | `127.0.0.1` | Address to bind. Use `0.0.0.0` to accept outside connections |
-| `--seed` | `MERAKI_SANDBOX_SEED` | `1` | Changes IDs, serials, names and noise. The topology stays the same |
-| `--api-key` | `MERAKI_SANDBOX_API_KEY` | any key | Only accept this key |
-| `--latency` | `MERAKI_SANDBOX_LATENCY` | `0` | Add roughly this many milliseconds to each API response |
-| `--fault-rate` | `MERAKI_SANDBOX_FAULT_RATE` | `0` | Share of API calls (0 to 1) that fail with 500, 502 or 503 |
-| `--rate-limit` | `MERAKI_SANDBOX_RATE_LIMIT` | `10` | Requests per second per key. `0` turns it off |
-| `--burst` | `MERAKI_SANDBOX_BURST` | `20` | Requests allowed at once before throttling starts |
-| `--now` | `MERAKI_SANDBOX_NOW` | real time | Freeze the clock (ISO 8601 or epoch seconds) |
-| `--quiet` | `MERAKI_SANDBOX_QUIET` | off | Don't log requests |
+| `--seed` | `MERAKI_EMULATOR_SEED` | `1` | Changes IDs, serials, names and noise. The topology stays the same |
+| `--api-key` | `MERAKI_EMULATOR_API_KEY` | any key | Only accept this key |
+| `--latency` | `MERAKI_EMULATOR_LATENCY` | `0` | Add roughly this many milliseconds to each API response |
+| `--fault-rate` | `MERAKI_EMULATOR_FAULT_RATE` | `0` | Share of API calls (0 to 1) that fail with 500, 502 or 503 |
+| `--rate-limit` | `MERAKI_EMULATOR_RATE_LIMIT` | `10` | Requests per second per key. `0` turns it off |
+| `--burst` | `MERAKI_EMULATOR_BURST` | `20` | Requests allowed at once before throttling starts |
+| `--now` | `MERAKI_EMULATOR_NOW` | real time | Freeze the clock (ISO 8601 or epoch seconds) |
+| `--quiet` | `MERAKI_EMULATOR_QUIET` | off | Don't log requests |
 
 ## Differences from the real API
 

@@ -37,7 +37,7 @@ describe('server', () => {
   test('landing page and health check', async () => {
     const page = await fetch(sb.base.replace('/api/v1', '/'));
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /Meraki API Sandbox/);
+    assert.match(await page.text(), /Meraki API Emulator/);
     const health = await sb.get(sb.base.replace('/api/v1', '/healthz'), { key: null });
     assert.deepEqual(health.body, { status: 'ok' });
   });

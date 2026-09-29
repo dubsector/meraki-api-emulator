@@ -1,10 +1,10 @@
-import { ROUTES, createSandbox } from '../src/server.js';
+import { ROUTES, createEmulator } from '../src/server.js';
 
 export const NOW = '2026-09-29T18:30:00Z';
 
-// Starts a sandbox on a free port. Rate limiting is off unless a test asks for it.
+// Starts an emulator on a free port. Rate limiting is off unless a test asks for it.
 export async function start(options = {}) {
-  const sb = createSandbox({ now: NOW, rateLimit: 0, ...options });
+  const sb = createEmulator({ now: NOW, rateLimit: 0, ...options });
   await new Promise((resolve) => sb.server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${sb.server.address().port}/api/v1`;
   const get = async (path, { key = 'test-key', headers = {}, method = 'GET' } = {}) => {

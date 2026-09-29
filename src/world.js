@@ -10,7 +10,7 @@ const SERIAL_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
 const FIRST_SEEN_ANCHOR = Date.UTC(2025, 0, 1) / 1000;
 
 export function buildWorld({ seed = 1, bootTime = Date.now() / 1000 } = {}) {
-  const r = new Rand(hashStr(`meraki-api-sandbox:${seed}`));
+  const r = new Rand(hashStr(`meraki-api-emulator:${seed}`));
   const used = new Set();
   const unique = (make) => {
     for (;;) {
