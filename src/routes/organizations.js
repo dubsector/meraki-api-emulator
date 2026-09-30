@@ -5,7 +5,7 @@ import { deviceStatus, eachOutage, statusChanges, uplinkStatus } from '../sim/ou
 import { presenceIn } from '../sim/presence.js';
 import { trafficRows, uplinkBytes } from '../sim/traffic.js';
 import { WAN_RECV, WAN_SENT, WD_RECV, WD_SENT, WL_RECV, WL_SENT, clientUsage, networkTotals } from '../sim/usage.js';
-import { DAY, MIN, iso, isoMicro } from '../time.js';
+import { DAY, HOUR, MIN, iso, isoMicro } from '../time.js';
 import { byId, bySerial, filterDevices, orgOf, round } from './common.js';
 
 const MB = 1024;
@@ -277,7 +277,8 @@ export default [
     path: '/organizations/{organizationId}/devices/uplinksLossAndLatency',
     handler: (ctx) => {
       const org = orgOf(ctx);
-      const latest = Math.floor(ctx.now / MIN) * MIN;
+      // The newest sample Meraki serves is two minutes old.
+      const latest = Math.floor((ctx.now - 2 * MIN) / MIN) * MIN;
       const { t0, t1 } = timeWindow(ctx.query, latest, { maxSpan: 300, defaultSpan: 300, lookback: 60 * DAY });
       const uplink = ctx.query.get('uplink');
       const ip = ctx.query.get('ip') || '8.8.8.8';
@@ -332,7 +333,7 @@ export default [
     path: '/organizations/{organizationId}/summary/top/applications/byUsage',
     handler: (ctx) => {
       const org = orgOf(ctx);
-      const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 186 * DAY });
+      const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 186 * DAY, minSpan: 25 * MIN });
       const quantity = intParam(ctx.query, 'quantity', 10, { min: 1, max: 50 });
       const totals = new Map();
       for (const n of summaryNetworks(ctx, org)) {
@@ -355,7 +356,7 @@ export default [
     path: '/organizations/{organizationId}/summary/top/clients/byUsage',
     handler: (ctx) => {
       const org = orgOf(ctx);
-      const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 186 * DAY });
+      const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 186 * DAY, minSpan: 8 * HOUR });
       const quantity = intParam(ctx.query, 'quantity', 10, { min: 1, max: 50 });
       const ssidName = ctx.query.get('ssidName');
       const rows = [];
@@ -383,7 +384,7 @@ export default [
     path: '/organizations/{organizationId}/summary/top/devices/byUsage',
     handler: (ctx) => {
       const org = orgOf(ctx);
-      const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 186 * DAY });
+      const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 186 * DAY, minSpan: 8 * HOUR });
       const quantity = intParam(ctx.query, 'quantity', 10, { min: 1, max: 50 });
       const nets = new Set(summaryNetworks(ctx, org));
       const rows = org.devices

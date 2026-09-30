@@ -116,20 +116,27 @@ export function createEmulator(options = {}) {
     }
 
     const path = url.pathname.slice(API_PREFIX.length) || '/';
-    let found = null;
+    let route = null;
+    let m = null;
     for (const r of routes) {
-      const m = r.re.exec(path);
+      m = r.re.exec(path);
       if (m) {
-        found = { r, params: Object.fromEntries(r.names.map((n, i) => [n, decodeURIComponent(m[i + 1])])) };
+        route = r;
         break;
       }
     }
-    if (!found) return send(res, 404, { errors: ['Not found'] });
+    if (!route) return send(res, 404, { errors: ['Not found'] });
+    let params;
+    try {
+      params = Object.fromEntries(route.names.map((n, i) => [n, decodeURIComponent(m[i + 1])]));
+    } catch {
+      return send(res, 400, { errors: ['Malformed URL encoding'] });
+    }
 
     const proto = req.headers['x-forwarded-proto'] || 'http';
-    const ctx = { world, params: found.params, query: url.searchParams, now: clock(), url, origin: `${proto}://${req.headers.host || 'localhost'}`, headers: {} };
+    const ctx = { world, params, query: url.searchParams, now: clock(), url, origin: `${proto}://${req.headers.host || 'localhost'}`, headers: {} };
     try {
-      const body = found.r.handler(ctx);
+      const body = route.handler(ctx);
       return send(res, 200, body, ctx.headers);
     } catch (e) {
       if (e instanceof ApiError) return send(res, e.status, { errors: e.errors }, e.headers);
@@ -140,9 +147,17 @@ export function createEmulator(options = {}) {
 
   async function handle(req, res) {
     const started = performance.now();
-    const url = new URL(req.url, 'http://localhost');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Expose-Headers', 'Link, Retry-After');
+    let url;
+    try {
+      url = new URL(req.url, 'http://localhost');
+    } catch {
+      // Paths like "//[" parse as a broken host.
+      const status = send(res, 400, { errors: ['Malformed URL'] });
+      opts.log?.(`${req.method} ${req.url} ${status} ${Math.round(performance.now() - started)}ms`);
+      return;
+    }
     let status;
     if (req.method === 'OPTIONS') {
       res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS', 'Access-Control-Allow-Headers': 'Authorization, X-Cisco-Meraki-API-Key, Content-Type', 'Access-Control-Max-Age': '86400' });
