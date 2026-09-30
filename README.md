@@ -2,7 +2,7 @@
 
 A local stand-in for the Cisco Meraki Dashboard API v1. It serves two simulated organizations with networks, devices, clients and traffic that change through the day, so you can build, test and demo Meraki integrations without a real Meraki account.
 
-It answers 110 read operations with the same paths, operation IDs, paging and error formats as the real API, and it logs every call your client makes so you can check exactly what it sent.
+It answers 165 operations (113 reads and 52 writes) with the same paths, operation IDs, paging and error formats as the real API. Writes change the emulator's configuration in memory, so provisioning tools and scripts can create, update and delete things and read them back. It also logs every call your client makes so you can check exactly what it sent.
 
 Not affiliated with or endorsed by Cisco or Meraki. All names, addresses and IPs are made up (IPs come from the RFC 5737 documentation ranges).
 
@@ -65,6 +65,21 @@ The same seed and the same time always give the same answer. Freeze the clock wi
 - `--rate-limit` and `--burst` control when `429 Too Many Requests` starts, and the response carries `Retry-After`.
 - `--latency 800` slows every response, to test timeouts and loading states.
 - `--now 2026-01-15T09:00:00Z` freezes the clock, so the same request always returns the same body.
+- `POST /_emulator/reset` (with your API key) throws away every write and puts the seeded world back, so each test can start clean. The request log is kept.
+
+## Writes
+
+`PUT`, `POST` and `DELETE` work on organizations, networks, devices, admins, VLANs, firewall and NAT rules, static routes, site-to-site VPN, threat protection, SSIDs and their firewall and splash settings, RF profiles, radio settings, switch ports, syslog, SNMP, alert settings, webhook servers and group policies. [ENDPOINTS.md](ENDPOINTS.md) lists them all.
+
+- Bodies are checked against the request schemas in the official spec: types, enums, required fields and ranges. A bad value gets a `400` naming the field.
+- `PUT` is a partial update. Fields you leave out keep their values, nested objects merge, and lists replace.
+- Unknown and read-only fields are ignored, so you can `GET` an object, change it and `PUT` the whole thing back.
+- `POST` answers `201` with the new object, and `DELETE` answers `204`.
+- The checks that matter to real clients are there: VLAN subnets can't overlap and the appliance IP has to be inside the subnet, static routes need a next hop on a local subnet, names and admin emails have to be unique, a PSK SSID needs an 8 to 63 character key, and the default firewall rule always stays last.
+- Related data follows along. New VLANs join the site-to-site VPN list, the VPN status endpoint reports what you export, renaming a device renames it in the event log, renaming an SSID renames it for its clients, and deleting a network returns its devices to inventory.
+- Every write shows up in `getOrganizationConfigurationChanges` the way the real change log records API calls: page `via API`, the method and path as the label, and the object before and after as JSON.
+
+Writes change configuration, not the simulation. Clients keep their addresses and schedules, traffic stays the same, and a network you create is empty: no devices, clients or traffic. Changing a network's time zone changes what the API reports, not the site's schedule. Start with `--read-only` to refuse every write with `405`.
 
 ## Behavior that matches the real API
 
@@ -81,7 +96,7 @@ The same seed and the same time always give the same answer. Freeze the clock wi
 
 ## Endpoints
 
-All are `GET` under `/api/v1`. [ENDPOINTS.md](ENDPOINTS.md) lists each operation with its path. In short:
+All live under `/api/v1`. [ENDPOINTS.md](ENDPOINTS.md) lists each operation with its method and path. In short:
 
 - **Organizations**: networks, devices, statuses and availability, uplinks, VPN, clients, top-N summaries, admins, licenses, inventory, the change log and the API request log.
 - **Networks**: devices, clients, events, traffic, settings, syslog, SNMP, alert settings, webhook servers, group policies, firmware and link layer topology.
@@ -104,14 +119,15 @@ All are `GET` under `/api/v1`. [ENDPOINTS.md](ENDPOINTS.md) lists each operation
 | `--rate-limit` | `MERAKI_EMULATOR_RATE_LIMIT` | `10` | Requests per second per key. `0` turns it off |
 | `--burst` | `MERAKI_EMULATOR_BURST` | `20` | Requests allowed at once before throttling starts |
 | `--now` | `MERAKI_EMULATOR_NOW` | real time | Freeze the clock (ISO 8601 or epoch seconds) |
+| `--read-only` | `MERAKI_EMULATOR_READ_ONLY` | off | Refuse `PUT`, `POST` and `DELETE` with `405` |
 | `--quiet` | `MERAKI_EMULATOR_QUIET` | off | Don't log requests |
 
 There is no real authentication, so only use `--host 0.0.0.0` on a network you trust. See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## Differences from the real API
 
-- Read only. Anything other than `GET` returns `405`.
-- Only the endpoints in [ENDPOINTS.md](ENDPOINTS.md) exist. Others return `404`.
+- Only the operations in [ENDPOINTS.md](ENDPOINTS.md) exist. Other paths return `404`, and other methods on a known path return `405`.
+- Writes live in memory and are gone after a restart or a reset. Devices can't be claimed into or removed from a network yet.
 - No redirects to regional shard hosts.
 - Error messages are close to Meraki's but not always word for word.
 - Rate limits are per API key rather than per organization.
@@ -124,7 +140,7 @@ There is no real authentication, so only use `--host 0.0.0.0` on a network you t
 npm test
 ```
 
-After adding a route, give it the `op` name from the official spec and run `npm run docs` to update ENDPOINTS.md. `npm run check-spec` downloads the [Meraki OpenAPI spec](https://github.com/meraki/openapi) and reports routes whose path or operation ID don't match it, plus response fields the spec's examples have that ours don't. Pass a path to use a local copy of `spec3.json` instead.
+After adding a route, give it the `op` name from the official spec and run `npm run docs` to update ENDPOINTS.md. A new `PUT` or `POST` route also needs its request schema: `npm run schemas` copies them from the spec into `src/schemas.json`. `npm run check-spec` downloads the [Meraki OpenAPI spec](https://github.com/meraki/openapi) and reports routes whose path or operation ID don't match it, plus response fields the spec's examples have that ours don't. Pass a path to use a local copy of `spec3.json` instead.
 
 ## License
 
