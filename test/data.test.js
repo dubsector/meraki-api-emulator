@@ -4,7 +4,7 @@ import { networkEventsOnDay } from '../src/sim/events.js';
 import { statusChanges } from '../src/sim/outages.js';
 import { DAY } from '../src/time.js';
 import { buildWorld } from '../src/world.js';
-import { NOW, relLink, start } from './helpers.js';
+import { NOW, collect, relLink, start } from './helpers.js';
 
 const BOOT = Date.parse(NOW) / 1000;
 
@@ -148,6 +148,32 @@ describe('events', () => {
     assert.equal(got.length, day.length);
     assert.equal(new Set(got.map((e) => e.occurredAt)).size, got.length);
     assert.ok(got.every((e) => e.occurredAt >= t0 && e.occurredAt < t1));
+  });
+
+  test('backward paging with rel=prev returns every event exactly once', async () => {
+    const day = networkEventsOnDay(net, Math.floor(Date.parse(t0) / 86400000)).filter((e) => e.productType === 'switch');
+    let url = `/networks/${net.id}/events?productType=switch&perPage=100&endingBefore=${t1}`;
+    const got = [];
+    for (let i = 0; i < 50; i++) {
+      const r = await sb.get(url);
+      const inDay = r.body.events.filter((e) => e.occurredAt >= t0);
+      got.push(...inDay);
+      if (inDay.length < r.body.events.length) break;
+      url = relLink(r.link, 'prev');
+    }
+    assert.equal(got.length, day.length);
+    assert.equal(new Set(got.map((e) => e.occurredAt)).size, got.length);
+    assert.ok(got.every((e) => e.occurredAt < t1));
+  });
+
+  test('security events page through the window in either order', async () => {
+    const path = `/networks/${net.id}/appliance/security/events?perPage=3&timespan=${7 * 86400}`;
+    const up = (await collect(sb.get, path)).map((e) => e.ts);
+    assert.ok(up.length > 3, 'more than one page');
+    assert.deepEqual(up, [...up].sort());
+    assert.equal(new Set(up).size, up.length);
+    const down = (await collect(sb.get, `${path}&sortOrder=descending`)).map((e) => e.ts);
+    assert.deepEqual(down, [...up].reverse());
   });
 
   test('event filters narrow the results', async () => {

@@ -149,6 +149,8 @@ describe('options', () => {
     try {
       assert.equal((await sb.get('/organizations', { key: 'wrong' })).status, 401);
       assert.equal((await sb.get('/organizations', { key: 'secret' })).status, 200);
+      const page = await (await fetch(sb.base.replace('/api/v1', '/'))).text();
+      assert.doesNotMatch(page, /demo-key/, 'the landing page must not suggest a key that fails');
     } finally {
       await sb.close();
     }

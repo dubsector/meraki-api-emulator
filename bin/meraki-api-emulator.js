@@ -95,7 +95,7 @@ server.listen(port, host, () => {
     `  Auth       ${options.apiKey ? 'X-Cisco-Meraki-API-Key must match --api-key' : 'any non-empty X-Cisco-Meraki-API-Key'}`,
     `  Seed       ${options.seed}${options.now != null ? `, clock frozen at ${new Date(options.now * 1000).toISOString()}` : ''}`,
   ];
-  if (options.latency || options.faultRate) lines.push(`  Faults     ${options.latency}ms latency, ${options.faultRate * 100}% 5xx`);
+  if (options.latency || options.faultRate) lines.push(`  Faults     ${options.latency}ms latency, ${Math.round(options.faultRate * 1e4) / 100}% 5xx`);
   for (const org of world.orgs) lines.push(`  Org        ${org.id}  ${org.name} (${org.networks.length} networks)`);
   console.log(lines.join('\n'));
 });
