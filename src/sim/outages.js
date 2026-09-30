@@ -45,6 +45,16 @@ export function deviceStatus(dev, t) {
   return dev.alerting ? 'alerting' : 'online';
 }
 
+// Up devices check in every minute or so; down ones last reported when they went down.
+export function lastReportedAt(dev, now) {
+  const status = deviceStatus(dev, now);
+  if (status === 'online' || status === 'alerting') return now - (dev.key % 45);
+  if (dev.dormant) return dev.dormantSince;
+  let start = now;
+  eachOutage(dev, now, now + 1, (s) => (start = s));
+  return start;
+}
+
 // Status transitions in [a, b), oldest first.
 export function statusChanges(dev, a, b, now) {
   const out = [];

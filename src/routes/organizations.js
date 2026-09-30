@@ -1,7 +1,8 @@
+import { exportedSubnets } from '../config.js';
 import { deviceJson, networkJson, networkRef, orgJson } from '../format.js';
 import { arrayParam, hasTags, intParam, paginate, timeWindow } from '../http.js';
 import { linkAverage, linkSample, pathLatency, vpnReachable } from '../sim/links.js';
-import { deviceStatus, eachOutage, statusChanges, uplinkStatus } from '../sim/outages.js';
+import { deviceStatus, lastReportedAt, statusChanges, uplinkStatus } from '../sim/outages.js';
 import { presenceIn } from '../sim/presence.js';
 import { trafficRows, uplinkBytes } from '../sim/traffic.js';
 import { WAN_RECV, WAN_SENT, WD_RECV, WD_SENT, WL_RECV, WL_SENT, clientUsage, networkTotals } from '../sim/usage.js';
@@ -9,15 +10,6 @@ import { DAY, HOUR, MIN, iso, isoMicro } from '../time.js';
 import { byId, bySerial, filterDevices, orgOf, round } from './common.js';
 
 const MB = 1024;
-
-function lastReportedAt(dev, now) {
-  const status = deviceStatus(dev, now);
-  if (status === 'online' || status === 'alerting') return now - (dev.key % 45);
-  if (dev.dormant) return dev.dormantSince;
-  let start = now;
-  eachOutage(dev, now, now + 1, (s) => (start = s));
-  return start;
-}
 
 function uplinkJson(mx, u, now) {
   return {
@@ -119,14 +111,17 @@ function deviceUsage(dev, t0, t1) {
 
 export default [
   {
+    op: 'getOrganizations',
     path: '/organizations',
     handler: (ctx) => paginate(ctx, [...ctx.world.orgs].sort(byId).map(orgJson), (o) => o.id, { def: 9000, max: 9000 }),
   },
   {
+    op: 'getOrganization',
     path: '/organizations/{organizationId}',
     handler: (ctx) => orgJson(orgOf(ctx)),
   },
   {
+    op: 'getOrganizationNetworks',
     path: '/organizations/{organizationId}/networks',
     handler: (ctx) => {
       const org = orgOf(ctx);
@@ -144,6 +139,7 @@ export default [
     },
   },
   {
+    op: 'getOrganizationDevices',
     path: '/organizations/{organizationId}/devices',
     handler: (ctx) => {
       const rows = filterDevices(ctx.query, orgOf(ctx).devices).sort(bySerial).map((d) => deviceJson(d));
@@ -151,6 +147,7 @@ export default [
     },
   },
   {
+    op: 'getOrganizationDevicesStatuses',
     path: '/organizations/{organizationId}/devices/statuses',
     handler: (ctx) => {
       const statuses = arrayParam(ctx.query, 'statuses');
@@ -188,6 +185,7 @@ export default [
     },
   },
   {
+    op: 'getOrganizationDevicesStatusesOverview',
     path: '/organizations/{organizationId}/devices/statuses/overview',
     handler: (ctx) => {
       const byStatus = { online: 0, alerting: 0, offline: 0, dormant: 0 };
@@ -196,6 +194,7 @@ export default [
     },
   },
   {
+    op: 'getOrganizationDevicesAvailabilities',
     path: '/organizations/{organizationId}/devices/availabilities',
     handler: (ctx) => {
       const statuses = arrayParam(ctx.query, 'statuses');
@@ -207,6 +206,7 @@ export default [
     },
   },
   {
+    op: 'getOrganizationDevicesAvailabilitiesChangeHistory',
     path: '/organizations/{organizationId}/devices/availabilities/changeHistory',
     handler: (ctx) => {
       const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 31 * DAY, lookback: 31 * DAY });
@@ -228,14 +228,17 @@ export default [
     },
   },
   {
+    op: 'getOrganizationApplianceUplinkStatuses',
     path: '/organizations/{organizationId}/appliance/uplink/statuses',
     handler: uplinkStatuses,
   },
   {
+    op: 'getOrganizationUplinksStatuses',
     path: '/organizations/{organizationId}/uplinks/statuses',
     handler: uplinkStatuses,
   },
   {
+    op: 'getOrganizationApplianceVpnStatuses',
     path: '/organizations/{organizationId}/appliance/vpn/statuses',
     handler: (ctx) => {
       const org = orgOf(ctx);
@@ -249,10 +252,7 @@ export default [
           deviceStatus: deviceStatus(n.mx, ctx.now),
           uplinks: n.mx.uplinks.map((u) => ({ interface: u.interface, publicIp: u.publicIp })),
           vpnMode: n.vpn,
-          exportedSubnets: [
-            { subnet: `${n.subnet(10)}.0/24`, name: 'Corporate' },
-            { subnet: `${n.subnet(20)}.0/24`, name: 'Voice' },
-          ],
+          exportedSubnets: exportedSubnets(n),
           merakiVpnPeers: vpnPeers(n).map((p) => ({ networkId: p.id, networkName: p.name, reachability: vpnReachable(n, p, ctx.now) ? 'reachable' : 'unreachable' })),
           thirdPartyVpnPeers: n.vpn === 'hub' ? [{ name: 'Cloud VPC', publicIp: '192.0.2.200', reachability: 'reachable' }] : [],
         }))
@@ -261,6 +261,7 @@ export default [
     },
   },
   {
+    op: 'getOrganizationApplianceVpnStats',
     path: '/organizations/{organizationId}/appliance/vpn/stats',
     handler: (ctx) => {
       const org = orgOf(ctx);
@@ -274,6 +275,7 @@ export default [
     },
   },
   {
+    op: 'getOrganizationDevicesUplinksLossAndLatency',
     path: '/organizations/{organizationId}/devices/uplinksLossAndLatency',
     handler: (ctx) => {
       const org = orgOf(ctx);
@@ -299,6 +301,7 @@ export default [
     },
   },
   {
+    op: 'getOrganizationApplianceUplinksUsageByNetwork',
     path: '/organizations/{organizationId}/appliance/uplinks/usage/byNetwork',
     handler: (ctx) => {
       const org = orgOf(ctx);
@@ -312,6 +315,7 @@ export default [
     },
   },
   {
+    op: 'getOrganizationClientsOverview',
     path: '/organizations/{organizationId}/clients/overview',
     handler: (ctx) => {
       const org = orgOf(ctx);
@@ -330,6 +334,7 @@ export default [
     },
   },
   {
+    op: 'getOrganizationSummaryTopApplicationsByUsage',
     path: '/organizations/{organizationId}/summary/top/applications/byUsage',
     handler: (ctx) => {
       const org = orgOf(ctx);
@@ -353,6 +358,7 @@ export default [
     },
   },
   {
+    op: 'getOrganizationSummaryTopClientsByUsage',
     path: '/organizations/{organizationId}/summary/top/clients/byUsage',
     handler: (ctx) => {
       const org = orgOf(ctx);
@@ -381,6 +387,7 @@ export default [
     },
   },
   {
+    op: 'getOrganizationSummaryTopDevicesByUsage',
     path: '/organizations/{organizationId}/summary/top/devices/byUsage',
     handler: (ctx) => {
       const org = orgOf(ctx);

@@ -1,11 +1,18 @@
 // HTTP front end: routing, API key auth, rate limiting and fault injection.
 
 import { createServer } from 'node:http';
+import { ApiLog } from './apilog.js';
 import { ApiError } from './http.js';
 import { landingPage } from './landing.js';
+import admin from './routes/admin.js';
+import alerts from './routes/alerts.js';
+import appliance from './routes/appliance.js';
 import devices from './routes/devices.js';
 import networks from './routes/networks.js';
+import networkwide from './routes/networkwide.js';
 import organizations from './routes/organizations.js';
+import switches from './routes/switch.js';
+import wireless from './routes/wireless.js';
 import { RateLimiter } from './ratelimit.js';
 import { parseTime } from './time.js';
 import { buildWorld } from './world.js';
@@ -13,7 +20,7 @@ import { buildWorld } from './world.js';
 export const API_PREFIX = '/api/v1';
 export const AUTH_ERROR = 'No valid authentication method found';
 
-export const ROUTES = [...organizations, ...networks, ...devices];
+export const ROUTES = [...organizations, ...admin, ...alerts, ...networks, ...networkwide, ...appliance, ...switches, ...wireless, ...devices];
 
 function compile(routes) {
   return routes
@@ -66,6 +73,7 @@ export function createEmulator(options = {}) {
   const world = buildWorld({ seed: opts.seed, bootTime: clock() });
   const routes = compile(ROUTES);
   const limiter = opts.rateLimit > 0 ? new RateLimiter(opts.rateLimit, opts.burst) : null;
+  const apiLog = new ApiLog();
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   function send(res, status, body, headers = {}) {
@@ -75,10 +83,51 @@ export function createEmulator(options = {}) {
     return status;
   }
 
+  function match(path) {
+    for (const r of routes) {
+      const m = r.re.exec(path);
+      if (m) return { route: r, values: m.slice(1) };
+    }
+    return { route: null, values: [] };
+  }
+
+  // The organization a call belongs to, for the apiRequests log.
+  function orgOfParams(params) {
+    if (params.organizationId) return world.orgById.get(params.organizationId)?.id ?? null;
+    if (params.networkId) return world.networkById.get(params.networkId)?.org.id ?? null;
+    if (params.serial) return world.deviceBySerial.get(params.serial)?.net.org.id ?? null;
+    return null;
+  }
+
+  // Authenticated calls are answered, then recorded for the apiRequests endpoints.
   async function api(req, res, url) {
     const key = apiKeyOf(req.headers);
     if (!key || (opts.apiKey && key !== opts.apiKey)) return send(res, 401, { errors: [AUTH_ERROR] });
 
+    const { route, values } = match(url.pathname.slice(API_PREFIX.length) || '/');
+    let params = null;
+    try {
+      params = route ? Object.fromEntries(route.names.map((n, i) => [n, decodeURIComponent(values[i])])) : {};
+    } catch {}
+    const status = await dispatch(req, res, url, key, route, params);
+    apiLog.add({
+      ts: clock(),
+      orgId: params ? orgOfParams(params) : null,
+      adminId: world.apiAdmin.id,
+      method: req.method,
+      host: req.headers.host || 'localhost',
+      path: url.pathname,
+      queryString: url.search.slice(1),
+      userAgent: req.headers['user-agent'] || '',
+      responseCode: status,
+      sourceIp: (req.socket.remoteAddress || '').replace(/^::ffff:/, ''),
+      version: 1,
+      operationId: route ? route.op : null,
+    });
+    return status;
+  }
+
+  async function dispatch(req, res, url, key, route, params) {
     const wait = limiter ? limiter.take(key) : 0;
     if (wait > 0) return send(res, 429, { errors: ['Too many requests'] }, { 'Retry-After': String(Math.max(1, Math.ceil(wait))) });
 
@@ -92,26 +141,11 @@ export function createEmulator(options = {}) {
       return send(res, status, { errors: ['Simulated server error'] });
     }
 
-    const path = url.pathname.slice(API_PREFIX.length) || '/';
-    let route = null;
-    let m = null;
-    for (const r of routes) {
-      m = r.re.exec(path);
-      if (m) {
-        route = r;
-        break;
-      }
-    }
     if (!route) return send(res, 404, { errors: ['Not found'] });
-    let params;
-    try {
-      params = Object.fromEntries(route.names.map((n, i) => [n, decodeURIComponent(m[i + 1])]));
-    } catch {
-      return send(res, 400, { errors: ['Malformed URL encoding'] });
-    }
+    if (!params) return send(res, 400, { errors: ['Malformed URL encoding'] });
 
     const proto = req.headers['x-forwarded-proto'] || 'http';
-    const ctx = { world, params, query: url.searchParams, now: clock(), url, origin: `${proto}://${req.headers.host || 'localhost'}`, headers: {} };
+    const ctx = { world, params, query: url.searchParams, now: clock(), url, origin: `${proto}://${req.headers.host || 'localhost'}`, headers: {}, apiLog };
     try {
       const body = route.handler(ctx);
       return send(res, 200, body, ctx.headers);
@@ -141,7 +175,7 @@ export function createEmulator(options = {}) {
       res.end();
       status = 204;
     } else if (url.pathname === '/' || url.pathname === '/index.html') {
-      const html = landingPage(world, ROUTES, { apiKey: !!opts.apiKey });
+      const html = landingPage(world, ROUTES, { apiKey: !!opts.apiKey, now: clock() });
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': Buffer.byteLength(html) });
       res.end(req.method === 'HEAD' ? undefined : html);
       status = 200;
@@ -161,5 +195,5 @@ export function createEmulator(options = {}) {
       if (!res.headersSent) send(res, 500, { errors: ['Internal server error'] });
     });
   });
-  return { server, world, options: opts, handle };
+  return { server, world, options: opts, handle, apiLog };
 }

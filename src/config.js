@@ -1,0 +1,236 @@
+// Network configuration: VLANs, firewall rules, VPN, alerts and so on. Built
+// once per network from its topology and clients, so it agrees with the
+// addresses and traffic the other endpoints report.
+
+import { VLANS } from './catalog.js';
+import { derive } from './rng.js';
+
+const ANY = 'Any';
+const DEFAULT_RULE = { comment: 'Default rule', policy: 'allow', protocol: 'Any', srcPort: ANY, srcCidr: ANY, destPort: ANY, destCidr: ANY, syslogEnabled: false };
+export const GUEST_POLICY_ID = '101';
+export const SYSLOG_ROLES = ['Appliance event log', 'Switch event log', 'Wireless event log', 'Security events', 'URLs', 'Flows'];
+
+// Content filtering categories blocked everywhere; the names match the cf_block events.
+export const BLOCKED_CATEGORIES = [
+  { id: 'meraki:contentFiltering/category/C9', name: 'Peer to peer' },
+  { id: 'meraki:contentFiltering/category/C26', name: 'Games' },
+  { id: 'meraki:contentFiltering/category/C31', name: 'Malware sites' },
+  { id: 'meraki:contentFiltering/category/C35', name: 'Hacking' },
+];
+
+// A version 4 style UUID that stays the same for the same key and salt.
+export function uuid(key, salt) {
+  const hex = [0, 1, 2, 3].map((i) => derive(key, `${salt}:${i}`).toString(16).padStart(8, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20)}`;
+}
+
+export function configOf(net) {
+  return (net.config ||= buildConfig(net));
+}
+
+// VLANs this network shares over AutoVPN, as the VPN status endpoint lists them.
+export function exportedSubnets(net) {
+  const c = configOf(net);
+  return c.vlans.filter((v) => c.siteToSite.subnets.some((s) => s.localSubnet === v.subnet && s.useVpn)).map((v) => ({ subnet: v.subnet, name: v.name }));
+}
+
+function vlanSpan(net) {
+  // Clients fill 250 addresses per /24, then spill into the next third octet.
+  const top = new Map([[1, 1]]);
+  for (const c of net.clients) {
+    const third = Number(c.ip.split('.')[2]);
+    top.set(c.vlan, Math.max(top.get(c.vlan) ?? 0, third));
+  }
+  return [...top.entries()].sort((a, b) => a[0] - b[0]);
+}
+
+function buildVlans(net) {
+  const fixed = net.clients.filter((c) => ['printer', 'nas', 'pos'].includes(c.kindName));
+  return vlanSpan(net).map(([id, top]) => {
+    const octets = Math.max(1, top - id + 1);
+    const bits = Math.ceil(Math.log2(octets));
+    const v = {
+      id: String(id),
+      interfaceId: String(1e12 + derive(net.key, `vlan${id}`)),
+      name: VLANS[id] ?? `VLAN ${id}`,
+      subnet: `${net.subnet(id)}.0/${24 - bits}`,
+      applianceIp: `${net.subnet(id)}.1`,
+      dhcpHandling: 'Run a DHCP server',
+      dhcpLeaseTime: '1 day',
+      dhcpBootOptionsEnabled: false,
+      dhcpOptions: [],
+      fixedIpAssignments: Object.fromEntries(fixed.filter((c) => c.vlan === id).map((c) => [c.mac, { ip: c.ip, name: c.description }])),
+      reservedIpRanges: id === 1 ? [] : [{ start: `${net.subnet(id)}.2`, end: `${net.subnet(id)}.9`, comment: 'Infrastructure' }],
+      dnsNameservers: 'upstream_dns',
+      mandatoryDhcp: { enabled: false },
+      ipv6: { enabled: false },
+    };
+    if (id === 30) v.groupPolicyId = GUEST_POLICY_ID;
+    return v;
+  });
+}
+
+function l3Rules(net, vlans) {
+  const has = (id) => vlans.some((v) => v.id === String(id));
+  const cidr = (id) => vlans.find((v) => v.id === String(id)).subnet;
+  const hub = net.org.hub;
+  const rule = (comment, policy, protocol, srcCidr, destPort, destCidr, syslogEnabled = false) => ({ comment, policy, protocol, srcPort: ANY, srcCidr, destPort, destCidr, syslogEnabled });
+  const rules = [];
+  if (has(20)) rules.push(rule('Voice to SIP provider', 'allow', 'udp', cidr(20), '5060-5061', '192.0.2.50/32'));
+  if (has(50) && hub) rules.push(rule('Scanners to warehouse system', 'allow', 'tcp', cidr(50), '443', `${hub.subnet(5)}.0/24`));
+  if (has(50)) rules.push(rule('Scanners stay off the LAN', 'deny', 'any', cidr(50), ANY, '10.0.0.0/8', true));
+  if (has(60)) rules.push(rule('POS to payment processor', 'allow', 'tcp', cidr(60), '443', '198.51.100.200/32'));
+  if (has(60)) rules.push(rule('Isolate POS', 'deny', 'any', cidr(60), ANY, '10.0.0.0/8', true));
+  if (has(30)) rules.push(rule('Block guest Wi-Fi from internal networks', 'deny', 'any', cidr(30), ANY, '10.0.0.0/8', true));
+  if (has(40)) rules.push(rule('IoT to internet only', 'deny', 'any', cidr(40), ANY, '10.0.0.0/8'));
+  return [...rules, DEFAULT_RULE];
+}
+
+function l7Rules(net) {
+  const rules = [{ policy: 'deny', type: 'applicationCategory', value: { id: 'meraki:layer7/category/2', name: 'Peer-to-peer (P2P)' } }];
+  if (net.kind !== 'office') rules.push({ policy: 'deny', type: 'applicationCategory', value: { id: 'meraki:layer7/category/18', name: 'Gaming' } });
+  rules.push({ policy: 'deny', type: 'host', value: 'games.example.com' });
+  return rules;
+}
+
+// Only HQ publishes services to the internet.
+function inbound(net) {
+  if (net.vpn !== 'hub') return { portForwarding: [], oneToOne: [] };
+  const servers = net.subnet(5);
+  return {
+    portForwarding: [
+      { name: 'Web server', lanIp: `${servers}.30`, allowedIps: ['any'], protocol: 'tcp', publicPort: '443', localPort: '443', uplink: 'both' },
+      { name: 'Remote access gateway', lanIp: `${servers}.31`, allowedIps: ['198.51.100.0/24', '203.0.113.0/24'], protocol: 'udp', publicPort: '4500', localPort: '4500', uplink: 'internet1' },
+    ],
+    oneToOne: [
+      {
+        name: 'Mail relay',
+        publicIp: `198.51.100.${50 + net.siteIndex}`,
+        lanIp: `${servers}.25`,
+        uplink: 'internet1',
+        allowedInbound: [{ protocol: 'tcp', destinationPorts: ['25', '587'], allowedIps: ['any'] }],
+      },
+    ],
+  };
+}
+
+function siteToSite(net, vlans) {
+  const exported = new Set(net.vpn === 'hub' ? ['5', '10', '20'] : ['10', '20', '50']);
+  return {
+    mode: net.org.hub ? net.vpn : 'none',
+    hubs: net.vpn === 'spoke' ? [{ hubId: net.org.hub.id, useDefaultRoute: false }] : [],
+    subnets: vlans.map((v) => ({ localSubnet: v.subnet, useVpn: exported.has(v.id) })),
+  };
+}
+
+function groupPolicies(net) {
+  if (!net.ssids.some((s) => s.key === 'guest')) return [];
+  const day = { active: true, from: '00:00', to: '24:00' };
+  const days = Object.fromEntries(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map((d) => [d, day]));
+  const byDefault = { settings: 'network default' };
+  return [
+    {
+      name: 'Guest',
+      groupPolicyId: GUEST_POLICY_ID,
+      scheduling: { enabled: false, ...days },
+      bandwidth: { settings: 'custom', bandwidthLimits: { limitUp: 5120, limitDown: 20480 } },
+      firewallAndTrafficShaping: { settings: 'custom', trafficShapingRules: [], l3FirewallRules: [{ comment: 'No LAN access', policy: 'deny', protocol: 'any', destPort: ANY, destCidr: '10.0.0.0/8' }], l7FirewallRules: [] },
+      contentFiltering: { allowedUrlPatterns: { ...byDefault, patterns: [] }, blockedUrlPatterns: { ...byDefault, patterns: [] }, blockedUrlCategories: { ...byDefault, categories: [] } },
+      splashAuthSettings: 'network default',
+      vlanTagging: byDefault,
+      bonjourForwarding: { ...byDefault, rules: [] },
+    },
+  ];
+}
+
+function webhookServers(net) {
+  const url = 'https://hooks.example.com/meraki/alerts';
+  return [
+    {
+      id: Buffer.from(url).toString('base64'),
+      name: 'NetOps alerts',
+      url,
+      enabled: true,
+      networkId: net.id,
+      payloadTemplate: { payloadTemplateId: 'wpt_00001', name: 'Meraki (included)' },
+    },
+  ];
+}
+
+// Alert types from the Dashboard's alert settings page, one per product in the network.
+const ALERTS = [
+  ['gatewayDown', 'appliance', { timeout: 5 }],
+  ['vpnConnectivityChange', 'appliance', {}],
+  ['failoverEvent', 'appliance', {}],
+  ['ampMalwareBlocked', 'appliance', {}],
+  ['switchDown', 'switch', { timeout: 5 }],
+  ['portDown', 'switch', { timeout: 5, selector: 'any port' }],
+  ['portError', 'switch', { selector: 'any port' }],
+  ['repeaterDown', 'wireless', { timeout: 10 }],
+  ['rogueAp', 'wireless', {}],
+  ['cameraDown', 'camera', { timeout: 30 }],
+  ['settingsChanged', null, {}],
+  ['usageAlert', null, { period: 1200, threshold: 104857600 }],
+];
+
+function alertSettings(net, servers) {
+  const quiet = { emails: [], smsNumbers: [], allAdmins: false, snmp: false, httpServerIds: [] };
+  return {
+    defaultDestinations: { emails: ['netops@example.com'], allAdmins: false, snmp: false, httpServerIds: servers.map((s) => s.id) },
+    alerts: ALERTS.filter(([, product]) => !product || net.productTypes.includes(product)).map(([type, , filters]) => ({
+      type,
+      enabled: type !== 'usageAlert' && type !== 'rogueAp',
+      alertDestinations: quiet,
+      filters,
+    })),
+    muting: { byPortSchedules: { enabled: false } },
+  };
+}
+
+function buildConfig(net) {
+  const org = net.org;
+  const vlans = net.mx ? buildVlans(net) : [];
+  const syslogHost = org.hub ? `${org.hub.subnet(5)}.40` : `${net.subnet(1)}.40`;
+  const servers = webhookServers(net);
+  const { portForwarding, oneToOne } = inbound(net);
+  return {
+    vlans,
+    l3Rules: net.mx ? l3Rules(net, vlans) : [],
+    l7Rules: net.mx ? l7Rules(net) : [],
+    portForwarding,
+    oneToOne,
+    inbound: { rules: [DEFAULT_RULE], syslogDefaultRule: false },
+    firewalledServices: [
+      { service: 'ICMP', access: 'unrestricted' },
+      { service: 'web', access: 'restricted', allowedIps: [`${net.subnet(1)}.0/24`] },
+      { service: 'SNMP', access: 'blocked' },
+    ],
+    staticRoutes:
+      net.vpn === 'hub'
+        ? [{ id: uuid(net.key, 'route'), ipVersion: 4, networkId: net.id, enabled: true, name: 'Lab network', subnet: '10.100.0.0/16', gatewayIp: `${net.subnet(5)}.254`, gatewayVlanId: 5, fixedIpAssignments: {}, reservedIpRanges: [] }]
+        : [],
+    siteToSite: net.mx ? siteToSite(net, vlans) : null,
+    contentFiltering: { allowedUrlPatterns: [], blockedUrlPatterns: ['games.example.com'], blockedUrlCategories: BLOCKED_CATEGORIES, urlCategoryListSize: 'topSites' },
+    intrusion: { mode: 'prevention', idsRulesets: 'balanced', protectedNetworks: { useDefault: true } },
+    malware: { mode: 'enabled', allowedUrls: [], allowedFiles: [] },
+    applianceSettings: {
+      clientTrackingMethod: 'MAC address',
+      deploymentMode: 'routed',
+      dynamicDns: { enabled: true, prefix: `acme-${net.code.toLowerCase()}`, url: `acme-${net.code.toLowerCase()}-${org.slug.toLowerCase()}.dynamic-m.com` },
+    },
+    groupPolicies: groupPolicies(net),
+    syslog: { servers: [{ host: syslogHost, port: 514, roles: SYSLOG_ROLES.filter((r) => net.mx || !/Appliance|Security|URLs|Flows/.test(r)) }] },
+    snmp: net.vpn === 'hub' ? { access: 'users', users: [{ username: 'netmon', passphrase: 'example-passphrase' }] } : { access: 'none' },
+    httpServers: servers,
+    alerts: alertSettings(net, servers),
+    settings: {
+      localStatusPageEnabled: true,
+      remoteStatusPageEnabled: false,
+      localStatusPage: { authentication: { enabled: true, username: 'admin' } },
+      securePort: { enabled: false },
+      fips: { enabled: false },
+      namedVlans: { enabled: false },
+    },
+    switchSettings: { vlan: 1, useCombinedPower: false, powerExceptions: [], uplinkClientSampling: { enabled: false }, macBlocklist: { enabled: false } },
+  };
+}

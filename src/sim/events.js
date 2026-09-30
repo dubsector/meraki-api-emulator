@@ -7,9 +7,7 @@ import { DAY } from '../time.js';
 import { perDay } from './cache.js';
 import { eachOutage, eachUplinkFailure } from './outages.js';
 import { END, START, sessions } from './presence.js';
-
-const RADIO = { 2.4: '0', 5: '1', 6: '2' };
-const CHANNELS = { 2.4: [1, 6, 11], 5: [36, 44, 52, 100, 149, 157], 6: [37, 69, 101] };
+import { RADIO, apChannel } from './rf.js';
 
 // Per-session connection failure, shared with the wireless connectionStats endpoint.
 export function connectFailure(c, start) {
@@ -20,10 +18,13 @@ export function connectFailure(c, start) {
   return r < 0.5 ? 'auth' : r < 0.7 ? 'assoc' : r < 0.9 ? 'dhcp' : 'dns';
 }
 
+// A failed attempt happens shortly before the session that finally connects.
+export function failureTime(c, start) {
+  return start - 25 - unit(c.key, Math.floor(start)) * 20;
+}
+
 function radioInfo(c) {
-  const chans = CHANNELS[c.band];
-  const channel = chans[c.ap.key % chans.length];
-  return { radio: RADIO[c.band], vap: String(c.ssid.number), channel: String(channel) };
+  return { radio: RADIO[c.band], vap: String(c.ssid.number), channel: String(apChannel(c.ap, c.band)) };
 }
 
 // All events whose time falls in UTC day `day`, oldest first.
@@ -117,7 +118,7 @@ function clientEvents(net, c, s, e, flags, push) {
           dhcp: { type: 'dhcp_no_offer', category: 'dhcp', description: 'DHCP no offers', eventData: { ...ri, client_mac: c.mac } },
           dns: { type: 'dns_failure', category: 'dns', description: 'DNS failure', eventData: { ...ri, client_mac: c.mac, server: `10.${net.siteIndex}.1.1` } },
         }[fail];
-        push(s - 25 - frac(0) * 20, { ...w, ...failure });
+        push(failureTime(c, s), { ...w, ...failure });
       }
       push(s + frac(1) * 0.5, { ...w, type: 'association', category: '80211', description: '802.11 association', eventData: { ...ri, client_mac: c.mac, client_ip: c.ip, rssi: String(20 + Math.floor(frac(2) * 30)), aid: String(Math.floor(frac(3) * 2e9)) } });
       const auth = {
