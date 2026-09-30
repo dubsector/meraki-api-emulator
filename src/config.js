@@ -6,7 +6,9 @@ import { VLANS } from './catalog.js';
 import { derive } from './rng.js';
 
 const ANY = 'Any';
-const DEFAULT_RULE = { comment: 'Default rule', policy: 'allow', protocol: 'Any', srcPort: ANY, srcCidr: ANY, destPort: ANY, destCidr: ANY, syslogEnabled: false };
+export const DEFAULT_RULE = { comment: 'Default rule', policy: 'allow', protocol: 'Any', srcPort: ANY, srcCidr: ANY, destPort: ANY, destCidr: ANY, syslogEnabled: false };
+// A new appliance network starts as one LAN, before VLANs are turned on.
+const SINGLE_LAN = { subnet: '192.168.128.0/24', applianceIp: '192.168.128.1' };
 export const GUEST_POLICY_ID = '101';
 export const SYSLOG_ROLES = ['Appliance event log', 'Switch event log', 'Wireless event log', 'Security events', 'URLs', 'Flows'];
 
@@ -26,6 +28,12 @@ export function uuid(key, salt) {
 
 export function configOf(net) {
   return (net.config ||= buildConfig(net));
+}
+
+// A setting kept on the network from its first read, so writes to it stick.
+export function stored(net, key, build) {
+  const c = configOf(net);
+  return (c[key] ??= build());
 }
 
 // VLANs this network shares over AutoVPN, as the VPN status endpoint lists them.
@@ -83,7 +91,7 @@ function l3Rules(net, vlans) {
   if (has(60)) rules.push(rule('Isolate POS', 'deny', 'any', cidr(60), ANY, '10.0.0.0/8', true));
   if (has(30)) rules.push(rule('Block guest Wi-Fi from internal networks', 'deny', 'any', cidr(30), ANY, '10.0.0.0/8', true));
   if (has(40)) rules.push(rule('IoT to internet only', 'deny', 'any', cidr(40), ANY, '10.0.0.0/8'));
-  return [...rules, DEFAULT_RULE];
+  return rules;
 }
 
 function l7Rules(net) {
@@ -176,7 +184,7 @@ const ALERTS = [
 function alertSettings(net, servers) {
   const quiet = { emails: [], smsNumbers: [], allAdmins: false, snmp: false, httpServerIds: [] };
   return {
-    defaultDestinations: { emails: ['netops@example.com'], allAdmins: false, snmp: false, httpServerIds: servers.map((s) => s.id) },
+    defaultDestinations: { emails: net.created ? [] : ['netops@example.com'], allAdmins: false, snmp: false, httpServerIds: servers.map((s) => s.id) },
     alerts: ALERTS.filter(([, product]) => !product || net.productTypes.includes(product)).map(([type, , filters]) => ({
       type,
       enabled: type !== 'usageAlert' && type !== 'rogueAp',
@@ -187,19 +195,69 @@ function alertSettings(net, servers) {
   };
 }
 
+const PSK_SSID = { encryptionMode: 'wpa', wpaEncryptionMode: 'WPA2 only', psk: 'example-passphrase' };
+
+function ssidJson(net, number) {
+  const s = net.ssids.find((x) => x.number === number);
+  const common = {
+    number,
+    ssidAdminAccessible: false,
+    localAuth: false,
+    minBitrate: 11,
+    bandSelection: 'Dual band operation',
+    perClientBandwidthLimitUp: 0,
+    perClientBandwidthLimitDown: 0,
+    perSsidBandwidthLimitUp: 0,
+    perSsidBandwidthLimitDown: 0,
+    mandatoryDhcpEnabled: false,
+    visible: true,
+    availableOnAllAps: true,
+    availabilityTags: [],
+    speedBurst: { enabled: false },
+  };
+  if (!s) return { ...common, name: `Unconfigured SSID ${number + 1}`, enabled: false, splashPage: 'None', authMode: 'open', ipAssignmentMode: 'NAT mode' };
+  const out = {
+    ...common,
+    name: s.name,
+    enabled: true,
+    splashPage: s.splashPage || 'None',
+    authMode: s.authMode,
+    ipAssignmentMode: s.nat ? 'NAT mode' : 'Bridge mode',
+    bandSelection: 'Dual band operation with Band Steering',
+    minBitrate: 12,
+  };
+  if (s.authMode === 'psk') Object.assign(out, PSK_SSID);
+  if (s.authMode === '8021x-radius') {
+    Object.assign(out, {
+      encryptionMode: 'wpa-eap',
+      wpaEncryptionMode: 'WPA2 only',
+      radiusServers: [{ id: String(net.key % 1e9), host: `${net.org.hub ? net.org.hub.subnet(5) : net.subnet(5)}.20`, port: 1812 }],
+      radiusAccountingEnabled: false,
+      radiusFailoverPolicy: 'Deny access',
+      radiusLoadBalancingPolicy: 'Round robin',
+    });
+  }
+  if (!s.nat) Object.assign(out, { useVlanTagging: true, defaultVlanId: s.vlan });
+  if (s.splashPage) Object.assign(out, { splashTimeout: '1440 minutes', walledGardenEnabled: false });
+  return out;
+}
+
 function buildConfig(net) {
   const org = net.org;
+  const seeded = !net.created;
   const vlans = net.mx ? buildVlans(net) : [];
   const syslogHost = org.hub ? `${org.hub.subnet(5)}.40` : `${net.subnet(1)}.40`;
-  const servers = webhookServers(net);
+  const servers = seeded ? webhookServers(net) : [];
   const { portForwarding, oneToOne } = inbound(net);
   return {
+    vlansEnabled: vlans.length > 0,
     vlans,
-    l3Rules: net.mx ? l3Rules(net, vlans) : [],
+    singleLan: { ...SINGLE_LAN, ipv6: { enabled: false }, mandatoryDhcp: { enabled: false } },
+    l3: { rules: net.mx ? l3Rules(net, vlans) : [], syslogDefaultRule: false },
     l7Rules: net.mx ? l7Rules(net) : [],
     portForwarding,
     oneToOne,
-    inbound: { rules: [DEFAULT_RULE], syslogDefaultRule: false },
+    inbound: { rules: [], syslogDefaultRule: false },
     firewalledServices: [
       { service: 'ICMP', access: 'unrestricted' },
       { service: 'web', access: 'restricted', allowedIps: [`${net.subnet(1)}.0/24`] },
@@ -209,7 +267,7 @@ function buildConfig(net) {
       net.vpn === 'hub'
         ? [{ id: uuid(net.key, 'route'), ipVersion: 4, networkId: net.id, enabled: true, name: 'Lab network', subnet: '10.100.0.0/16', gatewayIp: `${net.subnet(5)}.254`, gatewayVlanId: 5, fixedIpAssignments: {}, reservedIpRanges: [] }]
         : [],
-    siteToSite: net.mx ? siteToSite(net, vlans) : null,
+    siteToSite: net.mx ? siteToSite(net, vlans) : { mode: 'none', hubs: [], subnets: [] },
     contentFiltering: { allowedUrlPatterns: [], blockedUrlPatterns: ['games.example.com'], blockedUrlCategories: BLOCKED_CATEGORIES, urlCategoryListSize: 'topSites' },
     intrusion: { mode: 'prevention', idsRulesets: 'balanced', protectedNetworks: { useDefault: true } },
     malware: { mode: 'enabled', allowedUrls: [], allowedFiles: [] },
@@ -219,7 +277,8 @@ function buildConfig(net) {
       dynamicDns: { enabled: true, prefix: `acme-${net.code.toLowerCase()}`, url: `acme-${net.code.toLowerCase()}-${org.slug.toLowerCase()}.dynamic-m.com` },
     },
     groupPolicies: groupPolicies(net),
-    syslog: { servers: [{ host: syslogHost, port: 514, roles: SYSLOG_ROLES.filter((r) => net.mx || !/Appliance|Security|URLs|Flows/.test(r)) }] },
+    syslog: { servers: !seeded ? [] : [{ host: syslogHost, port: 514, roles: SYSLOG_ROLES.filter((r) => net.mx || !/Appliance|Security|URLs|Flows/.test(r)) }] },
+    ssids: Array.from({ length: 15 }, (_, n) => ssidJson(net, n)),
     snmp: net.vpn === 'hub' ? { access: 'users', users: [{ username: 'netmon', passphrase: 'example-passphrase' }] } : { access: 'none' },
     httpServers: servers,
     alerts: alertSettings(net, servers),

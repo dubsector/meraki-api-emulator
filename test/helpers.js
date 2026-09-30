@@ -8,18 +8,35 @@ export async function start(options = {}) {
   const sb = createEmulator({ now: NOW, rateLimit: 0, ...options });
   await new Promise((resolve) => sb.server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${sb.server.address().port}/api/v1`;
-  const get = async (path, { key = 'test-key', headers = {}, method = 'GET' } = {}) => {
+  const get = async (path, { key = 'test-key', headers = {}, method = 'GET', body } = {}) => {
     const h = { ...headers };
     if (key != null) h['X-Cisco-Meraki-API-Key'] = key;
-    const res = await fetch(path.startsWith('http') ? path : base + path, { method, headers: h });
+    if (body !== undefined) h['Content-Type'] = 'application/json';
+    const payload = body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body);
+    const res = await fetch(path.startsWith('http') ? path : base + path, { method, headers: h, body: payload });
     const text = await res.text();
-    let body = text;
+    let parsed = text;
     try {
-      body = JSON.parse(text);
+      parsed = JSON.parse(text);
     } catch {}
-    return { status: res.status, headers: res.headers, link: res.headers.get('link'), body };
+    return { status: res.status, headers: res.headers, link: res.headers.get('link'), body: parsed };
   };
-  return { ...sb, base, get, close: () => new Promise((r) => sb.server.close(r)) };
+  const send = (method) => (path, body, opts = {}) => get(path, { ...opts, method, body });
+  return {
+    // A getter, so tests see the new world after a reset.
+    get world() {
+      return sb.world;
+    },
+    server: sb.server,
+    apiLog: sb.apiLog,
+    base,
+    get,
+    put: send('PUT'),
+    post: send('POST'),
+    del: (path, opts = {}) => get(path, { ...opts, method: 'DELETE' }),
+    reset: () => fetch(base.replace('/api/v1', '/_emulator/reset'), { method: 'POST', headers: { 'X-Cisco-Meraki-API-Key': 'test-key' } }),
+    close: () => new Promise((r) => sb.server.close(r)),
+  };
 }
 
 export function relLink(link, rel) {
@@ -42,5 +59,5 @@ export async function collect(get, path, maxPages = 200) {
 
 // A concrete URL for each route, using IDs from HQ.
 export function sampleUrls(world) {
-  return ROUTES.map((r) => sampleUrl(r, world, Date.parse(NOW) / 1000));
+  return ROUTES.filter((r) => r.method === 'GET').map((r) => ({ url: sampleUrl(r, world, Date.parse(NOW) / 1000), status: r.sample?.status ?? 200 }));
 }

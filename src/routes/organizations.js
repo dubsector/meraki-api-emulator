@@ -1,13 +1,33 @@
-import { exportedSubnets } from '../config.js';
+import { configOf, exportedSubnets } from '../config.js';
 import { deviceJson, networkJson, networkRef, orgJson } from '../format.js';
-import { arrayParam, hasTags, intParam, paginate, timeWindow } from '../http.js';
+import { arrayParam, badRequest, hasTags, intParam, notFound, paginate, timeWindow } from '../http.js';
 import { linkAverage, linkSample, pathLatency, vpnReachable } from '../sim/links.js';
 import { deviceStatus, lastReportedAt, statusChanges, uplinkStatus } from '../sim/outages.js';
 import { presenceIn } from '../sim/presence.js';
 import { trafficRows, uplinkBytes } from '../sim/traffic.js';
 import { WAN_RECV, WAN_SENT, WD_RECV, WD_SENT, WL_RECV, WL_SENT, clientUsage, networkTotals } from '../sim/usage.js';
 import { DAY, HOUR, MIN, iso, isoMicro } from '../time.js';
+import { validTimeZone } from '../validate.js';
+import { addNetwork, addOrganization, removeOrganization } from '../world.js';
 import { byId, bySerial, filterDevices, orgOf, round } from './common.js';
+
+const MAX_ORGS = 100;
+const MAX_NETWORKS = 500;
+
+function createNetwork(ctx) {
+  const org = orgOf(ctx);
+  const b = ctx.body;
+  if (!b.productTypes.length) throw badRequest("'productTypes' must not be empty");
+  if (org.networks.some((n) => n.name === b.name)) throw badRequest('Name has already been taken');
+  if (b.timeZone != null && !validTimeZone(b.timeZone)) throw badRequest("'timeZone' must be a valid IANA time zone");
+  if (org.networks.length >= MAX_NETWORKS) throw badRequest(`Organizations are limited to ${MAX_NETWORKS} networks in the emulator`);
+  const source = b.copyFromNetworkId ? org.networks.find((n) => n.id === b.copyFromNetworkId) : null;
+  if (b.copyFromNetworkId && !source) throw notFound('Network to copy from');
+  const net = addNetwork(ctx.world, org, { name: b.name, productTypes: [...new Set(b.productTypes)], tags: b.tags, timeZone: b.timeZone, notes: b.notes });
+  // Copying takes the source's settings, with its network ID swapped for the new one.
+  if (source) net.config = JSON.parse(JSON.stringify(configOf(source)).replaceAll(source.id, net.id));
+  return networkJson(net);
+}
 
 const MB = 1024;
 
@@ -119,6 +139,46 @@ export default [
     op: 'getOrganization',
     path: '/organizations/{organizationId}',
     handler: (ctx) => orgJson(orgOf(ctx)),
+  },
+  {
+    op: 'createOrganization',
+    method: 'POST',
+    path: '/organizations',
+    handler: (ctx) => {
+      if (ctx.world.orgs.length >= MAX_ORGS) throw badRequest(`The emulator is limited to ${MAX_ORGS} organizations`);
+      const org = addOrganization(ctx.world, ctx.body.name);
+      if (ctx.body.management) org.management = ctx.body.management;
+      return orgJson(org);
+    },
+  },
+  {
+    op: 'updateOrganization',
+    method: 'PUT',
+    path: '/organizations/{organizationId}',
+    handler: (ctx) => {
+      const org = orgOf(ctx);
+      const b = ctx.body;
+      if (b.name != null) org.name = b.name;
+      if (b.management) org.management = b.management;
+      if (b.api?.enabled != null) org.apiEnabled = b.api.enabled;
+      return orgJson(org);
+    },
+  },
+  {
+    op: 'deleteOrganization',
+    method: 'DELETE',
+    path: '/organizations/{organizationId}',
+    handler: (ctx) => {
+      const org = orgOf(ctx);
+      if (org.networks.length) throw badRequest('Delete every network in the organization first');
+      removeOrganization(ctx.world, org);
+    },
+  },
+  {
+    op: 'createOrganizationNetwork',
+    method: 'POST',
+    path: '/organizations/{organizationId}/networks',
+    handler: createNetwork,
   },
   {
     op: 'getOrganizationNetworks',
@@ -251,7 +311,7 @@ export default [
           deviceSerial: n.mx.serial,
           deviceStatus: deviceStatus(n.mx, ctx.now),
           uplinks: n.mx.uplinks.map((u) => ({ interface: u.interface, publicIp: u.publicIp })),
-          vpnMode: n.vpn,
+          vpnMode: configOf(n).siteToSite.mode,
           exportedSubnets: exportedSubnets(n),
           merakiVpnPeers: vpnPeers(n).map((p) => ({ networkId: p.id, networkName: p.name, reachability: vpnReachable(n, p, ctx.now) ? 'reachable' : 'unreachable' })),
           thirdPartyVpnPeers: n.vpn === 'hub' ? [{ name: 'Cloud VPC', publicIp: '192.0.2.200', reachability: 'reachable' }] : [],

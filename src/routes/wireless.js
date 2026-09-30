@@ -1,6 +1,7 @@
 // Wireless settings, RF profiles, SSID firewall and splash pages, radio status,
 // channel utilization, signal quality and failed connections.
 
+import { configOf, stored } from '../config.js';
 import { arrayParam, badRequest, intParam, notFound, paginate, resolutionParam, timeWindow } from '../http.js';
 import { hashStr } from '../rng.js';
 import { connectFailure, failureTime } from '../sim/events.js';
@@ -9,6 +10,7 @@ import { START, eachSession, presenceIn } from '../sim/presence.js';
 import { RADIO, WIDTH, apChannel, apPower, bssid, channelUtilization, clientSignal } from '../sim/rf.js';
 import { clientUsage } from '../sim/usage.js';
 import { DAY, HOUR, iso, isoMicro } from '../time.js';
+import { merge } from '../validate.js';
 import { bySerial, devOf, netOf, orgOf, requireModel, requireProduct, round } from './common.js';
 
 const BANDS = ['2.4', '5', '6'];
@@ -39,20 +41,19 @@ function findClient(net, id) {
 function ssidOf(net, ctx) {
   const n = Number(ctx.params.number);
   if (!Number.isInteger(n) || n < 0 || n > 14) throw notFound('SSID');
-  return { number: n, ssid: net.ssids.find((s) => s.number === n) };
+  return { number: n, ssid: net.ssids.find((s) => s.number === n), config: configOf(net).ssids[n] };
 }
 
 // ── Settings and RF profiles ──
 
-function rfProfiles(net) {
+function rfProfile(net, id, name, indoor) {
   const six = net.aps.some((a) => a.info.bands.includes('6'));
   const bands = six ? ['2.4', '5', '6'] : ['2.4', '5'];
   const mode = six ? 'multi' : 'dual';
-  const perSsid = Object.fromEntries(
-    Array.from({ length: 15 }, (_, n) => [String(n), { name: net.ssids.find((s) => s.number === n)?.name ?? `Unconfigured SSID ${n + 1}`, minBitrate: 11, bandOperationMode: mode, bands: { enabled: bands }, bandSteeringEnabled: true }]),
-  );
-  const profile = (name, indoor, i) => ({
-    id: String(100000 + ((hashStr(net.id) + i) % 900000)),
+  const ssids = configOf(net).ssids;
+  const perSsid = Object.fromEntries(ssids.map((s, n) => [String(n), { name: s.name, minBitrate: 11, bandOperationMode: mode, bands: { enabled: bands }, bandSteeringEnabled: true }]));
+  return {
+    id,
     networkId: net.id,
     name,
     clientBalancingEnabled: true,
@@ -66,18 +67,33 @@ function rfProfiles(net) {
     perSsidSettings: perSsid,
     isIndoorDefault: indoor,
     isOutdoorDefault: !indoor,
-  });
-  return [profile('Basic Indoor Profile', true, 0), profile('Basic Outdoor Profile', false, 1)];
+  };
 }
 
-// MR78s are outdoor APs, so they get the outdoor profile.
+function profileId(net, i) {
+  return String(100000 + ((hashStr(net.id) + i) % 900000));
+}
+
+// Every wireless network starts with the two basic profiles.
+function profilesOf(net) {
+  return stored(net, 'rfProfiles', () => [rfProfile(net, profileId(net, 0), 'Basic Indoor Profile', true), rfProfile(net, profileId(net, 1), 'Basic Outdoor Profile', false)]);
+}
+
+function profileOf(net, id) {
+  const p = profilesOf(net).find((x) => x.id === id);
+  if (!p) throw notFound('RF profile');
+  return p;
+}
+
+// An AP uses the profile set on its radio, else the default; MR78s are outdoor APs.
 function apProfile(ap) {
-  return rfProfiles(ap.net)[ap.model === 'MR78' ? 1 : 0];
+  const list = profilesOf(ap.net);
+  return list.find((p) => p.id === ap.radio?.rfProfileId) ?? list.find((p) => (ap.model === 'MR78' ? p.isOutdoorDefault : p.isIndoorDefault)) ?? list[0];
 }
 
 function wirelessSettings(net) {
   const [name, countryCode] = REGULATORY[net.timeZone] ?? ['FCC', 'US'];
-  return {
+  return stored(net, 'wirelessSettings', () => ({
     meshingEnabled: false,
     ipv6BridgeEnabled: false,
     locationAnalyticsEnabled: net.kind === 'retail',
@@ -87,24 +103,38 @@ function wirelessSettings(net) {
     multicastToUnicastConversion: { enabled: false },
     namedVlans: { poolDhcpMonitoring: { enabled: false, duration: 3 } },
     regulatoryDomain: { name, countryCode, permits6e: true },
-  };
+  }));
 }
 
-// Guest SSIDs keep clients off the LAN; everything else may reach it.
-function ssidL3Rules(ssid) {
-  const lan = !!ssid && ssid.key !== 'guest';
+// Guest SSIDs keep clients off the LAN; everything else may reach it. The LAN
+// and default rules always come last, after any rules written through the API.
+function ssidL3(net, number) {
+  const all = stored(net, 'ssidL3', () => ({}));
+  return (all[number] ??= { rules: [], allowLanAccess: net.ssids.find((s) => s.number === number)?.key !== 'guest' });
+}
+
+function ssidL3Json(set) {
   return {
     rules: [
-      { comment: 'Wireless clients accessing LAN', policy: lan ? 'allow' : 'deny', ipVer: 'ipv4', protocol: 'Any', destPort: 'Any', destCidr: 'Local LAN' },
+      ...set.rules,
+      { comment: 'Wireless clients accessing LAN', policy: set.allowLanAccess ? 'allow' : 'deny', ipVer: 'ipv4', protocol: 'Any', destPort: 'Any', destCidr: 'Local LAN' },
       { comment: 'Default rule', policy: 'allow', ipVer: 'both', protocol: 'Any', destPort: 'Any', destCidr: 'Any' },
     ],
-    allowLanAccess: lan,
+    allowLanAccess: set.allowLanAccess,
   };
 }
 
-function splashSettings(number, ssid) {
+function ssidL7(net, number) {
+  const all = stored(net, 'ssidL7', () => ({}));
+  const guest = net.ssids.find((s) => s.number === number)?.key === 'guest';
+  return (all[number] ??= { rules: guest ? [{ policy: 'deny', type: 'applicationCategory', value: { id: 'meraki:layer7/category/2', name: 'Peer-to-peer (P2P)' } }] : [] });
+}
+
+function splashSettings(net, number) {
+  const all = stored(net, 'splash', () => ({}));
+  const ssid = net.ssids.find((s) => s.number === number);
   const none = { md5: null, extension: null };
-  return {
+  return (all[number] ??= {
     ssidNumber: number,
     splashPage: ssid?.splashPage || 'None',
     useSplashUrl: false,
@@ -125,29 +155,57 @@ function splashSettings(number, ssid) {
     billing: { freeAccess: { enabled: false, durationInMinutes: 20 }, prepaidAccessFastLoginEnabled: false, replyToEmailAddress: null },
     sentryEnrollment: { systemsManagerNetwork: { id: null }, strength: 'focused', enforcedSystems: [] },
     selfRegistration: { enabled: false, authorizationType: 'admin' },
-  };
+  });
+}
+
+// PSK and 802.1X settings only make sense for their own auth mode, so a change
+// of mode drops the other mode's fields. A new name also renames the SSID the
+// simulated clients use.
+function updateSsid(ctx) {
+  const net = wirelessNet(ctx);
+  const { number, ssid, config } = ssidOf(net, ctx);
+  const { number: ignored, ...patch } = ctx.body;
+  const next = merge(structuredClone(config), patch);
+  if (next.authMode === 'psk') {
+    if (!next.psk || next.psk.length < 8 || next.psk.length > 63) throw badRequest("'psk' must be 8 to 63 characters when authMode is psk");
+    next.encryptionMode ??= 'wpa';
+    next.wpaEncryptionMode ??= 'WPA2 only';
+  } else {
+    delete next.psk;
+    if (!String(next.authMode).startsWith('8021x')) delete next.encryptionMode;
+    if (next.authMode === 'open') delete next.wpaEncryptionMode;
+  }
+  if (next.authMode === '8021x-radius' && !next.radiusServers?.length) throw badRequest("'radiusServers' is required when authMode is 8021x-radius");
+  // Server IDs are assigned by the API: a host and port it already knows keep theirs.
+  if (next.radiusServers) {
+    next.radiusServers = next.radiusServers.map((s) => ({ id: config.radiusServers?.find((o) => o.host === s.host && o.port === s.port)?.id ?? String(hashStr(`${net.id}:${s.host}:${s.port}`) % 1e9), ...s }));
+  }
+  if (patch.name && ssid) ssid.name = patch.name;
+  configOf(net).ssids[number] = next;
+  return next;
 }
 
 // ── Radios ──
 
 function wirelessStatus(ap, now) {
   const sets = [];
-  for (const s of ap.net.ssids) {
+  configOf(ap.net).ssids.forEach((s, number) => {
+    if (!s.enabled) return;
     for (const band of ap.info.bands) {
       sets.push({
         ssidName: s.name,
-        ssidNumber: s.number,
+        ssidNumber: number,
         enabled: true,
         band: `${band} GHz`,
-        bssid: bssid(ap, band, s.number),
+        bssid: bssid(ap, band, number),
         channel: apChannel(ap, band),
         channelWidth: `${WIDTH[band]} MHz`,
         power: `${apPower(ap, band)} dBm`,
-        visible: true,
+        visible: s.visible !== false,
         broadcasting: !isDown(ap, now),
       });
     }
-  }
+  });
   return { basicServiceSets: sets };
 }
 
@@ -156,8 +214,22 @@ function radioSettings(ap) {
     serial: ap.serial,
     rfProfileId: apProfile(ap).id,
     twoFourGhzSettings: { channel: apChannel(ap, '2.4'), targetPower: apPower(ap, '2.4') },
-    fiveGhzSettings: { channel: apChannel(ap, '5'), channelWidth: WIDTH[5], targetPower: apPower(ap, '5') },
+    fiveGhzSettings: { channel: apChannel(ap, '5'), channelWidth: ap.radio?.fiveGhzSettings?.channelWidth ?? WIDTH[5], targetPower: apPower(ap, '5') },
   };
+}
+
+// Channels have to be ones the band offers; power is in dBm.
+function updateRadio(ctx) {
+  const ap = devOf(ctx);
+  requireModel(ap, 'wireless');
+  const b = ctx.body;
+  if (b.rfProfileId != null) profileOf(ap.net, b.rfProfileId);
+  const two = b.twoFourGhzSettings?.channel;
+  if (two != null && !(two >= 1 && two <= 14)) throw badRequest("'twoFourGhzSettings.channel' must be a 2.4 GHz channel from 1 to 14");
+  const five = b.fiveGhzSettings?.channel;
+  if (five != null && !FIVE_GHZ.includes(five)) throw badRequest(`'fiveGhzSettings.channel' must be one of: ${FIVE_GHZ.join(', ')}`);
+  ap.radio = merge(ap.radio || {}, b);
+  return radioSettings(ap);
 }
 
 // Average utilization over the chosen APs and bands.
@@ -322,38 +394,118 @@ function topSsids(ctx) {
 
 export default [
   {
+    op: 'getNetworkWirelessSsids',
+    path: '/networks/{networkId}/wireless/ssids',
+    handler: (ctx) => configOf(wirelessNet(ctx)).ssids,
+  },
+  {
+    op: 'getNetworkWirelessSsid',
+    path: '/networks/{networkId}/wireless/ssids/{number}',
+    sample: { number: '0' },
+    handler: (ctx) => ssidOf(wirelessNet(ctx), ctx).config,
+  },
+  { op: 'updateNetworkWirelessSsid', method: 'PUT', path: '/networks/{networkId}/wireless/ssids/{number}', handler: updateSsid },
+  {
     op: 'getNetworkWirelessSettings',
     path: '/networks/{networkId}/wireless/settings',
     handler: (ctx) => wirelessSettings(wirelessNet(ctx)),
   },
   {
+    op: 'updateNetworkWirelessSettings',
+    method: 'PUT',
+    path: '/networks/{networkId}/wireless/settings',
+    handler: (ctx) => merge(wirelessSettings(wirelessNet(ctx)), ctx.body),
+  },
+  {
     op: 'getNetworkWirelessRfProfiles',
     path: '/networks/{networkId}/wireless/rfProfiles',
-    handler: (ctx) => rfProfiles(wirelessNet(ctx)),
+    handler: (ctx) => profilesOf(wirelessNet(ctx)),
+  },
+  {
+    op: 'createNetworkWirelessRfProfile',
+    method: 'POST',
+    path: '/networks/{networkId}/wireless/rfProfiles',
+    handler: (ctx) => {
+      const net = wirelessNet(ctx);
+      const list = profilesOf(net);
+      if (list.some((p) => p.name === ctx.body.name)) throw badRequest('Name has already been taken');
+      if (list.length >= 100) throw badRequest('Networks are limited to 100 RF profiles in the emulator');
+      let i = list.length;
+      while (list.some((p) => p.id === profileId(net, i))) i++;
+      const profile = merge({ ...rfProfile(net, profileId(net, i), ctx.body.name, true), isIndoorDefault: false, isOutdoorDefault: false }, ctx.body);
+      list.push(profile);
+      return profile;
+    },
   },
   {
     op: 'getNetworkWirelessRfProfile',
     path: '/networks/{networkId}/wireless/rfProfiles/{rfProfileId}',
-    sample: { rfProfileId: (world) => rfProfiles(world.orgs[0].networks[0])[0].id },
+    sample: { rfProfileId: (world) => profilesOf(world.orgs[0].networks[0])[0].id },
+    handler: (ctx) => profileOf(wirelessNet(ctx), ctx.params.rfProfileId),
+  },
+  {
+    op: 'updateNetworkWirelessRfProfile',
+    method: 'PUT',
+    path: '/networks/{networkId}/wireless/rfProfiles/{rfProfileId}',
     handler: (ctx) => {
-      const p = rfProfiles(wirelessNet(ctx)).find((x) => x.id === ctx.params.rfProfileId);
-      if (!p) throw notFound('RF profile');
-      return p;
+      const { id, networkId, ...patch } = ctx.body;
+      return merge(profileOf(wirelessNet(ctx), ctx.params.rfProfileId), patch);
+    },
+  },
+  {
+    op: 'deleteNetworkWirelessRfProfile',
+    method: 'DELETE',
+    path: '/networks/{networkId}/wireless/rfProfiles/{rfProfileId}',
+    handler: (ctx) => {
+      const net = wirelessNet(ctx);
+      const p = profileOf(net, ctx.params.rfProfileId);
+      if (p.isIndoorDefault || p.isOutdoorDefault) throw badRequest('The basic RF profiles cannot be deleted');
+      if (net.aps.some((a) => a.radio?.rfProfileId === p.id)) throw badRequest('This RF profile is assigned to an access point');
+      const list = profilesOf(net);
+      list.splice(list.indexOf(p), 1);
     },
   },
   {
     op: 'getNetworkWirelessSsidFirewallL3FirewallRules',
     path: '/networks/{networkId}/wireless/ssids/{number}/firewall/l3FirewallRules',
     sample: { number: '1' },
-    handler: (ctx) => ssidL3Rules(ssidOf(wirelessNet(ctx), ctx).ssid),
+    handler: (ctx) => {
+      const net = wirelessNet(ctx);
+      return ssidL3Json(ssidL3(net, ssidOf(net, ctx).number));
+    },
+  },
+  {
+    op: 'updateNetworkWirelessSsidFirewallL3FirewallRules',
+    method: 'PUT',
+    path: '/networks/{networkId}/wireless/ssids/{number}/firewall/l3FirewallRules',
+    handler: (ctx) => {
+      const net = wirelessNet(ctx);
+      const set = ssidL3(net, ssidOf(net, ctx).number);
+      const { rules, allowLanAccess } = ctx.body;
+      // The LAN and default rules are generated, so copies sent back are dropped.
+      if (rules) set.rules = rules.filter((r) => r.comment !== 'Default rule' && r.comment !== 'Wireless clients accessing LAN').map((r) => ({ comment: r.comment ?? '', policy: r.policy, ipVer: r.ipVer ?? 'ipv4', protocol: r.protocol, destPort: r.destPort ?? 'Any', destCidr: r.destCidr }));
+      if (allowLanAccess != null) set.allowLanAccess = allowLanAccess;
+      return ssidL3Json(set);
+    },
   },
   {
     op: 'getNetworkWirelessSsidFirewallL7FirewallRules',
     path: '/networks/{networkId}/wireless/ssids/{number}/firewall/l7FirewallRules',
     sample: { number: '1' },
     handler: (ctx) => {
-      const { ssid } = ssidOf(wirelessNet(ctx), ctx);
-      return { rules: ssid?.key === 'guest' ? [{ policy: 'deny', type: 'applicationCategory', value: { id: 'meraki:layer7/category/2', name: 'Peer-to-peer (P2P)' } }] : [] };
+      const net = wirelessNet(ctx);
+      return ssidL7(net, ssidOf(net, ctx).number);
+    },
+  },
+  {
+    op: 'updateNetworkWirelessSsidFirewallL7FirewallRules',
+    method: 'PUT',
+    path: '/networks/{networkId}/wireless/ssids/{number}/firewall/l7FirewallRules',
+    handler: (ctx) => {
+      const net = wirelessNet(ctx);
+      const set = ssidL7(net, ssidOf(net, ctx).number);
+      if (ctx.body.rules) set.rules = ctx.body.rules;
+      return set;
     },
   },
   {
@@ -361,8 +513,18 @@ export default [
     path: '/networks/{networkId}/wireless/ssids/{number}/splash/settings',
     sample: { number: '1' },
     handler: (ctx) => {
-      const { number, ssid } = ssidOf(wirelessNet(ctx), ctx);
-      return splashSettings(number, ssid);
+      const net = wirelessNet(ctx);
+      return splashSettings(net, ssidOf(net, ctx).number);
+    },
+  },
+  {
+    op: 'updateNetworkWirelessSsidSplashSettings',
+    method: 'PUT',
+    path: '/networks/{networkId}/wireless/ssids/{number}/splash/settings',
+    handler: (ctx) => {
+      const net = wirelessNet(ctx);
+      const { ssidNumber, ...patch } = ctx.body;
+      return merge(splashSettings(net, ssidOf(net, ctx).number), patch);
     },
   },
   {
@@ -400,6 +562,7 @@ export default [
       return radioSettings(dev);
     },
   },
+  { op: 'updateDeviceWirelessRadioSettings', method: 'PUT', path: '/devices/{serial}/wireless/radio/settings', handler: updateRadio },
   {
     op: 'getOrganizationWirelessDevicesChannelUtilizationByDevice',
     path: '/organizations/{organizationId}/wireless/devices/channelUtilization/byDevice',

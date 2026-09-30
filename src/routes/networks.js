@@ -1,4 +1,6 @@
 import { clientJson, deviceJson, networkJson } from '../format.js';
+import { validTimeZone } from '../validate.js';
+import { removeNetwork } from '../world.js';
 import { arrayParam, badRequest, intParam, linkHeader, notFound, paginate, perPageParam, resolutionParam, timeWindow } from '../http.js';
 import { networkEventsOnDay, securityEventsOnDay } from '../sim/events.js';
 import { eachSession, isOnline, presenceIn } from '../sim/presence.js';
@@ -98,14 +100,15 @@ function eventFilter(ctx, net) {
     (!included.size || included.has(e.type)) &&
     !excluded.has(e.type) &&
     (!deviceSerial || e.deviceSerial === deviceSerial) &&
-    (!deviceName || e.deviceName === deviceName) &&
+    (!deviceName || (world.deviceBySerial.get(e.deviceSerial)?.name ?? e.deviceName) === deviceName) &&
     (!deviceMac || world.deviceBySerial.get(e.deviceSerial)?.mac === deviceMac) &&
     (!clientMac || e.clientMac === clientMac) &&
     (!clientName || e.clientDescription === clientName) &&
     (!clientIp || world.clientById.get(e.clientId)?.ip === clientIp);
 }
 
-function eventJson(e) {
+// Device names come from the device now, so renames show up in old events too.
+function eventJson(e, world) {
   return {
     occurredAt: isoUs(e.us),
     networkId: e.networkId,
@@ -116,7 +119,7 @@ function eventJson(e) {
     clientDescription: e.clientDescription ?? null,
     clientMac: e.clientMac ?? null,
     deviceSerial: e.deviceSerial ?? null,
-    deviceName: e.deviceName ?? null,
+    deviceName: e.deviceSerial ? (world.deviceBySerial.get(e.deviceSerial)?.name ?? e.deviceName) : null,
     ssidNumber: e.ssidNumber ?? null,
     eventData: e.eventData ?? {},
   };
@@ -171,7 +174,7 @@ function networkEvents(ctx) {
     message: null,
     pageStartAt: isoUs(first),
     pageEndAt: isoUs(last),
-    events: page.reverse().map(eventJson),
+    events: page.reverse().map((e) => eventJson(e, ctx.world)),
   };
 }
 
@@ -218,58 +221,31 @@ function historyWindow(ctx) {
   return { t0, t1, res, bs: buckets(t0, t1, res) };
 }
 
-const PSK_SSID = { encryptionMode: 'wpa', wpaEncryptionMode: 'WPA2 only', psk: 'example-passphrase' };
-
-function ssidJson(net, number) {
-  const s = net.ssids.find((x) => x.number === number);
-  const common = {
-    number,
-    ssidAdminAccessible: false,
-    localAuth: false,
-    minBitrate: 11,
-    bandSelection: 'Dual band operation',
-    perClientBandwidthLimitUp: 0,
-    perClientBandwidthLimitDown: 0,
-    perSsidBandwidthLimitUp: 0,
-    perSsidBandwidthLimitDown: 0,
-    mandatoryDhcpEnabled: false,
-    visible: true,
-    availableOnAllAps: true,
-    availabilityTags: [],
-    speedBurst: { enabled: false },
-  };
-  if (!s) return { ...common, name: `Unconfigured SSID ${number + 1}`, enabled: false, splashPage: 'None', authMode: 'open', ipAssignmentMode: 'NAT mode' };
-  const out = {
-    ...common,
-    name: s.name,
-    enabled: true,
-    splashPage: s.splashPage || 'None',
-    authMode: s.authMode,
-    ipAssignmentMode: s.nat ? 'NAT mode' : 'Bridge mode',
-    bandSelection: 'Dual band operation with Band Steering',
-    minBitrate: 12,
-  };
-  if (s.authMode === 'psk') Object.assign(out, PSK_SSID);
-  if (s.authMode === '8021x-radius') {
-    Object.assign(out, {
-      encryptionMode: 'wpa-eap',
-      wpaEncryptionMode: 'WPA2 only',
-      radiusServers: [{ id: String(net.key % 1e9), host: `${net.org.hub ? net.org.hub.subnet(5) : net.subnet(5)}.20`, port: 1812 }],
-      radiusAccountingEnabled: false,
-      radiusFailoverPolicy: 'Deny access',
-      radiusLoadBalancingPolicy: 'Round robin',
-    });
-  }
-  if (!s.nat) Object.assign(out, { useVlanTagging: true, defaultVlanId: s.vlan });
-  if (s.splashPage) Object.assign(out, { splashTimeout: '1440 minutes', walledGardenEnabled: false });
-  return out;
-}
-
 export default [
   {
     op: 'getNetwork',
     path: '/networks/{networkId}',
     handler: (ctx) => networkJson(netOf(ctx)),
+  },
+  {
+    op: 'updateNetwork',
+    method: 'PUT',
+    path: '/networks/{networkId}',
+    handler: (ctx) => {
+      const net = netOf(ctx);
+      const b = ctx.body;
+      if (b.name != null && b.name !== net.name && net.org.networks.some((n) => n.name === b.name)) throw badRequest('Name has already been taken');
+      if (b.timeZone != null && !validTimeZone(b.timeZone)) throw badRequest(`'timeZone' must be a valid IANA time zone`);
+      // The time zone is what the API reports; the simulated schedule keeps the site's real one.
+      for (const k of ['name', 'timeZone', 'tags', 'enrollmentString', 'notes']) if (b[k] !== undefined) net[k] = b[k];
+      return networkJson(net);
+    },
+  },
+  {
+    op: 'deleteNetwork',
+    method: 'DELETE',
+    path: '/networks/{networkId}',
+    handler: (ctx) => removeNetwork(ctx.world, netOf(ctx)),
   },
   {
     op: 'getNetworkDevices',
@@ -370,7 +346,9 @@ export default [
       requireProduct(net, 'appliance');
       const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 31 * DAY, defaultSpan: 600, lookback: 30 * DAY });
       const res = resolutionParam(ctx.query, [60, 300, 600, 1800, 3600, 86400], 60, t1 - t0);
+      // A network created through the API has no MX yet, so no uplinks to report.
       return buckets(t0, t1, res).map(([s, e]) => {
+        if (!net.mx) return { startTime: iso(s), endTime: iso(e), byInterface: [] };
         const bytes = uplinkBytes(net, Math.max(s, t0), Math.min(e, t1), res);
         return { startTime: iso(s), endTime: iso(e), byInterface: net.mx.uplinks.map((u) => ({ interface: u.interface, ...bytes[u.interface] })) };
       });
@@ -485,27 +463,6 @@ export default [
       const { t0, t1 } = statsWindow(ctx);
       const fields = ctx.query.get('fields');
       return [...latencyAps].sort(bySerial).map((ap) => ({ serial: ap.serial, latencyStats: latencyStats([ap], t0, t1, fields) }));
-    },
-  },
-  {
-    op: 'getNetworkWirelessSsids',
-    path: '/networks/{networkId}/wireless/ssids',
-    handler: (ctx) => {
-      const net = netOf(ctx);
-      requireProduct(net, 'wireless');
-      return Array.from({ length: 15 }, (_, n) => ssidJson(net, n));
-    },
-  },
-  {
-    op: 'getNetworkWirelessSsid',
-    path: '/networks/{networkId}/wireless/ssids/{number}',
-    sample: { number: '0' },
-    handler: (ctx) => {
-      const net = netOf(ctx);
-      requireProduct(net, 'wireless');
-      const n = Number(ctx.params.number);
-      if (!Number.isInteger(n) || n < 0 || n > 14) throw notFound('SSID');
-      return ssidJson(net, n);
     },
   },
 ];

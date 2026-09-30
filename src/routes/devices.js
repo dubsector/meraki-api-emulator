@@ -39,6 +39,16 @@ export default [
     handler: (ctx) => deviceJson(devOf(ctx), { full: true }),
   },
   {
+    op: 'updateDevice',
+    method: 'PUT',
+    path: '/devices/{serial}',
+    handler: (ctx) => {
+      const dev = devOf(ctx);
+      for (const k of ['name', 'tags', 'lat', 'lng', 'address', 'notes', 'floorPlanId']) if (ctx.body[k] !== undefined) dev[k] = ctx.body[k];
+      return deviceJson(dev, { full: true });
+    },
+  },
+  {
     op: 'getDeviceLldpCdp',
     path: '/devices/{serial}/lldpCdp',
     sample: { serial: 'switch' },

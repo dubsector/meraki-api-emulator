@@ -2,6 +2,7 @@
 // and the log of API calls made to this emulator.
 
 import { ApiError, arrayParam, badRequest, hasTags, intParam, notFound, paginate, timeWindow } from '../http.js';
+import { hashStr } from '../rng.js';
 import { changesOnDay } from '../sim/changes.js';
 import { DAY, iso, isoMicro, weekday } from '../time.js';
 import { orgOf } from './common.js';
@@ -37,6 +38,37 @@ function adminJson(a, ctx) {
     networks: a.networks,
     authenticationMethod: 'Email',
   };
+}
+
+const MAX_ADMINS = 200;
+
+function adminOf(org, id) {
+  const a = org.admins.find((x) => x.id === id);
+  if (!a) throw notFound('Admin');
+  return a;
+}
+
+// Network and tag privileges must point at networks in this organization.
+function checkPrivileges(org, b) {
+  for (const n of b.networks || []) {
+    if (!org.networks.some((x) => x.id === n.id)) throw badRequest(`Network ${n.id} is not in this organization`);
+  }
+}
+
+function createAdmin(ctx) {
+  const org = orgOf(ctx);
+  const b = ctx.body;
+  const email = b.email.trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw badRequest("'email' must be an email address");
+  if (org.admins.some((a) => a.email === email)) throw badRequest('Email has already been taken');
+  if (org.admins.length >= MAX_ADMINS) throw badRequest(`Organizations are limited to ${MAX_ADMINS} admins in the emulator`);
+  checkPrivileges(org, b);
+  let id;
+  const ids = new Set(ctx.world.orgs.flatMap((o) => o.admins.map((a) => a.id)));
+  for (let i = 0; !id || ids.has(id); i++) id = String(100000 + ((hashStr(`${org.id}:${email}:${i}`) % 900000)));
+  const admin = { id, name: b.name, email, orgAccess: b.orgAccess, accountStatus: 'unverified', twoFactorAuthEnabled: false, hasApiKey: false, tags: b.tags || [], networks: b.networks || [], activeHour: 9 };
+  org.admins.push(admin);
+  return adminJson(admin, ctx);
 }
 
 function licenseState(l, now) {
@@ -156,16 +188,19 @@ function configurationChanges(ctx) {
   const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 365 * DAY, defaultSpan: 365 * DAY, lookback: 365 * DAY });
   const networkId = ctx.query.get('networkId');
   const adminId = ctx.query.get('adminId');
-  const rows = [];
-  for (let d = Math.floor(t0 / DAY); d <= Math.floor(t1 / DAY); d++) {
-    for (const c of changesOnDay(org, d)) {
-      if (c.t < t0 || c.t >= t1 || (networkId && c.net.id !== networkId) || (adminId && c.admin.id !== adminId)) continue;
-      const row = { ts: isoMicro(c.t), adminName: c.admin.name, adminEmail: c.admin.email, adminId: c.admin.id, networkName: c.net.name, networkId: c.net.id, networkUrl: c.net.url };
+  const changes = [];
+  for (let d = Math.floor(t0 / DAY); d <= Math.floor(t1 / DAY); d++) changes.push(...changesOnDay(org, d).filter((c) => c.t >= t0 && c.t < t1));
+  // API writes land at the current instant, which is the window's end.
+  changes.push(...(org.apiChanges || []).filter((c) => c.t >= t0 && c.t <= t1));
+  const rows = changes
+    .filter((c) => (!networkId || c.net?.id === networkId) && (!adminId || c.admin.id === adminId))
+    .sort((a, b) => a.t - b.t)
+    .map((c, i) => {
+      const row = { ts: isoMicro(c.t), adminName: c.admin.name, adminEmail: c.admin.email, adminId: c.admin.id, networkName: c.net?.name ?? null, networkId: c.net?.id ?? null, networkUrl: c.net?.url ?? null };
       if (c.ssidNumber != null) Object.assign(row, { ssidName: c.ssidName, ssidNumber: c.ssidNumber });
-      rows.push({ ...row, page: c.page, label: c.label, oldValue: c.oldValue, newValue: c.newValue });
-    }
-  }
-  return paginate(ctx, rows.reverse(), (r) => r.ts, { def: 5000, max: 100000 });
+      return { key: `${row.ts}:${i}`, row: { ...row, page: c.page, label: c.label, oldValue: c.oldValue, newValue: c.newValue } };
+    });
+  return paginate(ctx, rows.reverse(), (r) => r.key, { def: 5000, max: 100000 }).map((r) => r.row);
 }
 
 function apiWindow(ctx, defaultSpan = 31 * DAY) {
@@ -258,6 +293,35 @@ export default [
       const nets = org.networks.filter((n) => networkIds.includes(n.id));
       const reaches = (a) => a.networks.some((n) => networkIds.includes(n.id)) || a.tags.some((t) => nets.some((n) => n.tags.includes(t.tag)));
       return org.admins.filter((a) => !networkIds.length || reaches(a)).map((a) => adminJson(a, ctx));
+    },
+  },
+  {
+    op: 'createOrganizationAdmin',
+    method: 'POST',
+    path: '/organizations/{organizationId}/admins',
+    handler: createAdmin,
+  },
+  {
+    op: 'updateOrganizationAdmin',
+    method: 'PUT',
+    path: '/organizations/{organizationId}/admins/{adminId}',
+    handler: (ctx) => {
+      const org = orgOf(ctx);
+      const a = adminOf(org, ctx.params.adminId);
+      checkPrivileges(org, ctx.body);
+      for (const k of ['name', 'orgAccess', 'tags', 'networks']) if (ctx.body[k] !== undefined) a[k] = ctx.body[k];
+      return adminJson(a, ctx);
+    },
+  },
+  {
+    op: 'deleteOrganizationAdmin',
+    method: 'DELETE',
+    path: '/organizations/{organizationId}/admins/{adminId}',
+    handler: (ctx) => {
+      const org = orgOf(ctx);
+      const a = adminOf(org, ctx.params.adminId);
+      if (a.api) throw badRequest('An admin cannot delete their own account');
+      org.admins.splice(org.admins.indexOf(a), 1);
     },
   },
   {
