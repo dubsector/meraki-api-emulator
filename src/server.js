@@ -6,6 +6,7 @@ import { landingPage } from './landing.js';
 import devices from './routes/devices.js';
 import networks from './routes/networks.js';
 import organizations from './routes/organizations.js';
+import { RateLimiter } from './ratelimit.js';
 import { parseTime } from './time.js';
 import { buildWorld } from './world.js';
 
@@ -25,28 +26,6 @@ function compile(routes) {
       return { ...r, names, re: new RegExp(`^${src}/?$`) };
     })
     .sort((a, b) => a.names.length - b.names.length); // literal segments win over {params}
-}
-
-// Token bucket per API key, refilled continuously.
-class Bucket {
-  constructor(rate, burst) {
-    this.rate = rate;
-    this.burst = burst;
-    this.tokens = burst;
-    this.at = performance.now();
-  }
-
-  // Returns 0 when a token was taken, otherwise seconds until one is free.
-  take() {
-    const now = performance.now();
-    this.tokens = Math.min(this.burst, this.tokens + ((now - this.at) / 1000) * this.rate);
-    this.at = now;
-    if (this.tokens >= 1) {
-      this.tokens -= 1;
-      return 0;
-    }
-    return (1 - this.tokens) / this.rate;
-  }
 }
 
 export function resolveOptions(o = {}) {
@@ -77,7 +56,7 @@ export function createEmulator(options = {}) {
   const clock = () => opts.now ?? Date.now() / 1000;
   const world = buildWorld({ seed: opts.seed, bootTime: clock() });
   const routes = compile(ROUTES);
-  const buckets = new Map();
+  const limiter = opts.rateLimit > 0 ? new RateLimiter(opts.rateLimit, opts.burst) : null;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   function send(res, status, body, headers = {}) {
@@ -98,12 +77,8 @@ export function createEmulator(options = {}) {
     const key = apiKeyOf(req);
     if (!key || (opts.apiKey && key !== opts.apiKey)) return send(res, 401, { errors: [AUTH_ERROR] });
 
-    if (opts.rateLimit > 0) {
-      let b = buckets.get(key);
-      if (!b) buckets.set(key, (b = new Bucket(opts.rateLimit, opts.burst)));
-      const wait = b.take();
-      if (wait > 0) return send(res, 429, { errors: ['Too many requests'] }, { 'Retry-After': String(Math.max(1, Math.ceil(wait))) });
-    }
+    const wait = limiter ? limiter.take(key) : 0;
+    if (wait > 0) return send(res, 429, { errors: ['Too many requests'] }, { 'Retry-After': String(Math.max(1, Math.ceil(wait))) });
 
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return send(res, 405, { errors: ['The emulator is read-only. Only GET requests are supported.'] }, { Allow: 'GET, HEAD' });
