@@ -21,7 +21,8 @@
     "start": "node bin/meraki-api-emulator.js",
     "test": "node --test \"test/**/*.test.js\"",
     "docs": "node scripts/endpoints.js",
-    "check-spec": "node scripts/check-spec.js"
+    "check-spec": "node scripts/check-spec.js",
+    "schemas": "node scripts/schemas.js"
   },
   "engines": {
     "node": ">=22"

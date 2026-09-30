@@ -2,12 +2,17 @@
 // policies, firmware, floor plans and the link layer topology.
 
 import { configOf } from '../config.js';
-import { notFound } from '../http.js';
+import { badRequest, notFound } from '../http.js';
 import { hashStr } from '../rng.js';
 import { deviceStatus, lastReportedAt } from '../sim/outages.js';
 import { isOnline } from '../sim/presence.js';
 import { DAY, iso } from '../time.js';
+import { merge } from '../validate.js';
 import { devOf, netOf } from './common.js';
+
+const MAX_ITEMS = 100;
+const SYSLOG_ROLES = ['Wireless event log', 'Appliance event log', 'Switch event log', 'Air Marshal events', 'Flows', 'URLs', 'IDS alerts', 'Security events'];
+const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
 // Firmware trains per product: [firmware, short name, release date].
 const FIRMWARE = {
@@ -26,6 +31,7 @@ function firmwareUpgrades(net) {
   const products = {};
   for (const p of net.productTypes) {
     const f = FIRMWARE[p];
+    if (!f) continue;
     const upgraded = Date.parse(`${f.current[2]}T00:00:00Z`) / 1000 + (14 + (net.key % 7)) * DAY + 3 * 3600;
     products[p] = {
       currentVersion: version(f.current),
@@ -83,46 +89,6 @@ function topology(net, now) {
   return { nodes, links, errors: [] };
 }
 
-const setting = (op, path, pick) => ({ op, path: `/networks/{networkId}/${path}`, handler: (ctx) => pick(configOf(netOf(ctx)), netOf(ctx), ctx) });
-
-export default [
-  setting('getNetworkSettings', 'settings', (c) => c.settings),
-  setting('getNetworkSyslogServers', 'syslogServers', (c) => c.syslog),
-  setting('getNetworkSnmp', 'snmp', (c) => c.snmp),
-  setting('getNetworkAlertsSettings', 'alerts/settings', (c) => c.alerts),
-  setting('getNetworkWebhooksHttpServers', 'webhooks/httpServers', (c) => c.httpServers),
-  setting('getNetworkGroupPolicies', 'groupPolicies', (c) => c.groupPolicies),
-  {
-    op: 'getNetworkWebhooksHttpServer',
-    path: '/networks/{networkId}/webhooks/httpServers/{httpServerId}',
-    sample: { httpServerId: Buffer.from('https://hooks.example.com/meraki/alerts').toString('base64') },
-    handler: (ctx) => {
-      const server = configOf(netOf(ctx)).httpServers.find((s) => s.id === ctx.params.httpServerId);
-      if (!server) throw notFound('HTTP server');
-      return server;
-    },
-  },
-  {
-    op: 'getNetworkGroupPolicy',
-    path: '/networks/{networkId}/groupPolicies/{groupPolicyId}',
-    sample: { groupPolicyId: '101' },
-    handler: (ctx) => {
-      const policy = configOf(netOf(ctx)).groupPolicies.find((p) => p.groupPolicyId === ctx.params.groupPolicyId);
-      if (!policy) throw notFound('Group policy');
-      return policy;
-    },
-  },
-  setting('getNetworkFirmwareUpgrades', 'firmwareUpgrades', (c, net) => firmwareUpgrades(net)),
-  setting('getNetworkFloorPlans', 'floorPlans', () => []),
-  setting('getNetworkTopologyLinkLayer', 'topology/linkLayer', (c, net, ctx) => topology(net, ctx.now)),
-  {
-    op: 'getDeviceManagementInterface',
-    path: '/devices/{serial}/managementInterface',
-    sample: { serial: 'appliance' },
-    handler: (ctx) => managementInterface(devOf(ctx)),
-  },
-];
-
 // MX WAN addressing; other devices only report that they use DHCP on the management VLAN.
 function managementInterface(dev) {
   if (dev.productType !== 'appliance') return { wan1: { usingStaticIp: false, vlan: null } };
@@ -139,3 +105,189 @@ function managementInterface(dev) {
     wan2: wan(dev.uplinks[1]),
   };
 }
+
+// ── Writes ──
+
+function serverOf(c, id) {
+  const server = c.httpServers.find((s) => s.id === id);
+  if (!server) throw notFound('HTTP server');
+  return server;
+}
+
+function policyOf(c, id) {
+  const policy = c.groupPolicies.find((p) => p.groupPolicyId === id);
+  if (!policy) throw notFound('Group policy');
+  return policy;
+}
+
+function createServer(ctx) {
+  const net = netOf(ctx);
+  const c = configOf(net);
+  const { name, url, sharedSecret, payloadTemplate } = ctx.body;
+  let parsed = null;
+  try {
+    parsed = new URL(url);
+  } catch {}
+  if (!parsed || !/^https?:$/.test(parsed.protocol)) throw badRequest("'url' must be an http or https URL");
+  // The real API uses the base64 of the URL as the ID, so each URL can only be added once.
+  const id = Buffer.from(url).toString('base64');
+  if (c.httpServers.some((s) => s.id === id)) throw badRequest('This URL has already been added');
+  if (c.httpServers.length >= MAX_ITEMS) throw badRequest(`Networks are limited to ${MAX_ITEMS} webhook servers in the emulator`);
+  const server = { id, name, url, enabled: true, networkId: net.id, payloadTemplate: { payloadTemplateId: 'wpt_00001', name: 'Meraki (included)', ...payloadTemplate } };
+  c.httpServers.push(server);
+  (c.httpServerSecrets ??= {})[id] = sharedSecret ?? '';
+  return server;
+}
+
+function updateServer(ctx) {
+  const c = configOf(netOf(ctx));
+  const server = serverOf(c, ctx.params.httpServerId);
+  const { name, sharedSecret, payloadTemplate } = ctx.body;
+  if (name != null) server.name = name;
+  if (payloadTemplate) merge(server.payloadTemplate, payloadTemplate);
+  if (sharedSecret != null) (c.httpServerSecrets ??= {})[server.id] = sharedSecret;
+  return server;
+}
+
+// Alert settings stop sending to a deleted server too.
+function deleteServer(ctx) {
+  const c = configOf(netOf(ctx));
+  const server = serverOf(c, ctx.params.httpServerId);
+  c.httpServers.splice(c.httpServers.indexOf(server), 1);
+  for (const d of [c.alerts.defaultDestinations, ...c.alerts.alerts.map((a) => a.alertDestinations)]) d.httpServerIds = d.httpServerIds.filter((id) => id !== server.id);
+}
+
+// Role names are matched without regard to case, as the spec allows.
+function syslogServers(ctx) {
+  const c = configOf(netOf(ctx));
+  const servers = ctx.body.servers.map((s) => ({
+    host: s.host,
+    port: Number(s.port),
+    roles: (s.roles || []).map((r) => {
+      const role = SYSLOG_ROLES.find((x) => x.toLowerCase() === String(r).toLowerCase());
+      if (!role) throw badRequest(`'${r}' is not a syslog role. Use one of: ${SYSLOG_ROLES.join(', ')}`);
+      return role;
+    }),
+  }));
+  if (servers.length > MAX_ITEMS) throw badRequest(`Networks are limited to ${MAX_ITEMS} syslog servers in the emulator`);
+  c.syslog = { servers };
+  return c.syslog;
+}
+
+// Only the fields for the chosen access mode are kept.
+function snmp(ctx) {
+  const c = configOf(netOf(ctx));
+  const { access = c.snmp.access, communityString, users } = ctx.body;
+  if (access === 'community') {
+    const community = communityString ?? c.snmp.communityString;
+    if (!community) throw badRequest("'communityString' is required when access is community");
+    c.snmp = { access, communityString: community };
+  } else if (access === 'users') {
+    const list = users ?? c.snmp.users;
+    if (!list?.length) throw badRequest("'users' is required when access is users");
+    c.snmp = { access, users: list };
+  } else {
+    c.snmp = { access: 'none' };
+  }
+  return c.snmp;
+}
+
+// Each alert in the body updates the stored alert of the same type.
+function alertSettings(ctx) {
+  const c = configOf(netOf(ctx));
+  const { alerts, ...rest } = ctx.body;
+  const ids = new Set(c.httpServers.map((s) => s.id));
+  const check = (d) => {
+    for (const id of d?.httpServerIds || []) if (!ids.has(id)) throw badRequest(`HTTP server ${id} does not exist in this network`);
+  };
+  check(rest.defaultDestinations);
+  for (const a of alerts || []) check(a.alertDestinations);
+  merge(c.alerts, rest);
+  for (const a of alerts || []) {
+    const cur = c.alerts.alerts.find((x) => x.type === a.type);
+    if (cur) merge(cur, a);
+    else c.alerts.alerts.push(merge({ type: a.type, enabled: false, alertDestinations: { emails: [], smsNumbers: [], allAdmins: false, snmp: false, httpServerIds: [] }, filters: {} }, a));
+  }
+  return c.alerts;
+}
+
+function createPolicy(ctx) {
+  const c = configOf(netOf(ctx));
+  const b = ctx.body;
+  if (c.groupPolicies.some((p) => p.name === b.name)) throw badRequest('Name has already been taken');
+  if (c.groupPolicies.length >= MAX_ITEMS) throw badRequest(`Networks are limited to ${MAX_ITEMS} group policies in the emulator`);
+  const id = String(Math.max(100, ...c.groupPolicies.map((p) => Number(p.groupPolicyId))) + 1);
+  const byDefault = { settings: 'network default' };
+  const policy = {
+    name: b.name,
+    groupPolicyId: id,
+    scheduling: { enabled: false, ...Object.fromEntries(DAYS.map((d) => [d, { active: true, from: '00:00', to: '24:00' }])) },
+    bandwidth: { settings: 'network default', bandwidthLimits: { limitUp: null, limitDown: null } },
+    firewallAndTrafficShaping: { settings: 'network default', trafficShapingRules: [], l3FirewallRules: [], l7FirewallRules: [] },
+    contentFiltering: { allowedUrlPatterns: { ...byDefault, patterns: [] }, blockedUrlPatterns: { ...byDefault, patterns: [] }, blockedUrlCategories: { ...byDefault, categories: [] } },
+    splashAuthSettings: 'network default',
+    vlanTagging: byDefault,
+    bonjourForwarding: { ...byDefault, rules: [] },
+  };
+  c.groupPolicies.push(merge(policy, b));
+  return policy;
+}
+
+function updatePolicy(ctx) {
+  const c = configOf(netOf(ctx));
+  const policy = policyOf(c, ctx.params.groupPolicyId);
+  const { groupPolicyId, ...patch } = ctx.body;
+  if (patch.name && patch.name !== policy.name && c.groupPolicies.some((p) => p.name === patch.name)) throw badRequest('Name has already been taken');
+  return merge(policy, patch);
+}
+
+// VLANs that used a deleted policy go back to none.
+function deletePolicy(ctx) {
+  const c = configOf(netOf(ctx));
+  const policy = policyOf(c, ctx.params.groupPolicyId);
+  c.groupPolicies.splice(c.groupPolicies.indexOf(policy), 1);
+  for (const v of c.vlans) if (v.groupPolicyId === policy.groupPolicyId) delete v.groupPolicyId;
+}
+
+const setting = (op, path, pick) => ({ op, path: `/networks/{networkId}/${path}`, handler: (ctx) => pick(configOf(netOf(ctx)), netOf(ctx), ctx) });
+const write = (op, method, path, handler) => ({ op, method, path: `/networks/{networkId}/${path}`, handler });
+
+export default [
+  setting('getNetworkSettings', 'settings', (c) => c.settings),
+  write('updateNetworkSettings', 'PUT', 'settings', (ctx) => merge(configOf(netOf(ctx)).settings, ctx.body)),
+  setting('getNetworkSyslogServers', 'syslogServers', (c) => c.syslog),
+  write('updateNetworkSyslogServers', 'PUT', 'syslogServers', syslogServers),
+  setting('getNetworkSnmp', 'snmp', (c) => c.snmp),
+  write('updateNetworkSnmp', 'PUT', 'snmp', snmp),
+  setting('getNetworkAlertsSettings', 'alerts/settings', (c) => c.alerts),
+  write('updateNetworkAlertsSettings', 'PUT', 'alerts/settings', alertSettings),
+  setting('getNetworkWebhooksHttpServers', 'webhooks/httpServers', (c) => c.httpServers),
+  write('createNetworkWebhooksHttpServer', 'POST', 'webhooks/httpServers', createServer),
+  {
+    op: 'getNetworkWebhooksHttpServer',
+    path: '/networks/{networkId}/webhooks/httpServers/{httpServerId}',
+    sample: { httpServerId: Buffer.from('https://hooks.example.com/meraki/alerts').toString('base64') },
+    handler: (ctx) => serverOf(configOf(netOf(ctx)), ctx.params.httpServerId),
+  },
+  write('updateNetworkWebhooksHttpServer', 'PUT', 'webhooks/httpServers/{httpServerId}', updateServer),
+  write('deleteNetworkWebhooksHttpServer', 'DELETE', 'webhooks/httpServers/{httpServerId}', deleteServer),
+  setting('getNetworkGroupPolicies', 'groupPolicies', (c) => c.groupPolicies),
+  write('createNetworkGroupPolicy', 'POST', 'groupPolicies', createPolicy),
+  {
+    op: 'getNetworkGroupPolicy',
+    path: '/networks/{networkId}/groupPolicies/{groupPolicyId}',
+    sample: { groupPolicyId: '101' },
+    handler: (ctx) => policyOf(configOf(netOf(ctx)), ctx.params.groupPolicyId),
+  },
+  write('updateNetworkGroupPolicy', 'PUT', 'groupPolicies/{groupPolicyId}', updatePolicy),
+  write('deleteNetworkGroupPolicy', 'DELETE', 'groupPolicies/{groupPolicyId}', deletePolicy),
+  setting('getNetworkFirmwareUpgrades', 'firmwareUpgrades', (c, net) => firmwareUpgrades(net)),
+  setting('getNetworkFloorPlans', 'floorPlans', () => []),
+  setting('getNetworkTopologyLinkLayer', 'topology/linkLayer', (c, net, ctx) => topology(net, ctx.now)),
+  {
+    op: 'getDeviceManagementInterface',
+    path: '/devices/{serial}/managementInterface',
+    sample: { serial: 'appliance' },
+    handler: (ctx) => managementInterface(devOf(ctx)),
+  },
+];

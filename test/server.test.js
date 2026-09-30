@@ -23,9 +23,9 @@ describe('server', () => {
   after(() => sb.close());
 
   test('every route answers 200 with sample IDs', async () => {
-    for (const url of sampleUrls(sb.world)) {
+    for (const { url, status } of sampleUrls(sb.world)) {
       const r = await sb.get(url);
-      assert.equal(r.status, 200, `${url}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.status, status, `${url}: ${JSON.stringify(r.body)}`);
       assert.match(r.headers.get('content-type'), /^application\/json/);
     }
   });
@@ -56,7 +56,9 @@ describe('server', () => {
     assert.equal((await sb.get('/networks/L_000/clients')).status, 404);
     assert.equal((await sb.get('/devices/Q2XX-0000-0000')).status, 404);
     assert.equal((await sb.get('/nope')).status, 404);
-    assert.equal((await sb.get('/organizations', { method: 'POST' })).status, 405);
+    const r = await sb.get(`/organizations/${sb.world.orgs[0].id}/devices`, { method: 'POST' });
+    assert.equal(r.status, 405);
+    assert.equal(r.headers.get('allow'), 'GET, HEAD');
   });
 
   test('malformed URLs are a 400, not a crash', async () => {

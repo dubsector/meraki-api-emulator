@@ -34,6 +34,8 @@ export function buildWorld({ seed = 1, bootTime = Date.now() / 1000 } = {}) {
     clientById: new Map(),
     // A dormant device has been offline for a while; anchor it to the day the server started.
     dormantSince: Math.floor(bootTime / DAY) * DAY - 12 * DAY,
+    bootDay: Math.floor(bootTime / DAY) * DAY,
+    created: 0,
   };
 
   ORGS.forEach((orgTpl, orgIndex) => {
@@ -62,6 +64,7 @@ export function buildWorld({ seed = 1, bootTime = Date.now() / 1000 } = {}) {
       }
     });
     org.index = orgIndex;
+    org.baseNetworks = [...org.networks];
   });
 
   for (const d of world.devices) if (d.dormant) d.dormantSince = world.dormantSince;
@@ -107,6 +110,7 @@ function buildAdminData(world, seed, bootTime) {
     world.apiAdmin,
   ];
   lab.admins = [engineer, admin({ ...person(), orgAccess: 'full', twoFactorAuthEnabled: false }), world.apiAdmin];
+  for (const org of world.orgs) org.baseAdmins = [...org.admins];
 
   corp.licensing = 'co-term';
   lab.licensing = 'per-device';
@@ -355,4 +359,101 @@ function buildSwitchPorts(r, net) {
     c.switchPort = port;
     c.switchport = port.portId;
   }
+}
+
+// ── Changes made through the API ──
+
+// Seeded IDs for things created at runtime, so the same calls give the same IDs.
+function nextRand(world, kind) {
+  return new Rand(hashStr(`meraki-api-emulator:${world.seed}:${kind}:${world.created++}`));
+}
+
+export function addOrganization(world, name) {
+  const r = nextRand(world, 'org');
+  let id;
+  do id = String(r.int(100000, 999999));
+  while (world.orgById.has(id));
+  const org = {
+    id,
+    name,
+    slug: r.chars(6, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'),
+    networks: [],
+    baseNetworks: [],
+    devices: [],
+    spares: [],
+    admins: [world.apiAdmin],
+    licensing: 'co-term',
+    cotermExpires: world.bootDay + 365 * DAY,
+    hub: null,
+    index: world.orgs.length,
+    created: true,
+  };
+  world.orgs.push(org);
+  world.orgById.set(org.id, org);
+  return org;
+}
+
+export function removeOrganization(world, org) {
+  world.orgs.splice(world.orgs.indexOf(org), 1);
+  world.orgById.delete(org.id);
+}
+
+// An empty network: no devices or clients, so every stats endpoint reports nothing.
+export function addNetwork(world, org, { name, productTypes, tags = [], timeZone = 'America/Los_Angeles', notes = '' }) {
+  const r = nextRand(world, 'network');
+  let id;
+  do id = (productTypes.length > 1 ? 'L_' : 'N_') + r.digits(18);
+  while (world.networkById.has(id));
+  const siteIndex = 100 + world.created;
+  const net = {
+    id,
+    org,
+    code: 'NET',
+    name,
+    kind: 'office',
+    timeZone,
+    zone: new Zone(timeZone),
+    tags,
+    notes,
+    address: '',
+    lat: 0,
+    lng: 0,
+    productTypes,
+    vpn: null,
+    siteIndex,
+    subnet: (vlan) => `10.${siteIndex % 256}.${vlan}`,
+    ssids: [],
+    devices: [],
+    clients: [],
+    mx: null,
+    switches: [],
+    aps: [],
+    cameras: [],
+    key: hashStr(id),
+    created: true,
+  };
+  net.url = `https://n${siteIndex}.meraki.com/${org.slug}/n/${r.chars(8, SERIAL_CHARS)}/manage/usage/list`;
+  org.networks.push(net);
+  world.networks.push(net);
+  world.networkById.set(net.id, net);
+  return net;
+}
+
+// Deleting a network returns its devices to the organization's inventory.
+export function removeNetwork(world, net) {
+  const org = net.org;
+  const gone = new Set(net.devices);
+  for (const list of [org.networks, world.networks]) list.splice(list.indexOf(net), 1);
+  world.networkById.delete(net.id);
+  world.devices = world.devices.filter((d) => !gone.has(d));
+  org.devices = org.devices.filter((d) => !gone.has(d));
+  for (const d of gone) {
+    world.deviceBySerial.delete(d.serial);
+    org.spares.push({ serial: d.serial, model: d.model, productType: d.productType, mac: d.mac, orderNumber: d.orderNumber, claimedAt: d.claimedAt, net: null, tags: d.tags, name: d.name });
+  }
+  const clients = new Set(net.clients);
+  world.clients = world.clients.filter((c) => !clients.has(c));
+  for (const c of clients) world.clientById.delete(c.id);
+  if (org.hub === net) org.hub = null;
+  net.deleted = true;
 }

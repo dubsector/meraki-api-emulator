@@ -7,10 +7,10 @@ export function orgJson(org) {
     id: org.id,
     name: org.name,
     url: `https://dashboard.meraki.com/o/${org.slug}/manage/organization/overview`,
-    api: { enabled: true },
+    api: { enabled: org.apiEnabled ?? true },
     licensing: { model: org.licensing },
     cloud: { region: { name: 'North America', host: { name: 'United States' } } },
-    management: { details: [] },
+    management: org.management ?? { details: [] },
   };
 }
 
@@ -22,9 +22,9 @@ export function networkJson(net) {
     productTypes: net.productTypes,
     timeZone: net.timeZone,
     tags: net.tags,
-    enrollmentString: null,
+    enrollmentString: net.enrollmentString ?? null,
     url: net.url,
-    notes: '',
+    notes: net.notes ?? '',
     isBoundToConfigTemplate: false,
   };
 }
@@ -38,8 +38,8 @@ export function deviceJson(dev, { full = false } = {}) {
     name: dev.name,
     lat: dev.lat,
     lng: dev.lng,
-    address: dev.net.address,
-    notes: '',
+    address: dev.address ?? dev.net.address,
+    notes: dev.notes ?? '',
     tags: dev.tags,
     networkId: dev.net.id,
     serial: dev.serial,
@@ -52,7 +52,7 @@ export function deviceJson(dev, { full = false } = {}) {
   };
   if (full) {
     out.url = dev.net.url.replace('/usage/list', `/nodes/new_list/${parseInt(dev.mac.replace(/:/g, '').slice(-8), 16)}`);
-    out.floorPlanId = null;
+    out.floorPlanId = dev.floorPlanId ?? null;
     if (dev.productType === 'wireless') {
       out.beaconIdParams = { uuid: '4d52ab1c-0000-4a1e-9d6b-' + dev.net.id.slice(-12), major: dev.net.siteIndex, minor: dev.net.aps.indexOf(dev) + 1 };
     }

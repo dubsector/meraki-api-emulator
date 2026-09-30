@@ -17,6 +17,7 @@ Options:
       --rate-limit <n>    Requests per second per key before 429 (default 10, 0 = off)
       --burst <n>         Requests allowed at once before throttling (default 20)
       --now <time>        Freeze the clock (ISO 8601 or epoch seconds)
+      --read-only         Refuse PUT, POST and DELETE with 405
   -q, --quiet             Don't log requests
   -h, --help              Show this help
   -v, --version           Show the version
@@ -39,6 +40,7 @@ try {
       'rate-limit': { type: 'string' },
       burst: { type: 'string' },
       now: { type: 'string' },
+      'read-only': { type: 'boolean' },
       quiet: { type: 'boolean', short: 'q' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
@@ -73,6 +75,7 @@ try {
     rateLimit: values['rate-limit'] ?? env('RATE_LIMIT'),
     burst: values.burst ?? env('BURST'),
     now: values.now ?? env('NOW'),
+    readOnly: values['read-only'] || env('READ_ONLY'),
     log: quiet ? null : (line) => console.log(`${new Date().toISOString()} ${line}`),
   });
 } catch (e) {
@@ -93,6 +96,7 @@ server.listen(port, host, () => {
     `Meraki API Emulator on ${url}`,
     `  API base   ${url}${API_PREFIX}`,
     `  Auth       ${options.apiKey ? 'X-Cisco-Meraki-API-Key must match --api-key' : 'any non-empty X-Cisco-Meraki-API-Key'}`,
+    `  Writes     ${options.readOnly ? 'off (--read-only)' : 'on, kept in memory until restart or POST /_emulator/reset'}`,
     `  Seed       ${options.seed}${options.now != null ? `, clock frozen at ${new Date(options.now * 1000).toISOString()}` : ''}`,
   ];
   if (options.latency || options.faultRate) lines.push(`  Faults     ${options.latency}ms latency, ${Math.round(options.faultRate * 1e4) / 100}% 5xx`);

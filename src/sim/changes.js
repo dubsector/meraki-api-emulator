@@ -30,12 +30,16 @@ function templates(net) {
   return out;
 }
 
-// Admins who can edit a network: full org access, or full access to that network.
+// Admins who could edit a network: full org access, or full access to that
+// network. Taken from the original roster so later admin changes keep history.
 function editors(org, net) {
-  return org.admins.filter((a) => !a.api && a.accountStatus === 'ok' && (a.orgAccess === 'full' || a.networks.some((n) => n.id === net.id && n.access === 'full')));
+  return org.baseAdmins.filter((a) => !a.api && a.accountStatus === 'ok' && (a.orgAccess === 'full' || a.networks.some((n) => n.id === net.id && n.access === 'full')));
 }
 
+// Synthetic history for the seeded organizations. Networks are picked from the
+// original list, so deleting or adding one later doesn't reshuffle past days.
 export function changesOnDay(org, day) {
+  if (org.created) return [];
   return perDay(org, 'changeCache', day, () => {
     const k = derive(hashStr(org.id), day);
     const dow = weekday(day);
@@ -44,13 +48,24 @@ export function changesOnDay(org, day) {
     const out = [];
     for (let i = 0; i < n; i++) {
       const u = (j) => unit(k, 10 + i * 8 + j);
-      const net = org.networks[Math.floor(u(0) * org.networks.length)];
+      const net = org.baseNetworks[Math.floor(u(0) * org.baseNetworks.length)];
       const who = editors(org, net);
-      if (!who.length) continue;
+      if (net.deleted || !who.length) continue;
       const pool = templates(net);
       // Pacific business hours, 08:00 to 16:00.
       out.push({ t: day * DAY + (15 + u(1) * 8) * 3600, net, admin: who[Math.floor(u(2) * who.length)], ...pool[Math.floor(u(3) * pool.length)] });
     }
     return out.sort((a, b) => a.t - b.t);
   });
+}
+
+// Writes made through the API, logged the way the real change log shows them.
+export function recordChange({ org, net }, { t, admin, label, before, after, ssidNumber }) {
+  if (!org) return;
+  const list = (org.apiChanges ||= []);
+  const n = ssidNumber != null ? Number(ssidNumber) : null;
+  const entry = { t, net, admin, page: 'via API', label, oldValue: before == null ? '' : JSON.stringify(before), newValue: after == null ? '' : JSON.stringify(after) };
+  if (net && n != null && Number.isInteger(n)) Object.assign(entry, { ssidNumber: n, ssidName: configOf(net).ssids[n]?.name ?? null });
+  list.push(entry);
+  if (list.length > 10000) list.splice(0, list.length - 10000);
 }

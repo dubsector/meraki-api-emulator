@@ -2,12 +2,13 @@
 // switch and across the organization.
 
 import { configOf } from '../config.js';
-import { arrayParam, notFound, paginate, timeWindow } from '../http.js';
+import { arrayParam, badRequest, notFound, paginate, timeWindow } from '../http.js';
 import { crcPort } from '../sim/alerts.js';
 import { eachOutage, isDown } from '../sim/outages.js';
 import { isOnline, presenceIn } from '../sim/presence.js';
 import { WAN_RECV, WAN_SENT, clientUsage, networkTotals } from '../sim/usage.js';
 import { DAY, HOUR } from '../time.js';
+import { merge } from '../validate.js';
 import { bySerial, devOf, netOf, orgOf, requireModel, requireProduct, round } from './common.js';
 
 const NO_USAGE = { sent: 0, recv: 0, clients: 0, wh: 0 };
@@ -63,6 +64,7 @@ function switchLoad(sw, t0, t1) {
 }
 
 export function peerConnected(port, now) {
+  if (port.config?.enabled === false) return false;
   const peer = port.peer?.device;
   if (peer) return !isDown(peer, now);
   const c = port.clients[0];
@@ -104,7 +106,13 @@ export function neighbor(port) {
   return {};
 }
 
+// Topology decides the defaults; anything written through the API sits on top.
 function portConfig(net, sw, port) {
+  const base = defaultPortConfig(net, sw, port);
+  return port.config ? merge(base, port.config) : base;
+}
+
+function defaultPortConfig(net, sw, port) {
   const peer = port.peer?.device;
   const c = port.clients[0];
   const out = {
@@ -144,6 +152,10 @@ function portConfig(net, sw, port) {
 }
 
 function portStatus(sw, port, t0, t1, now) {
+  if (port.config?.enabled === false) {
+    const zero = { total: 0, sent: 0, recv: 0 };
+    return { portId: port.portId, enabled: false, status: 'Disabled', isUplink: port.isUplink, errors: [], warnings: [], speed: '', duplex: '', spanningTree: { statuses: [] }, poe: { isAllocated: false }, usageInKb: zero, clientCount: 0, powerUsageInWh: 0, trafficInKbps: zero, securePort: { enabled: false, active: false, authenticationStatus: 'Disabled', configOverrides: {} } };
+  }
   const peer = port.peer?.device;
   let load;
   let dir = 1;
@@ -300,6 +312,23 @@ export default [
     },
   },
   {
+    op: 'updateDeviceSwitchPort',
+    method: 'PUT',
+    path: '/devices/{serial}/switch/ports/{portId}',
+    handler: (ctx) => {
+      const dev = devOf(ctx);
+      requireModel(dev, 'switch');
+      const port = portOf(dev, ctx.params.portId);
+      for (const k of ['vlan', 'voiceVlan']) {
+        const v = ctx.body[k];
+        if (v != null && (v < 1 || v > 4094)) throw badRequest(`'${k}' must be a VLAN from 1 to 4094`);
+      }
+      const { portId, ...patch } = ctx.body;
+      port.config = merge(port.config || {}, patch);
+      return portConfig(dev.net, dev, port);
+    },
+  },
+  {
     op: 'getOrganizationSwitchPortsBySwitch',
     path: '/organizations/{organizationId}/switch/ports/bySwitch',
     handler: (ctx) => {
@@ -327,6 +356,16 @@ export default [
       const net = netOf(ctx);
       requireProduct(net, 'switch');
       return configOf(net).switchSettings;
+    },
+  },
+  {
+    op: 'updateNetworkSwitchSettings',
+    method: 'PUT',
+    path: '/networks/{networkId}/switch/settings',
+    handler: (ctx) => {
+      const net = netOf(ctx);
+      requireProduct(net, 'switch');
+      return merge(configOf(net).switchSettings, ctx.body);
     },
   },
   {

@@ -9,14 +9,19 @@ export const WIDTH = { 2.4: 20, 5: 40, 6: 80 };
 const NOISE_FLOOR = { 2.4: -92, 5: -95, 6: -96 };
 const round = (v, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
 
+const SETTINGS = { 2.4: 'twoFourGhzSettings', 5: 'fiveGhzSettings' };
+
+// A channel set through the API wins over the one auto channel picked.
 export function apChannel(ap, band) {
+  const set = ap.radio?.[SETTINGS[band]]?.channel;
+  if (set != null) return set;
   const chans = CHANNELS[band];
   return chans[ap.key % chans.length];
 }
 
 // Target transmit power in dBm.
 export function apPower(ap, band) {
-  return { 2.4: 11, 5: 14, 6: 16 }[band] + (derive(ap.key, `power${band}`) % 6);
+  return ap.radio?.[SETTINGS[band]]?.targetPower ?? { 2.4: 11, 5: 14, 6: 16 }[band] + (derive(ap.key, `power${band}`) % 6);
 }
 
 // Share of airtime in use on one radio over [t0, t1). Wi-Fi grows with the

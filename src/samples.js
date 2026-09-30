@@ -3,7 +3,7 @@
 // of the world and clock) or add a query through `sample`.
 
 export function sampleUrl(route, world, now) {
-  const { serial: kind, query, org: orgIndex = 0, ...ids } = route.sample || {};
+  const { serial: kind, query, org: orgIndex = 0, status, ...ids } = route.sample || {};
   const org = world.orgs[orgIndex];
   const net = org.networks[0];
   const p = route.path;
