@@ -69,7 +69,78 @@ export function buildWorld({ seed = 1, bootTime = Date.now() / 1000 } = {}) {
     org.devices = world.devices.filter((d) => d.net.org === org);
     org.hub = org.networks.find((n) => n.vpn === 'hub') || null;
   }
+  buildAdminData(world, seed, bootTime);
   return world;
+}
+
+// Admins, spare inventory and licenses. They draw from their own stream so
+// adding them never shifts the IDs above.
+function buildAdminData(world, seed, bootTime) {
+  const r = new Rand(hashStr(`meraki-api-emulator:${seed}:admin`));
+  const bootDay = Math.floor(bootTime / DAY) * DAY;
+  const ids = new Set();
+  const adminId = () => {
+    for (;;) {
+      const id = r.digits(6);
+      if (!ids.has(id)) return ids.add(id), id;
+    }
+  };
+  const person = () => {
+    const first = r.pick(FIRST_NAMES);
+    const last = r.pick(LAST_NAMES);
+    return { name: `${first} ${last}`, email: `${first}.${last}@example.com`.toLowerCase() };
+  };
+  const admin = (fields) => ({ id: adminId(), twoFactorAuthEnabled: true, hasApiKey: false, accountStatus: 'ok', tags: [], networks: [], activeHour: r.int(8, 17), ...fields });
+
+  // Every API key acts as this admin, in every organization.
+  world.apiAdmin = admin({ name: 'API Integration', email: 'api@example.com', orgAccess: 'full', hasApiKey: true, twoFactorAuthEnabled: false, api: true });
+  const engineer = admin({ ...person(), orgAccess: 'full', hasApiKey: true });
+  const [corp, lab] = world.orgs;
+  const reno = corp.networks.find((n) => n.code === 'RNO');
+  corp.admins = [
+    admin({ ...person(), orgAccess: 'full' }),
+    engineer,
+    admin({ ...person(), orgAccess: 'read-only' }),
+    admin({ ...person(), orgAccess: 'none', networks: [{ id: reno.id, access: 'full' }] }),
+    admin({ ...person(), orgAccess: 'none', tags: [{ tag: 'retail', access: 'read-only' }] }),
+    admin({ ...person(), orgAccess: 'read-only', accountStatus: 'unverified', twoFactorAuthEnabled: false }),
+    world.apiAdmin,
+  ];
+  lab.admins = [engineer, admin({ ...person(), orgAccess: 'full', twoFactorAuthEnabled: false }), world.apiAdmin];
+
+  corp.licensing = 'co-term';
+  lab.licensing = 'per-device';
+  corp.cotermExpires = bootDay + 540 * DAY;
+
+  // Devices were claimed in one order per network; spares came later.
+  for (const org of world.orgs) {
+    for (const net of org.networks) {
+      const order = `4C${r.digits(7)}`;
+      const claimed = Date.UTC(2023, 0, 1) / 1000 + r.int(0, 700) * DAY + r.int(15, 23) * 3600;
+      for (const d of net.devices) Object.assign(d, { orderNumber: order, claimedAt: claimed + r.int(0, 300) });
+    }
+  }
+  const spares = { 0: ['MR46', 'MS130-24P', 'MV22'], 1: ['MR36'] };
+  for (const org of world.orgs) {
+    const order = `4C${r.digits(7)}`;
+    org.spares = spares[org.index].map((model) => {
+      const info = MODELS[model];
+      let serial;
+      do serial = `${SERIAL_PREFIX[info.productType]}-${r.chars(4, SERIAL_CHARS)}-${r.chars(4, SERIAL_CHARS)}`;
+      while (world.deviceBySerial.has(serial));
+      return { serial, model, productType: info.productType, mac: macFrom(r, DEVICE_OUI[info.productType]), orderNumber: order, claimedAt: bootDay - 40 * DAY + r.int(9, 17) * 3600, net: null, tags: [], name: null };
+    });
+  }
+
+  // Per-device licensing: one license per AP, one expiring soon, one unused.
+  const licenseKey = () => `Z2${r.chars(10, 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789')}`;
+  const order = `4C${r.digits(7)}`;
+  lab.licenses = lab.devices.map((d, i) => {
+    const activation = d.claimedAt + 3600;
+    const expires = i === 0 ? bootDay + 400 * DAY : bootDay + 45 * DAY;
+    return { id: r.digits(6), licenseType: 'ENT', licenseKey: licenseKey(), orderNumber: order, deviceSerial: d.serial, networkId: d.net.id, claimDate: d.claimedAt, activationDate: activation, expirationDate: expires };
+  });
+  lab.licenses.push({ id: r.digits(6), licenseType: 'ENT', licenseKey: licenseKey(), orderNumber: order, deviceSerial: null, networkId: null, claimDate: bootDay - 40 * DAY, activationDate: null, expirationDate: null, durationInDays: 1095 });
 }
 
 function macFrom(r, oui) {

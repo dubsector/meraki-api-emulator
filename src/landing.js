@@ -1,39 +1,14 @@
 // The page served at `/`: what the emulator contains and a small request explorer.
 
+import { sampleUrl } from './samples.js';
+
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-function samples(world) {
-  const org = world.orgs[0];
-  const net = org.networks[0];
-  return {
-    organizationId: org.id,
-    networkId: net.id,
-    clientId: net.clients[0].id,
-    number: '0',
-    portId: '3',
-    appliance: net.mx.serial,
-    switch: net.switches[0].serial,
-    wireless: net.aps[0].serial,
-  };
-}
-
-function exampleFor(path, s) {
-  let serial = s.wireless;
-  if (path.includes('/switch/')) serial = s.switch;
-  else if (path.includes('/appliance/') || path.includes('lossAndLatency')) serial = s.appliance;
-  let url = path.replace(/\{(\w+)\}/g, (_, n) => (n === 'serial' ? serial : s[n] ?? `{${n}}`));
-  if (path.endsWith('/events')) url += '?productType=wireless&perPage=20';
-  else if (path.endsWith('lossAndLatencyHistory')) url += '?ip=8.8.8.8&timespan=3600';
-  else if (path.endsWith('clientCountHistory') || path.endsWith('wireless/usageHistory')) url += '?timespan=86400&resolution=3600';
-  return url;
-}
-
-export function landingPage(world, routes, { apiKey }) {
-  const s = samples(world);
+export function landingPage(world, routes, { apiKey, now }) {
   const groups = { Organizations: [], Networks: [], Devices: [] };
-  for (const r of routes) {
+  for (const r of [...routes].sort((a, b) => (a.path < b.path ? -1 : 1))) {
     const g = r.path.startsWith('/organizations') ? 'Organizations' : r.path.startsWith('/networks') ? 'Networks' : 'Devices';
-    groups[g].push(r.path);
+    groups[g].push(r);
   }
   const orgRows = world.orgs
     .map(
@@ -51,9 +26,11 @@ export function landingPage(world, routes, { apiKey }) {
     .join('');
   const endpointLists = Object.entries(groups)
     .map(
-      ([name, paths]) => `
-      <h3>${name}</h3>
-      <ul class="endpoints">${paths.map((p) => `<li><button type="button" data-path="${esc(exampleFor(p, s))}"><span class="verb">GET</span> ${esc(p)}</button></li>`).join('')}</ul>`,
+      ([name, list]) => `
+      <h3>${name} <span class="count">${list.length}</span></h3>
+      <ul class="endpoints">${list
+        .map((r) => `<li data-search="${esc(`${r.path} ${r.op}`.toLowerCase())}"><button type="button" data-path="${esc(sampleUrl(r, world, now))}"><span class="verb">GET</span> ${esc(r.path)}<span class="op">${esc(r.op)}</span></button></li>`)
+        .join('')}</ul>`,
     )
     .join('');
 
@@ -94,9 +71,14 @@ td.n, th.n { text-align: right; }
 .org { overflow-x: auto; }
 .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 20px; align-items: start; }
 .endpoints { list-style: none; padding: 0; margin: 0; }
-.endpoints button { all: unset; cursor: pointer; display: block; width: 100%; padding: 3px 6px; border-radius: 5px; font: 13px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; word-break: break-all; }
+.endpoints button { all: unset; box-sizing: border-box; cursor: pointer; display: block; width: 100%; padding: 3px 6px; border-radius: 5px; font: 13px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; word-break: break-all; }
 .endpoints button:hover, .endpoints button:focus-visible { background: var(--accent-soft); }
 .verb { color: var(--accent); font-weight: 700; margin-right: 4px; }
+.op { display: block; color: var(--muted); font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; padding-left: 38px; }
+.count { color: var(--muted); font-weight: 400; }
+.endpoints li[hidden] { display: none; }
+#filter { margin-bottom: 4px; }
+.endpoint-list { max-height: 75vh; overflow-x: hidden; overflow-y: auto; }
 .explorer { position: sticky; top: 16px; }
 label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
 input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); }
@@ -119,7 +101,7 @@ button.send { padding: 8px 16px; border: 0; border-radius: 6px; background: var(
   <div class="panel">
     <p>Base URL <code id="base">/api/v1</code>. Send a key in <code>X-Cisco-Meraki-API-Key</code> or <code>Authorization: Bearer</code>. ${apiKey ? 'This server only accepts the key it was started with.' : 'Any non-empty key is accepted.'}</p>
     <pre id="curl"></pre>
-    <p class="note">Data is generated from the seed and the clock, so the same seed and time always give the same answer. Link headers use unquoted <code>rel=next</code>, the same as the real API.</p>
+    <p class="note">Data is generated from the seed and the clock, so the same seed and time always give the same answer. Link headers use unquoted <code>rel=next</code>, the same as the real API. Every call you make is logged, so <code>/organizations/{organizationId}/apiRequests</code> shows what your client actually sent.</p>
   </div>
 
   <h2>Organizations and networks</h2>
@@ -127,7 +109,11 @@ button.send { padding: 8px 16px; border: 0; border-radius: 6px; background: var(
 
   <h2>Endpoints</h2>
   <div class="grid">
-    <div class="panel">${endpointLists}</div>
+    <div class="panel">
+      <label for="filter">Filter by path or operation ID</label>
+      <input id="filter" type="search" spellcheck="false" placeholder="e.g. vlans or getOrganizationDevices">
+      <div class="endpoint-list">${endpointLists}</div>
+    </div>
     <div class="panel explorer">
       <form id="try">
         <label for="key">API key</label>
@@ -189,6 +175,15 @@ async function send() {
 
 form.addEventListener('submit', (e) => { e.preventDefault(); send(); });
 document.querySelectorAll('.endpoints button').forEach((b) => b.addEventListener('click', () => { pathEl.value = b.dataset.path; send(); }));
+document.getElementById('filter').addEventListener('input', (e) => {
+  const words = e.target.value.toLowerCase().split(/\\s+/).filter(Boolean);
+  document.querySelectorAll('.endpoints li').forEach((li) => { li.hidden = !words.every((w) => li.dataset.search.includes(w)); });
+  document.querySelectorAll('.endpoints').forEach((ul) => {
+    const shown = ul.querySelectorAll('li:not([hidden])').length;
+    ul.previousElementSibling.hidden = !shown;
+    ul.previousElementSibling.querySelector('.count').textContent = shown;
+  });
+});
 linkEl.addEventListener('click', (e) => {
   const a = e.target.closest('a');
   if (!a) return;

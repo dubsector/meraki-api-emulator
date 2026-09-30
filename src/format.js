@@ -8,7 +8,7 @@ export function orgJson(org) {
     name: org.name,
     url: `https://dashboard.meraki.com/o/${org.slug}/manage/organization/overview`,
     api: { enabled: true },
-    licensing: { model: 'co-term' },
+    licensing: { model: org.licensing },
     cloud: { region: { name: 'North America', host: { name: 'United States' } } },
     management: { details: [] },
   };

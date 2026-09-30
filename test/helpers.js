@@ -1,3 +1,4 @@
+import { sampleUrl } from '../src/samples.js';
 import { ROUTES, createEmulator } from '../src/server.js';
 
 export const NOW = '2026-09-29T18:30:00Z';
@@ -41,15 +42,5 @@ export async function collect(get, path, maxPages = 200) {
 
 // A concrete URL for each route, using IDs from HQ.
 export function sampleUrls(world) {
-  const net = world.orgs[0].networks[0];
-  const ids = { organizationId: world.orgs[0].id, networkId: net.id, clientId: net.clients[0].id, number: '1', portId: '3' };
-  return ROUTES.map((r) => {
-    let serial = net.aps[0].serial;
-    if (r.path.includes('/switch/')) serial = net.switches[0].serial;
-    else if (r.path.includes('/appliance/') || r.path.includes('lossAndLatency')) serial = net.mx.serial;
-    let url = r.path.replace(/\{(\w+)\}/g, (_, n) => (n === 'serial' ? serial : ids[n]));
-    if (r.path.endsWith('/events')) url += '?productType=wireless';
-    if (r.path.endsWith('lossAndLatencyHistory')) url += '?ip=8.8.8.8';
-    return url;
-  });
+  return ROUTES.map((r) => sampleUrl(r, world, Date.parse(NOW) / 1000));
 }

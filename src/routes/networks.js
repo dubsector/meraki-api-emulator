@@ -5,7 +5,6 @@ import { eachSession, isOnline, presenceIn } from '../sim/presence.js';
 import { trafficRows, uplinkBytes } from '../sim/traffic.js';
 import { SLOT, WD_RECV, WD_SENT, WL_RECV, WL_SENT, buckets, clientUsage, eachSlot, networkTotals } from '../sim/usage.js';
 import { connectionStats, latencyStats } from '../sim/wireless.js';
-import { derive, unit } from '../rng.js';
 import { DAY, iso, isoMicro, isoUs, parseUs } from '../time.js';
 import { byId, bySerial, netOf, requireProduct, round } from './common.js';
 
@@ -176,33 +175,6 @@ function networkEvents(ctx) {
   };
 }
 
-// ── Appliance LAN ports ──
-
-// Port config only; the API has no live MX port state. Port 3 trunks to the
-// core switch, the rest get a seeded mix of access, trunk and disabled.
-function appliancePorts(net) {
-  requireProduct(net, 'appliance');
-  const [first, last] = net.mx.info.lan;
-  const vlans = [...new Set(net.clients.map((c) => c.vlan))].sort((a, b) => a - b);
-  const key = derive(net.mx.key, 'lan');
-  const ports = [];
-  for (let n = first; n <= last; n++) {
-    const port = { number: n, enabled: true, type: 'trunk', dropUntaggedTraffic: false, vlan: 1, allowedVlans: 'all' };
-    const u = unit(key, n);
-    if (n === 3 && net.switches.length) {
-      // uplink to the core switch keeps the defaults
-    } else if (u < 0.25) {
-      Object.assign(port, { type: 'access', vlan: vlans[Math.floor(unit(key, n + 1000) * vlans.length)], accessPolicy: 'open' });
-    } else if (u < 0.45) {
-      port.allowedVlans = [1, ...vlans].join(',');
-    } else {
-      port.enabled = false;
-    }
-    ports.push({ ...port, sgt: { id: null, enabled: false } });
-  }
-  return ports;
-}
-
 // ── Wireless ──
 
 function wirelessScope(ctx, net) {
@@ -295,14 +267,17 @@ function ssidJson(net, number) {
 
 export default [
   {
+    op: 'getNetwork',
     path: '/networks/{networkId}',
     handler: (ctx) => networkJson(netOf(ctx)),
   },
   {
+    op: 'getNetworkDevices',
     path: '/networks/{networkId}/devices',
     handler: (ctx) => netOf(ctx).devices.map((d) => deviceJson(d, { full: true })),
   },
   {
+    op: 'getNetworkClients',
     path: '/networks/{networkId}/clients',
     handler: (ctx) => {
       const net = netOf(ctx);
@@ -319,6 +294,7 @@ export default [
     },
   },
   {
+    op: 'getNetworkClientsOverview',
     path: '/networks/{networkId}/clients/overview',
     handler: (ctx) => {
       const net = netOf(ctx);
@@ -339,6 +315,7 @@ export default [
     },
   },
   {
+    op: 'getNetworkClientsBandwidthUsageHistory',
     path: '/networks/{networkId}/clients/bandwidthUsageHistory',
     handler: (ctx) => {
       const net = netOf(ctx);
@@ -357,6 +334,7 @@ export default [
     },
   },
   {
+    op: 'getNetworkClient',
     path: '/networks/{networkId}/clients/{clientId}',
     handler: (ctx) => {
       const net = netOf(ctx);
@@ -368,10 +346,13 @@ export default [
     },
   },
   {
+    op: 'getNetworkEvents',
     path: '/networks/{networkId}/events',
+    sample: { query: 'productType=wireless&perPage=20' },
     handler: networkEvents,
   },
   {
+    op: 'getNetworkTraffic',
     path: '/networks/{networkId}/traffic',
     handler: (ctx) => {
       const net = netOf(ctx);
@@ -382,18 +363,7 @@ export default [
     },
   },
   {
-    path: '/networks/{networkId}/appliance/ports',
-    handler: (ctx) => appliancePorts(netOf(ctx)),
-  },
-  {
-    path: '/networks/{networkId}/appliance/ports/{portId}',
-    handler: (ctx) => {
-      const port = appliancePorts(netOf(ctx)).find((p) => String(p.number) === ctx.params.portId);
-      if (!port) throw notFound('Port');
-      return port;
-    },
-  },
-  {
+    op: 'getNetworkApplianceUplinksUsageHistory',
     path: '/networks/{networkId}/appliance/uplinks/usageHistory',
     handler: (ctx) => {
       const net = netOf(ctx);
@@ -407,6 +377,7 @@ export default [
     },
   },
   {
+    op: 'getNetworkApplianceSecurityEvents',
     path: '/networks/{networkId}/appliance/security/events',
     handler: (ctx) => {
       const net = netOf(ctx);
@@ -425,7 +396,9 @@ export default [
     },
   },
   {
+    op: 'getNetworkWirelessClientCountHistory',
     path: '/networks/{networkId}/wireless/clientCountHistory',
+    sample: { query: 'timespan=86400&resolution=3600' },
     handler: (ctx) => {
       const net = netOf(ctx);
       const { clients } = wirelessScope(ctx, net);
@@ -447,7 +420,9 @@ export default [
     },
   },
   {
+    op: 'getNetworkWirelessUsageHistory',
     path: '/networks/{networkId}/wireless/usageHistory',
+    sample: { query: 'timespan=86400&resolution=3600' },
     handler: (ctx) => {
       const net = netOf(ctx);
       const scope = wirelessScope(ctx, net);
@@ -476,6 +451,7 @@ export default [
     },
   },
   {
+    op: 'getNetworkWirelessConnectionStats',
     path: '/networks/{networkId}/wireless/connectionStats',
     handler: (ctx) => {
       const { clients } = wirelessScope(ctx, netOf(ctx));
@@ -484,6 +460,7 @@ export default [
     },
   },
   {
+    op: 'getNetworkWirelessLatencyStats',
     path: '/networks/{networkId}/wireless/latencyStats',
     handler: (ctx) => {
       const { latencyAps } = wirelessScope(ctx, netOf(ctx));
@@ -492,6 +469,7 @@ export default [
     },
   },
   {
+    op: 'getNetworkWirelessDevicesConnectionStats',
     path: '/networks/{networkId}/wireless/devices/connectionStats',
     handler: (ctx) => {
       const { aps, clients } = wirelessScope(ctx, netOf(ctx));
@@ -500,6 +478,7 @@ export default [
     },
   },
   {
+    op: 'getNetworkWirelessDevicesLatencyStats',
     path: '/networks/{networkId}/wireless/devices/latencyStats',
     handler: (ctx) => {
       const { latencyAps } = wirelessScope(ctx, netOf(ctx));
@@ -509,6 +488,7 @@ export default [
     },
   },
   {
+    op: 'getNetworkWirelessSsids',
     path: '/networks/{networkId}/wireless/ssids',
     handler: (ctx) => {
       const net = netOf(ctx);
@@ -517,7 +497,9 @@ export default [
     },
   },
   {
+    op: 'getNetworkWirelessSsid',
     path: '/networks/{networkId}/wireless/ssids/{number}',
+    sample: { number: '0' },
     handler: (ctx) => {
       const net = netOf(ctx);
       requireProduct(net, 'wireless');
