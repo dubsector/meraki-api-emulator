@@ -14,11 +14,14 @@
     "bin",
     "src",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "ENDPOINTS.md"
   ],
   "scripts": {
     "start": "node bin/meraki-api-emulator.js",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "docs": "node scripts/endpoints.js",
+    "check-spec": "node scripts/check-spec.js"
   },
   "engines": {
     "node": ">=22"

@@ -1,6 +1,8 @@
 # Meraki API Emulator
 
-A local stand-in for the Cisco Meraki Dashboard API v1. It serves two simulated organizations with networks, devices, clients and traffic that change through the day, so you can build and demo Meraki tooling without a real Meraki account.
+A local stand-in for the Cisco Meraki Dashboard API v1. It serves two simulated organizations with networks, devices, clients and traffic that change through the day, so you can build, test and demo Meraki integrations without a real Meraki account.
+
+It answers 110 read operations with the same paths, operation IDs, paging and error formats as the real API, and it logs every call your client makes so you can check exactly what it sent.
 
 Not affiliated with or endorsed by Cisco or Meraki. All names, addresses and IPs are made up (IPs come from the RFC 5737 documentation ranges).
 
@@ -50,8 +52,19 @@ Everything is generated from a seed and the clock:
 - **Traffic** is built from those sessions on a 5-minute grid, so totals agree across endpoints and resolutions. HQ runs about 60 Mbps at midday, drops to almost nothing overnight, and has a nightly NAS backup.
 - **Devices** have occasional outages. The Reno dock AP drops several times a day, and WAN links fail over now and then.
 - **Events** come from the same sessions and outages: associations, 802.1X and splash auth, DHCP leases, port up and down, VPN peer changes, failovers, content filtering and IDS alerts.
+- **Alerts** are raised from those outages too. A device gone for five minutes becomes an `unreachable` assurance alert that resolves when it comes back, the Austin switch has an open CRC errors alert, and WAN failures show up as `wan_status`.
+- **Configuration** is built from the same topology. VLAN subnets hold every client address, the MX is `.1` on each one, firewall rules reference the real VLANs, and the VPN settings export the subnets the VPN status endpoint reports.
+- **Administration**: each organization has admins with different access levels, a change log written by the admins allowed to make each change, and an inventory with a few unassigned spares. Acme Corporation uses co-term licensing and Acme Test Lab uses per-device licensing, with one license expiring soon and one unused.
 
 The same seed and the same time always give the same answer. Freeze the clock with `--now` for repeatable tests.
+
+## Testing your client
+
+- Every authenticated call is logged in memory. `GET /organizations/{organizationId}/apiRequests` lists them newest first with the path, query string, user agent, status code and operation ID, and the `overview` endpoints count them by status code. Filter on `userAgent` to see only your client's calls.
+- `--fault-rate 0.1` fails one call in ten with a 500, 502 or 503, to test retries.
+- `--rate-limit` and `--burst` control when `429 Too Many Requests` starts, and the response carries `Retry-After`.
+- `--latency 800` slows every response, to test timeouts and loading states.
+- `--now 2026-01-15T09:00:00Z` freezes the clock, so the same request always returns the same body.
 
 ## Behavior that matches the real API
 
@@ -62,16 +75,21 @@ The same seed and the same time always give the same answer. Freeze the clock wi
 - `t0`, `t1`, `timespan`, `resolution` and `perPage` are checked against each endpoint's limits from the OpenAPI spec (lookback, longest and shortest span, valid resolutions), and bad values get a `400` with an `errors` array.
 - `uplinksLossAndLatency` data ends two minutes before the current time.
 - `getNetworkEvents` needs `productType` on networks with more than one product type.
+- Assurance alerts return only active alerts unless you pass `resolved=true`, like the real defaults.
+- `getOrganizationSwitchPortsStatusesBySwitch` wraps its results in `items` and `meta`, unlike most list endpoints.
+- `getOrganizationLicenses` answers `400` for co-term organizations.
 
 ## Endpoints
 
-All are `GET` under `/api/v1`.
+All are `GET` under `/api/v1`. [ENDPOINTS.md](ENDPOINTS.md) lists each operation with its path. In short:
 
-**Organizations**: `/organizations`, `/organizations/{organizationId}`, and under it `networks`, `devices`, `devices/statuses`, `devices/statuses/overview`, `devices/availabilities`, `devices/availabilities/changeHistory`, `devices/uplinksLossAndLatency`, `appliance/uplink/statuses`, `uplinks/statuses`, `appliance/vpn/statuses`, `appliance/vpn/stats`, `appliance/uplinks/usage/byNetwork`, `clients/overview`, `summary/top/applications/byUsage`, `summary/top/clients/byUsage`, `summary/top/devices/byUsage`.
-
-**Networks**: `/networks/{networkId}`, and under it `devices`, `clients`, `clients/{clientId}` (ID, MAC or IP), `clients/overview`, `clients/bandwidthUsageHistory`, `events`, `traffic`, `appliance/ports`, `appliance/ports/{portId}`, `appliance/uplinks/usageHistory`, `appliance/security/events`, `wireless/clientCountHistory`, `wireless/usageHistory`, `wireless/connectionStats`, `wireless/latencyStats`, `wireless/devices/connectionStats`, `wireless/devices/latencyStats`, `wireless/ssids`, `wireless/ssids/{number}`.
-
-**Devices**: `/devices/{serial}`, and under it `clients`, `lossAndLatencyHistory`, `appliance/performance`, `switch/ports`, `switch/ports/statuses`, `wireless/connectionStats`, `wireless/latencyStats`.
+- **Organizations**: networks, devices, statuses and availability, uplinks, VPN, clients, top-N summaries, admins, licenses, inventory, the change log and the API request log.
+- **Networks**: devices, clients, events, traffic, settings, syslog, SNMP, alert settings, webhook servers, group policies, firmware and link layer topology.
+- **Alerts**: assurance alerts across the organization and per-network health alerts.
+- **Security appliance (MX)**: LAN ports, VLANs, L3 and L7 firewall rules, port forwarding, 1:1 NAT, static routes, site-to-site VPN, content filtering, intrusion and malware settings, security events, DHCP subnets and uplink settings.
+- **Switches (MS)**: port config and live status per switch and across the organization, LLDP and CDP neighbors.
+- **Wireless (MR)**: SSIDs with their firewall and splash settings, RF profiles, radio settings and status, client counts, usage, connection and latency stats, failed connections, channel utilization and signal quality.
+- **Devices**: device details, clients, loss and latency history, MX performance and management interface.
 
 ## Options
 
@@ -93,16 +111,20 @@ There is no real authentication, so only use `--host 0.0.0.0` on a network you t
 ## Differences from the real API
 
 - Read only. Anything other than `GET` returns `405`.
-- Only the endpoints above exist. Others return `404`.
+- Only the endpoints in [ENDPOINTS.md](ENDPOINTS.md) exist. Others return `404`.
 - No redirects to regional shard hosts.
 - Error messages are close to Meraki's but not always word for word.
 - Rate limits are per API key rather than per organization.
+- Every API key acts as the same admin, `API Integration`, in both organizations.
+- The API request log lives in memory, holds the last 10,000 calls and starts empty on each run.
 
 ## Development
 
 ```sh
 npm test
 ```
+
+After adding a route, give it the `op` name from the official spec and run `npm run docs` to update ENDPOINTS.md. `npm run check-spec` downloads the [Meraki OpenAPI spec](https://github.com/meraki/openapi) and reports routes whose path or operation ID don't match it, plus response fields the spec's examples have that ours don't. Pass a path to use a local copy of `spec3.json` instead.
 
 ## License
 
