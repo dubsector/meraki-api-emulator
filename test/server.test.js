@@ -147,9 +147,26 @@ describe('server', () => {
     assert.equal((await sb.get(`/networks/${wirelessOnly.id}/events`)).status, 200);
   });
 
+  test('MX LAN ports cover the model range and trunk to the core switch', async () => {
+    for (const net of sb.world.orgs[0].networks) {
+      const r = await sb.get(`/networks/${net.id}/appliance/ports`);
+      assert.equal(r.status, 200);
+      const [first, last] = net.mx.info.lan;
+      assert.deepEqual(r.body.map((p) => p.number), Array.from({ length: last - first + 1 }, (_, i) => first + i));
+      assert.deepEqual(r.body.find((p) => p.number === 3), {
+        number: 3, enabled: true, type: 'trunk', dropUntaggedTraffic: false, vlan: 1, allowedVlans: 'all', sgt: { id: null, enabled: false },
+      });
+      for (const p of r.body) assert.equal('accessPolicy' in p, p.type === 'access', `port ${p.number}`);
+      assert.deepEqual((await sb.get(`/networks/${net.id}/appliance/ports/3`)).body, r.body.find((p) => p.number === 3));
+    }
+    const hq = sb.world.orgs[0].networks[0];
+    assert.equal((await sb.get(`/networks/${hq.id}/appliance/ports/99`)).status, 404);
+  });
+
   test('appliance endpoints reject networks and devices without an MX', async () => {
     const lab = sb.world.orgs[1].networks[0];
     assert.equal((await sb.get(`/networks/${lab.id}/appliance/security/events`)).status, 400);
+    assert.equal((await sb.get(`/networks/${lab.id}/appliance/ports`)).status, 400);
     assert.equal((await sb.get(`/devices/${lab.aps[0].serial}/lossAndLatencyHistory?ip=8.8.8.8`)).status, 400);
   });
 });

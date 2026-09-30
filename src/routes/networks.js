@@ -5,6 +5,7 @@ import { eachSession, isOnline, presenceIn } from '../sim/presence.js';
 import { trafficRows, uplinkBytes } from '../sim/traffic.js';
 import { SLOT, WD_RECV, WD_SENT, WL_RECV, WL_SENT, buckets, clientUsage, eachSlot, networkTotals } from '../sim/usage.js';
 import { connectionStats, latencyStats } from '../sim/wireless.js';
+import { derive, unit } from '../rng.js';
 import { DAY, iso, isoMicro, isoUs, parseUs } from '../time.js';
 import { byId, bySerial, netOf, requireProduct, round } from './common.js';
 
@@ -173,6 +174,33 @@ function networkEvents(ctx) {
     pageEndAt: isoUs(last),
     events: page.reverse().map(eventJson),
   };
+}
+
+// ── Appliance LAN ports ──
+
+// Port config only; the API has no live MX port state. Port 3 trunks to the
+// core switch, the rest get a seeded mix of access, trunk and disabled.
+function appliancePorts(net) {
+  requireProduct(net, 'appliance');
+  const [first, last] = net.mx.info.lan;
+  const vlans = [...new Set(net.clients.map((c) => c.vlan))].sort((a, b) => a - b);
+  const key = derive(net.mx.key, 'lan');
+  const ports = [];
+  for (let n = first; n <= last; n++) {
+    const port = { number: n, enabled: true, type: 'trunk', dropUntaggedTraffic: false, vlan: 1, allowedVlans: 'all' };
+    const u = unit(key, n);
+    if (n === 3 && net.switches.length) {
+      // uplink to the core switch keeps the defaults
+    } else if (u < 0.25) {
+      Object.assign(port, { type: 'access', vlan: vlans[Math.floor(unit(key, n + 1000) * vlans.length)], accessPolicy: 'open' });
+    } else if (u < 0.45) {
+      port.allowedVlans = [1, ...vlans].join(',');
+    } else {
+      port.enabled = false;
+    }
+    ports.push({ ...port, sgt: { id: null, enabled: false } });
+  }
+  return ports;
 }
 
 // ── Wireless ──
@@ -351,6 +379,18 @@ export default [
       const deviceType = ctx.query.get('deviceType') || 'combined';
       if (!['combined', 'wireless', 'switch', 'appliance'].includes(deviceType)) throw badRequest("'deviceType' must be one of: combined, wireless, switch, appliance");
       return trafficRows(net, t0, t1, deviceType);
+    },
+  },
+  {
+    path: '/networks/{networkId}/appliance/ports',
+    handler: (ctx) => appliancePorts(netOf(ctx)),
+  },
+  {
+    path: '/networks/{networkId}/appliance/ports/{portId}',
+    handler: (ctx) => {
+      const port = appliancePorts(netOf(ctx)).find((p) => String(p.number) === ctx.params.portId);
+      if (!port) throw notFound('Port');
+      return port;
     },
   },
   {

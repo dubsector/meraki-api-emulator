@@ -42,7 +42,7 @@ export async function collect(get, path, maxPages = 200) {
 // A concrete URL for each route, using IDs from HQ.
 export function sampleUrls(world) {
   const net = world.orgs[0].networks[0];
-  const ids = { organizationId: world.orgs[0].id, networkId: net.id, clientId: net.clients[0].id, number: '1' };
+  const ids = { organizationId: world.orgs[0].id, networkId: net.id, clientId: net.clients[0].id, number: '1', portId: '3' };
   return ROUTES.map((r) => {
     let serial = net.aps[0].serial;
     if (r.path.includes('/switch/')) serial = net.switches[0].serial;
