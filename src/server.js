@@ -28,6 +28,15 @@ function compile(routes) {
     .sort((a, b) => a.names.length - b.names.length); // literal segments win over {params}
 }
 
+// The key from X-Cisco-Meraki-API-Key or "Authorization: Bearer <key>". The
+// regex classes don't overlap, so it stays linear on hostile headers.
+export function apiKeyOf(headers) {
+  const key = headers['x-cisco-meraki-api-key'];
+  if (key) return String(key).trim();
+  const m = /^Bearer\s+(\S+)$/i.exec(String(headers.authorization || '').trim());
+  return m ? m[1] : null;
+}
+
 export function resolveOptions(o = {}) {
   const num = (v, def, name, min = 0) => {
     if (v == null || v === '') return def;
@@ -66,15 +75,8 @@ export function createEmulator(options = {}) {
     return status;
   }
 
-  function apiKeyOf(req) {
-    const key = req.headers['x-cisco-meraki-api-key'];
-    if (key) return String(key).trim();
-    const m = /^Bearer\s+(.+)$/i.exec(req.headers.authorization || '');
-    return m ? m[1].trim() : null;
-  }
-
   async function api(req, res, url) {
-    const key = apiKeyOf(req);
+    const key = apiKeyOf(req.headers);
     if (!key || (opts.apiKey && key !== opts.apiKey)) return send(res, 401, { errors: [AUTH_ERROR] });
 
     const wait = limiter ? limiter.take(key) : 0;
