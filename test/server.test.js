@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import { after, before, describe, test } from 'node:test';
-import { AUTH_ERROR } from '../src/server.js';
+import { AUTH_ERROR, apiKeyOf } from '../src/server.js';
 import { NOW, collect, relLink, sampleUrls, start } from './helpers.js';
 
 // Sends a path exactly as given; fetch would normalize or reject it first.
@@ -39,6 +39,17 @@ describe('server', () => {
   test('bearer auth is accepted', async () => {
     const r = await sb.get('/organizations', { key: null, headers: { Authorization: 'Bearer abc' } });
     assert.equal(r.status, 200);
+  });
+
+  test('bearer parsing takes linear time on hostile headers', () => {
+    assert.equal(apiKeyOf({ authorization: '  bearer   abc  ' }), 'abc');
+    assert.equal(apiKeyOf({ authorization: 'Bearer' }), null);
+    // The old pattern backtracked quadratically here: about 1.4 s for 50,000 spaces.
+    const started = performance.now();
+    assert.equal(apiKeyOf({ authorization: `Bearer${' '.repeat(50000)}x\n` }), 'x');
+    assert.equal(apiKeyOf({ authorization: `Bearer${' '.repeat(50000)}\n` }), null);
+    assert.equal(apiKeyOf({ authorization: `Bearer${' '.repeat(50000)}a${' '.repeat(50000)}b` }), null);
+    assert.ok(performance.now() - started < 200, `${Math.round(performance.now() - started)}ms`);
   });
 
   test('unknown IDs are 404 and writes are 405', async () => {
