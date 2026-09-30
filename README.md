@@ -69,7 +69,7 @@ All are `GET` under `/api/v1`.
 
 **Organizations**: `/organizations`, `/organizations/{organizationId}`, and under it `networks`, `devices`, `devices/statuses`, `devices/statuses/overview`, `devices/availabilities`, `devices/availabilities/changeHistory`, `devices/uplinksLossAndLatency`, `appliance/uplink/statuses`, `uplinks/statuses`, `appliance/vpn/statuses`, `appliance/vpn/stats`, `appliance/uplinks/usage/byNetwork`, `clients/overview`, `summary/top/applications/byUsage`, `summary/top/clients/byUsage`, `summary/top/devices/byUsage`.
 
-**Networks**: `/networks/{networkId}`, and under it `devices`, `clients`, `clients/{clientId}` (ID, MAC or IP), `clients/overview`, `clients/bandwidthUsageHistory`, `events`, `traffic`, `appliance/uplinks/usageHistory`, `appliance/security/events`, `wireless/clientCountHistory`, `wireless/usageHistory`, `wireless/connectionStats`, `wireless/latencyStats`, `wireless/devices/connectionStats`, `wireless/devices/latencyStats`, `wireless/ssids`, `wireless/ssids/{number}`.
+**Networks**: `/networks/{networkId}`, and under it `devices`, `clients`, `clients/{clientId}` (ID, MAC or IP), `clients/overview`, `clients/bandwidthUsageHistory`, `events`, `traffic`, `appliance/ports`, `appliance/ports/{portId}`, `appliance/uplinks/usageHistory`, `appliance/security/events`, `wireless/clientCountHistory`, `wireless/usageHistory`, `wireless/connectionStats`, `wireless/latencyStats`, `wireless/devices/connectionStats`, `wireless/devices/latencyStats`, `wireless/ssids`, `wireless/ssids/{number}`.
 
 **Devices**: `/devices/{serial}`, and under it `clients`, `lossAndLatencyHistory`, `appliance/performance`, `switch/ports`, `switch/ports/statuses`, `wireless/connectionStats`, `wireless/latencyStats`.
 

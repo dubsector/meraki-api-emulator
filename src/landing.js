@@ -10,6 +10,7 @@ function samples(world) {
     networkId: net.id,
     clientId: net.clients[0].id,
     number: '0',
+    portId: '3',
     appliance: net.mx.serial,
     switch: net.switches[0].serial,
     wireless: net.aps[0].serial,
