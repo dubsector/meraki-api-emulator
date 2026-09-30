@@ -30,5 +30,13 @@
     "emulator",
     "simulator"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dubsector/meraki-api-emulator.git"
+  },
+  "homepage": "https://github.com/dubsector/meraki-api-emulator#readme",
+  "bugs": {
+    "url": "https://github.com/dubsector/meraki-api-emulator/issues"
+  }
 }
