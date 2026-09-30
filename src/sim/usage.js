@@ -4,6 +4,7 @@
 
 import { derive, lognoise, unit } from '../rng.js';
 import { DAY, HOUR, weekday } from '../time.js';
+import { perDay } from './cache.js';
 import { eachSession } from './presence.js';
 
 export const SLOT = 300;
@@ -99,13 +100,12 @@ export function clientsUsage(clients, a, b) {
   return { sent, recv };
 }
 
-const dayCache = new Map();
-
 export function networkDay(net, day) {
-  const key = `${net.id}:${day}`;
-  let arr = dayCache.get(key);
-  if (arr) return arr;
-  arr = new Float64Array(SERIES * PER_DAY);
+  return perDay(net, 'usageCache', day, () => buildDay(net, day), 400);
+}
+
+function buildDay(net, day) {
+  const arr = new Float64Array(SERIES * PER_DAY);
   const a = day * DAY;
   const base = day * PER_DAY;
   for (const c of net.clients) {
@@ -119,8 +119,6 @@ export function networkDay(net, day) {
       arr[WAN_RECV * PER_DAY + i] += recv * wan;
     });
   }
-  if (dayCache.size > 2000) dayCache.clear();
-  dayCache.set(key, arr);
   return arr;
 }
 

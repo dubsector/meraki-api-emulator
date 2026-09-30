@@ -1,7 +1,21 @@
 import assert from 'node:assert/strict';
+import { request } from 'node:http';
 import { after, before, describe, test } from 'node:test';
 import { AUTH_ERROR } from '../src/server.js';
-import { collect, relLink, sampleUrls, start } from './helpers.js';
+import { NOW, collect, relLink, sampleUrls, start } from './helpers.js';
+
+// Sends a path exactly as given; fetch would normalize or reject it first.
+function rawGet(base, path) {
+  const { hostname, port } = new URL(base);
+  return new Promise((resolve, reject) => {
+    const req = request({ hostname, port, path, headers: { 'X-Cisco-Meraki-API-Key': 'k' } }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
 
 describe('server', () => {
   let sb;
@@ -32,6 +46,22 @@ describe('server', () => {
     assert.equal((await sb.get('/devices/Q2XX-0000-0000')).status, 404);
     assert.equal((await sb.get('/nope')).status, 404);
     assert.equal((await sb.get('/organizations', { method: 'POST' })).status, 405);
+  });
+
+  test('malformed URLs are a 400, not a crash', async () => {
+    assert.equal(await rawGet(sb.base, '/api/v1/organizations/%ZZ'), 400);
+    assert.equal(await rawGet(sb.base, '/api/v1/networks/%E0%A4%A/clients'), 400);
+    assert.equal(await rawGet(sb.base, '//['), 400);
+  });
+
+  test('HEAD sends headers only and OPTIONS answers the CORS preflight', async () => {
+    const head = await fetch(`${sb.base}/organizations`, { method: 'HEAD', headers: { 'X-Cisco-Meraki-API-Key': 'k' } });
+    assert.equal(head.status, 200);
+    assert.ok(Number(head.headers.get('content-length')) > 0);
+    assert.equal(await head.text(), '');
+    const pre = await fetch(`${sb.base}/organizations`, { method: 'OPTIONS' });
+    assert.equal(pre.status, 204);
+    assert.match(pre.headers.get('access-control-allow-headers'), /X-Cisco-Meraki-API-Key/);
   });
 
   test('landing page and health check', async () => {
@@ -66,6 +96,38 @@ describe('server', () => {
     assert.equal((await sb.get(`/networks/${net.id}/clients?perPage=2`)).status, 400);
   });
 
+  test('windows that start in the future are rejected', async () => {
+    const net = sb.world.orgs[0].networks[0];
+    const soon = Date.parse(NOW) / 1000 + 3600;
+    for (const url of [
+      `/devices/${net.mx.serial}/appliance/performance?t0=${soon}&t1=${soon + 3600}`,
+      `/devices/${net.switches[0].serial}/switch/ports/statuses?t0=${soon}`,
+      `/networks/${net.id}/clients/bandwidthUsageHistory?t0=${soon}`,
+    ]) {
+      const r = await sb.get(url);
+      assert.equal(r.status, 400, url);
+      assert.deepEqual(r.body, { errors: ["'t0' must be in the past"] });
+    }
+    // A t1 alone in the future just means now.
+    assert.equal((await sb.get(`/networks/${net.id}/wireless/connectionStats?t1=${soon}`)).status, 200);
+  });
+
+  test('timespans below the spec minimum are rejected', async () => {
+    const org = sb.world.orgs[0];
+    const mx = org.networks[0].mx.serial;
+    assert.equal((await sb.get(`/devices/${mx}/appliance/performance?timespan=600`)).status, 400);
+    assert.equal((await sb.get(`/devices/${mx}/appliance/performance?timespan=1800`)).status, 200);
+    assert.equal((await sb.get(`/organizations/${org.id}/summary/top/clients/byUsage?timespan=3600`)).status, 400);
+    assert.equal((await sb.get(`/organizations/${org.id}/summary/top/devices/byUsage?timespan=3600`)).status, 400);
+    assert.equal((await sb.get(`/organizations/${org.id}/summary/top/applications/byUsage?timespan=3600`)).status, 200);
+  });
+
+  test('uplink loss and latency ends two minutes before now', async () => {
+    const r = await sb.get(`/organizations/${sb.world.orgs[0].id}/devices/uplinksLossAndLatency`);
+    const last = r.body[0].timeSeries.at(-1).ts;
+    assert.ok(Date.parse(last) <= Date.parse(NOW) - 120000, last);
+  });
+
   test('events require productType on multi-product networks', async () => {
     const net = sb.world.orgs[0].networks[0];
     const r = await sb.get(`/networks/${net.id}/events`);
@@ -87,6 +149,8 @@ describe('options', () => {
     try {
       assert.equal((await sb.get('/organizations', { key: 'wrong' })).status, 401);
       assert.equal((await sb.get('/organizations', { key: 'secret' })).status, 200);
+      const page = await (await fetch(sb.base.replace('/api/v1', '/'))).text();
+      assert.doesNotMatch(page, /demo-key/, 'the landing page must not suggest a key that fails');
     } finally {
       await sb.close();
     }

@@ -59,7 +59,8 @@ The same seed and the same time always give the same answer. Freeze the clock wi
 - The network event log always includes a `rel=next` link, even past the newest event, so clients have to decide when to stop. Pages are newest first.
 - A missing or wrong key gets `401` with `{"errors":["No valid authentication method found"]}`.
 - About 10 requests per second per key, with a burst of 20, then `429` with `Retry-After`.
-- `t0`, `t1`, `timespan`, `resolution` and `perPage` are checked against each endpoint's limits from the OpenAPI spec, and bad values get a `400` with an `errors` array.
+- `t0`, `t1`, `timespan`, `resolution` and `perPage` are checked against each endpoint's limits from the OpenAPI spec (lookback, longest and shortest span, valid resolutions), and bad values get a `400` with an `errors` array.
+- `uplinksLossAndLatency` data ends two minutes before the current time.
 - `getNetworkEvents` needs `productType` on networks with more than one product type.
 
 ## Endpoints
@@ -86,6 +87,8 @@ All are `GET` under `/api/v1`.
 | `--burst` | `MERAKI_EMULATOR_BURST` | `20` | Requests allowed at once before throttling starts |
 | `--now` | `MERAKI_EMULATOR_NOW` | real time | Freeze the clock (ISO 8601 or epoch seconds) |
 | `--quiet` | `MERAKI_EMULATOR_QUIET` | off | Don't log requests |
+
+There is no real authentication, so only use `--host 0.0.0.0` on a network you trust. See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## Differences from the real API
 

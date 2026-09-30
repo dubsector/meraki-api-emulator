@@ -6,6 +6,7 @@ import { landingPage } from './landing.js';
 import devices from './routes/devices.js';
 import networks from './routes/networks.js';
 import organizations from './routes/organizations.js';
+import { RateLimiter } from './ratelimit.js';
 import { parseTime } from './time.js';
 import { buildWorld } from './world.js';
 
@@ -25,28 +26,6 @@ function compile(routes) {
       return { ...r, names, re: new RegExp(`^${src}/?$`) };
     })
     .sort((a, b) => a.names.length - b.names.length); // literal segments win over {params}
-}
-
-// Token bucket per API key, refilled continuously.
-class Bucket {
-  constructor(rate, burst) {
-    this.rate = rate;
-    this.burst = burst;
-    this.tokens = burst;
-    this.at = performance.now();
-  }
-
-  // Returns 0 when a token was taken, otherwise seconds until one is free.
-  take() {
-    const now = performance.now();
-    this.tokens = Math.min(this.burst, this.tokens + ((now - this.at) / 1000) * this.rate);
-    this.at = now;
-    if (this.tokens >= 1) {
-      this.tokens -= 1;
-      return 0;
-    }
-    return (1 - this.tokens) / this.rate;
-  }
 }
 
 export function resolveOptions(o = {}) {
@@ -77,7 +56,7 @@ export function createEmulator(options = {}) {
   const clock = () => opts.now ?? Date.now() / 1000;
   const world = buildWorld({ seed: opts.seed, bootTime: clock() });
   const routes = compile(ROUTES);
-  const buckets = new Map();
+  const limiter = opts.rateLimit > 0 ? new RateLimiter(opts.rateLimit, opts.burst) : null;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   function send(res, status, body, headers = {}) {
@@ -98,12 +77,8 @@ export function createEmulator(options = {}) {
     const key = apiKeyOf(req);
     if (!key || (opts.apiKey && key !== opts.apiKey)) return send(res, 401, { errors: [AUTH_ERROR] });
 
-    if (opts.rateLimit > 0) {
-      let b = buckets.get(key);
-      if (!b) buckets.set(key, (b = new Bucket(opts.rateLimit, opts.burst)));
-      const wait = b.take();
-      if (wait > 0) return send(res, 429, { errors: ['Too many requests'] }, { 'Retry-After': String(Math.max(1, Math.ceil(wait))) });
-    }
+    const wait = limiter ? limiter.take(key) : 0;
+    if (wait > 0) return send(res, 429, { errors: ['Too many requests'] }, { 'Retry-After': String(Math.max(1, Math.ceil(wait))) });
 
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return send(res, 405, { errors: ['The emulator is read-only. Only GET requests are supported.'] }, { Allow: 'GET, HEAD' });
@@ -116,20 +91,27 @@ export function createEmulator(options = {}) {
     }
 
     const path = url.pathname.slice(API_PREFIX.length) || '/';
-    let found = null;
+    let route = null;
+    let m = null;
     for (const r of routes) {
-      const m = r.re.exec(path);
+      m = r.re.exec(path);
       if (m) {
-        found = { r, params: Object.fromEntries(r.names.map((n, i) => [n, decodeURIComponent(m[i + 1])])) };
+        route = r;
         break;
       }
     }
-    if (!found) return send(res, 404, { errors: ['Not found'] });
+    if (!route) return send(res, 404, { errors: ['Not found'] });
+    let params;
+    try {
+      params = Object.fromEntries(route.names.map((n, i) => [n, decodeURIComponent(m[i + 1])]));
+    } catch {
+      return send(res, 400, { errors: ['Malformed URL encoding'] });
+    }
 
     const proto = req.headers['x-forwarded-proto'] || 'http';
-    const ctx = { world, params: found.params, query: url.searchParams, now: clock(), url, origin: `${proto}://${req.headers.host || 'localhost'}`, headers: {} };
+    const ctx = { world, params, query: url.searchParams, now: clock(), url, origin: `${proto}://${req.headers.host || 'localhost'}`, headers: {} };
     try {
-      const body = found.r.handler(ctx);
+      const body = route.handler(ctx);
       return send(res, 200, body, ctx.headers);
     } catch (e) {
       if (e instanceof ApiError) return send(res, e.status, { errors: e.errors }, e.headers);
@@ -140,9 +122,17 @@ export function createEmulator(options = {}) {
 
   async function handle(req, res) {
     const started = performance.now();
-    const url = new URL(req.url, 'http://localhost');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Expose-Headers', 'Link, Retry-After');
+    let url;
+    try {
+      url = new URL(req.url, 'http://localhost');
+    } catch {
+      // Paths like "//[" parse as a broken host.
+      const status = send(res, 400, { errors: ['Malformed URL'] });
+      opts.log?.(`${req.method} ${req.url} ${status} ${Math.round(performance.now() - started)}ms`);
+      return;
+    }
     let status;
     if (req.method === 'OPTIONS') {
       res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS', 'Access-Control-Allow-Headers': 'Authorization, X-Cisco-Meraki-API-Key, Content-Type', 'Access-Control-Max-Age': '86400' });

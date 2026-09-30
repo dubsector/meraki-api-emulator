@@ -146,7 +146,7 @@ button.send { padding: 8px 16px; border: 0; border-radius: 6px; background: var(
 <script>
 const base = location.origin + '/api/v1';
 document.getElementById('base').textContent = base;
-document.getElementById('curl').textContent = "curl -H 'X-Cisco-Meraki-API-Key: demo-key' " + base + '/organizations';
+document.getElementById('curl').textContent = "curl -H 'X-Cisco-Meraki-API-Key: ${apiKey ? '<your key>' : 'demo-key'}' " + base + '/organizations';
 const form = document.getElementById('try');
 const pathEl = document.getElementById('path');
 const statusEl = document.getElementById('status');

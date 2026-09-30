@@ -2,20 +2,10 @@
 
 import { derive, unit } from '../rng.js';
 import { DAY } from '../time.js';
-
-function cached(obj, prop, day, build) {
-  const cache = obj[prop] || (obj[prop] = new Map());
-  let v = cache.get(day);
-  if (v === undefined) {
-    v = build();
-    if (cache.size > 800) cache.clear();
-    cache.set(day, v);
-  }
-  return v;
-}
+import { perDay } from './cache.js';
 
 export function deviceOutagesOnDay(dev, day) {
-  return cached(dev, 'outageCache', day, () => {
+  return perDay(dev, 'outageCache', day, () => {
     const k = derive(dev.key, day);
     const start = day * DAY;
     const out = [];
@@ -30,7 +20,8 @@ export function deviceOutagesOnDay(dev, day) {
       const s = start + unit(k, 1) * DAY;
       out.push([s, s + 120 + unit(k, 2) * 5400]);
     }
-    return out.sort((x, y) => x[0] - y[0]);
+    // A dormant device never comes back, so only outages that ended before it went dark count.
+    return out.filter((o) => !dev.dormant || o[1] < dev.dormantSince).sort((x, y) => x[0] - y[0]);
   });
 }
 
@@ -71,7 +62,7 @@ export function statusChanges(dev, a, b, now) {
 }
 
 export function uplinkFailuresOnDay(uplink, day) {
-  return cached(uplink, 'failCache', day, () => {
+  return perDay(uplink, 'failCache', day, () => {
     const k = derive(uplink.key, day);
     if (unit(k, 0) >= 0.07) return [];
     const s = day * DAY + unit(k, 1) * DAY;

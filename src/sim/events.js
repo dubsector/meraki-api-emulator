@@ -4,8 +4,9 @@
 import { CF_BLOCKS, IDS_SIGNATURES, MALWARE } from '../catalog.js';
 import { derive, unit } from '../rng.js';
 import { DAY } from '../time.js';
-import { END, START, sessions } from './presence.js';
+import { perDay } from './cache.js';
 import { eachOutage, eachUplinkFailure } from './outages.js';
+import { END, START, sessions } from './presence.js';
 
 const RADIO = { 2.4: '0', 5: '1', 6: '2' };
 const CHANNELS = { 2.4: [1, 6, 11], 5: [36, 44, 52, 100, 149, 157], 6: [37, 69, 101] };
@@ -25,14 +26,13 @@ function radioInfo(c) {
   return { radio: RADIO[c.band], vap: String(c.ssid.number), channel: String(channel) };
 }
 
-const cache = new Map();
-
 // All events whose time falls in UTC day `day`, oldest first.
 export function networkEventsOnDay(net, day) {
-  const key = `${net.id}:${day}`;
-  let list = cache.get(key);
-  if (list) return list;
-  list = [];
+  return perDay(net, 'eventCache', day, () => buildEvents(net, day), 120);
+}
+
+function buildEvents(net, day) {
+  const list = [];
   const a = day * DAY;
   const b = a + DAY;
   const inDay = (t) => t >= a && t < b;
@@ -50,8 +50,14 @@ export function networkEventsOnDay(net, day) {
     }
   }
 
+  // A device going down shows up as its switch port dropping.
   for (const dev of net.devices) {
-    eachOutage(dev, a - 3600, b, (s, e) => deviceEvents(dev, s, e, push));
+    if (!dev.switchPort) continue;
+    eachOutage(dev, a - 3600, b, (s, e) => {
+      push(s + 0.3, portEvent(dev.switchPort, '1Gfdx', 'down'));
+      push(e + 0.8, portEvent(dev.switchPort, 'down', '1Gfdx'));
+    });
+    if (dev.dormant) push(dev.dormantSince + 0.3, portEvent(dev.switchPort, '1Gfdx', 'down'));
   }
   // This network's MX logs AutoVPN peers going away and coming back.
   if (net.mx && net.org.hub) {
@@ -80,8 +86,6 @@ export function networkEventsOnDay(net, day) {
   // Whole, strictly increasing microseconds so page cursors are exact.
   let prev = -Infinity;
   for (const e of list) prev = e.us = Math.max(Math.floor(e.t * 1e6), prev + 1);
-  if (cache.size > 1500) cache.clear();
-  cache.set(key, list);
   return list;
 }
 
@@ -91,6 +95,10 @@ function device(dev) {
 
 function client(c) {
   return { clientId: c.id, clientDescription: c.description, clientMac: c.mac };
+}
+
+function portEvent(port, from, to) {
+  return { productType: 'switch', ...device(port.switch), type: 'port_status', category: 'port', description: 'Port status change', eventData: { port: port.portId, old: from, new: to } };
 }
 
 function clientEvents(net, c, s, e, flags, push) {
@@ -125,9 +133,8 @@ function clientEvents(net, c, s, e, flags, push) {
   }
 
   if (c.wired && c.switchPort && c.kindName !== 'nas') {
-    const sw = { productType: 'switch', ...device(c.switchPort.switch) };
-    if (flags & START) push(s - 2 - frac(5), { ...sw, type: 'port_status', category: 'port', description: 'Port status change', eventData: { port: c.switchPort.portId, old: 'down', new: '1Gfdx' } });
-    if (flags & END) push(e + frac(6), { ...sw, type: 'port_status', category: 'port', description: 'Port status change', eventData: { port: c.switchPort.portId, old: '1Gfdx', new: 'down' } });
+    if (flags & START) push(s - 2 - frac(5), portEvent(c.switchPort, 'down', '1Gfdx'));
+    if (flags & END) push(e + frac(6), portEvent(c.switchPort, '1Gfdx', 'down'));
   }
 
   if (net.mx && flags & START && c.kindName !== 'nas' && c.kindName !== 'printer') {
@@ -147,21 +154,12 @@ function clientEvents(net, c, s, e, flags, push) {
   }
 }
 
-// A device going down shows up as its switch port dropping.
-function deviceEvents(dev, s, e, push) {
-  if (!dev.switchPort) return;
-  const sw = { productType: 'switch', ...device(dev.switchPort.switch) };
-  push(s + 0.3, { ...sw, type: 'port_status', category: 'port', description: 'Port status change', eventData: { port: dev.switchPort.portId, old: '1Gfdx', new: 'down' } });
-  push(e + 0.8, { ...sw, type: 'port_status', category: 'port', description: 'Port status change', eventData: { port: dev.switchPort.portId, old: 'down', new: '1Gfdx' } });
+export function securityEventsOnDay(net, day) {
+  return perDay(net, 'securityCache', day, () => buildSecurityEvents(net, day), 400);
 }
 
-const secCache = new Map();
-
-export function securityEventsOnDay(net, day) {
-  const key = `${net.id}:${day}`;
-  let list = secCache.get(key);
-  if (list) return list;
-  list = [];
+function buildSecurityEvents(net, day) {
+  const list = [];
   if (net.mx) {
     const k = derive(net.key ^ 0x5ec, day);
     const rate = net.code === 'HQ' ? 9 : net.kind === 'retail' ? 5 : 3;
@@ -194,7 +192,5 @@ export function securityEventsOnDay(net, day) {
     }
     list.sort((x, y) => x.t - y.t);
   }
-  if (secCache.size > 3000) secCache.clear();
-  secCache.set(key, list);
   return list;
 }

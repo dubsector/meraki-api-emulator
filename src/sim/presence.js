@@ -3,6 +3,7 @@
 
 import { derive, unit } from '../rng.js';
 import { HOUR, weekday } from '../time.js';
+import { perDay } from './cache.js';
 
 // Session flags: a real connect at the start and/or a real disconnect at the end.
 // Always-on clients span midnight, so their day boundaries are not events.
@@ -10,14 +11,7 @@ export const START = 1;
 export const END = 2;
 
 export function sessions(c, day) {
-  const cache = c.sessionCache || (c.sessionCache = new Map());
-  let v = cache.get(day);
-  if (v === undefined) {
-    v = build(c, day);
-    if (cache.size > 800) cache.clear();
-    cache.set(day, v);
-  }
-  return v;
+  return perDay(c, 'sessionCache', day, () => build(c, day));
 }
 
 function build(c, day) {

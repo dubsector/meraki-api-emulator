@@ -264,7 +264,7 @@ export default [
     handler: (ctx) => {
       const dev = devOf(ctx);
       requireModel(dev, 'appliance');
-      const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 14 * DAY, defaultSpan: 1800, lookback: 30 * DAY });
+      const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 14 * DAY, minSpan: 30 * MIN, defaultSpan: 30 * MIN, lookback: 30 * DAY });
       const [s, r] = networkTotals(dev.net, t0, t1, [WAN_SENT, WAN_RECV]);
       const mbps = ((s + r) * 8) / 1000 / (t1 - t0);
       const clients = dev.net.clients.length;

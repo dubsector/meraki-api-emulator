@@ -44,8 +44,9 @@ function time(q, name) {
   return t;
 }
 
-// Resolves t0/t1/timespan into [t0, t1], clamped to now. maxSpan and lookback in seconds.
-export function timeWindow(q, now, { maxSpan, defaultSpan = DAY, lookback, allowT1 = true }) {
+// Resolves t0/t1/timespan into [t0, t1], clamped to now. Spans and lookback in seconds;
+// minSpan only applies to timespan, as in the spec.
+export function timeWindow(q, now, { maxSpan, minSpan = 0, defaultSpan = DAY, lookback, allowT1 = true }) {
   const hasSpan = q.has('timespan');
   const hasT0 = q.has('t0');
   const hasT1 = allowT1 && q.has('t1');
@@ -55,16 +56,18 @@ export function timeWindow(q, now, { maxSpan, defaultSpan = DAY, lookback, allow
     if (hasT0 || hasT1) throw badRequest("'timespan' cannot be combined with 't0' or 't1'");
     const span = Number(q.get('timespan'));
     if (!(span > 0)) throw badRequest("'timespan' must be a positive number of seconds");
+    if (span < minSpan) throw badRequest(`'timespan' must be greater than or equal to ${minSpan} seconds`);
     if (span > maxSpan) throw badRequest(`'timespan' must be less than or equal to ${maxSpan} seconds`);
     t1 = now;
     t0 = now - span;
   } else if (hasT0) {
     t0 = time(q, 't0');
+    if (t0 >= now) throw badRequest("'t0' must be in the past");
     t1 = hasT1 ? time(q, 't1') : Math.min(now, t0 + maxSpan);
     if (t1 <= t0) throw badRequest("'t1' must be after 't0'");
     if (t1 - t0 > maxSpan) throw badRequest(`'t1' can be a maximum of ${maxSpan} seconds after 't0'`);
   } else if (hasT1) {
-    t1 = time(q, 't1');
+    t1 = Math.min(time(q, 't1'), now);
     t0 = t1 - defaultSpan;
   } else {
     t1 = now;
