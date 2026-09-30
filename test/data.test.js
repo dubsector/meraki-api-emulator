@@ -1,8 +1,18 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import { networkEventsOnDay } from '../src/sim/events.js';
+import { statusChanges } from '../src/sim/outages.js';
+import { DAY } from '../src/time.js';
 import { buildWorld } from '../src/world.js';
 import { NOW, relLink, start } from './helpers.js';
+
+const BOOT = Date.parse(NOW) / 1000;
+
+function dormantCamera(world) {
+  const cam = world.devices.find((d) => d.dormant);
+  const onPort = (e) => e.deviceSerial === cam.switchPort.switch.serial && e.eventData.port === cam.switchPort.portId;
+  return { cam, portEvents: (day) => networkEventsOnDay(cam.net, day).filter(onPort) };
+}
 
 describe('world', () => {
   test('the same seed builds the same world', () => {
@@ -22,6 +32,37 @@ describe('world', () => {
   test('every wired client has a switch port', () => {
     const w = buildWorld({ seed: 1, bootTime: 1.79e9 });
     for (const c of w.clients) if (c.wired) assert.ok(c.switchPort, c.description);
+  });
+});
+
+describe('dormant device', () => {
+  // Two months past boot, so random outages would have landed after it went dark.
+  const later = BOOT + 60 * DAY;
+
+  test('never comes back online after it goes dark', () => {
+    for (let seed = 1; seed <= 5; seed++) {
+      const { cam } = dormantCamera(buildWorld({ seed, bootTime: BOOT }));
+      const changes = statusChanges(cam, cam.dormantSince, later, later);
+      assert.deepEqual(changes.map((c) => `${c.from}->${c.to}`), ['online->offline', 'offline->dormant'], `seed ${seed}`);
+    }
+  });
+
+  test('its switch port goes down once and stays down', () => {
+    for (let seed = 1; seed <= 5; seed++) {
+      const { cam, portEvents } = dormantCamera(buildWorld({ seed, bootTime: BOOT }));
+      const events = [];
+      for (let d = cam.dormantSince / DAY; d * DAY < later; d++) events.push(...portEvents(d));
+      assert.deepEqual(events.map((e) => e.eventData.new), ['down'], `seed ${seed}`);
+    }
+  });
+
+  test('worlds booted at different times keep separate event caches', () => {
+    // Same seed, so same network IDs. A shared cache would hand b the events a computed.
+    const a = dormantCamera(buildWorld({ seed: 1, bootTime: BOOT }));
+    const b = dormantCamera(buildWorld({ seed: 1, bootTime: BOOT + 30 * DAY }));
+    const day = b.cam.dormantSince / DAY;
+    assert.equal(a.portEvents(day).length, 0);
+    assert.equal(b.portEvents(day).length, 1);
   });
 });
 
