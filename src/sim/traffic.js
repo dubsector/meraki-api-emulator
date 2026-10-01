@@ -58,6 +58,30 @@ export function trafficRows(net, t0, t1, deviceType = 'combined') {
     .sort((x, y) => y.sent + y.recv - (x.sent + x.recv));
 }
 
+// What single-purpose clients talk to. Laptops and phones follow the office
+// mix, guests the guest mix, with the same daily noise as trafficRows.
+const KIND_APPS = {
+  nas: { 'Amazon AWS': 1 },
+  deskPhone: { Webex: 1 },
+  printer: { 'Non-web TCP': 3, DNS: 1 },
+  confTv: { Zoom: 3, Webex: 1 },
+  iot: { 'Miscellaneous secure web': 4, DNS: 1 },
+  scanner: { 'Miscellaneous secure web': 3, 'Non-web TCP': 2, DNS: 0.5 },
+  pos: { 'Miscellaneous secure web': 4, DNS: 0.5 },
+};
+
+// Splits a client's sent and received KB across applications, biggest first.
+export function clientApps(c, sent, recv, day) {
+  const fixed = KIND_APPS[c.kindName];
+  const weights = APPS.map((a) => (fixed ? (fixed[a.application] ?? 0) : c.kindName === 'guest' ? a.guest : a.weight) * lognoise(derive(c.net.key, a.application), day, 0.25));
+  const upWeights = weights.map((w, i) => w * (UPLOAD[APPS[i].application] ?? 1));
+  const wSum = weights.reduce((x, y) => x + y, 0);
+  const upSum = upWeights.reduce((x, y) => x + y, 0);
+  return APPS.map((a, i) => ({ app: a, share: weights[i] / wSum, sent: (sent * upWeights[i]) / upSum, recv: (recv * weights[i]) / wSum }))
+    .filter((r) => Math.round(r.sent) + Math.round(r.recv) > 0)
+    .sort((x, y) => y.sent + y.recv - (x.sent + x.recv));
+}
+
 // WAN bytes per uplink over [a, b). Traffic rides whichever uplink is active.
 export function uplinkBytes(net, a, b, res = SLOT) {
   const mx = net.mx;

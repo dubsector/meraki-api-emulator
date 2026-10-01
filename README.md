@@ -2,7 +2,7 @@
 
 A local stand-in for the Cisco Meraki Dashboard API v1. It serves two simulated organizations with networks, devices, clients and traffic that change through the day, so you can build, test and demo Meraki integrations without a real Meraki account.
 
-It answers 165 operations (113 reads and 52 writes) with the same paths, operation IDs, paging and error formats as the real API. Writes change the emulator's configuration in memory, so provisioning tools and scripts can create, update and delete things and read them back. It also logs every call your client makes so you can check exactly what it sent.
+It answers 177 operations (122 reads and 55 writes) with the same paths, operation IDs, paging and error formats as the real API. Writes change the emulator's configuration in memory, so provisioning tools and scripts can create, update and delete things and read them back. It also logs every call your client makes so you can check exactly what it sent.
 
 Not affiliated with or endorsed by Cisco or Meraki. All names, addresses and IPs are made up (IPs come from the RFC 5737 documentation ranges).
 
@@ -99,7 +99,7 @@ The same seed and the same time always give the same answer. Freeze the clock wi
 
 ## Writes
 
-`PUT`, `POST` and `DELETE` work on organizations, networks, devices, admins, VLANs, firewall and NAT rules, static routes, site-to-site VPN, threat protection, SSIDs and their firewall and splash settings, RF profiles, radio settings, switch ports, syslog, SNMP, alert settings, webhook servers and group policies. [ENDPOINTS.md](ENDPOINTS.md) lists them all.
+`PUT`, `POST` and `DELETE` work on organizations, networks, devices, admins, VLANs, firewall and NAT rules, static routes, site-to-site VPN, threat protection, SSIDs and their firewall and splash settings, RF profiles, radio settings, switch ports, syslog, SNMP, alert settings, webhook servers, group policies, client policies and splash authorization, and client provisioning. [ENDPOINTS.md](ENDPOINTS.md) lists them all.
 
 - Bodies are checked against the request schemas in the official spec: types, enums, required fields and ranges. A bad value gets a `400` naming the field.
 - `PUT` is a partial update. Fields you leave out keep their values, nested objects merge, and lists replace.
@@ -130,9 +130,9 @@ Writes change configuration, not the simulation. Clients keep their addresses an
 All live under `/api/v1`. [ENDPOINTS.md](ENDPOINTS.md) lists each operation with its method and path. In short:
 
 - **Organizations**: networks, devices, statuses and availability, uplinks, VPN, clients, top-N summaries, admins, licenses, inventory, the change log and the API request log.
-- **Networks**: devices, clients, events, traffic, settings, syslog, SNMP, alert settings, webhook servers, group policies, firmware and link layer topology.
+- **Networks**: devices, clients with their daily usage, application usage, policies and splash authorization, events and event types, traffic, settings, syslog, SNMP, alert settings, webhook servers, group policies, firmware and link layer topology.
 - **Alerts**: assurance alerts across the organization and per-network health alerts.
-- **Security appliance (MX)**: LAN ports, VLANs, L3 and L7 firewall rules, port forwarding, 1:1 NAT, static routes, site-to-site VPN, content filtering, intrusion and malware settings, security events, DHCP subnets and uplink settings.
+- **Security appliance (MX)**: LAN ports, VLANs, L3 and L7 firewall rules and the L7 application categories, port forwarding, 1:1 NAT, static routes, site-to-site VPN, content filtering and its categories, intrusion and malware settings, security events, DHCP subnets and uplink settings.
 - **Switches (MS)**: port config and live status per switch and across the organization, LLDP and CDP neighbors.
 - **Wireless (MR)**: SSIDs with their firewall and splash settings, RF profiles, radio settings and status, client counts, usage, connection and latency stats, failed connections, channel utilization and signal quality.
 - **Devices**: device details, clients, loss and latency history, MX performance and management interface.
@@ -159,6 +159,7 @@ There is no real authentication, so only use `--host 0.0.0.0` on a network you t
 
 - Only the operations in [ENDPOINTS.md](ENDPOINTS.md) exist. Other paths return `404`, and other methods on a known path return `405`.
 - Writes live in memory and are gone after a restart or a reset. Devices can't be claimed into or removed from a network yet.
+- Content filtering category IDs, and most layer 7 category and application IDs, are stand-ins. The names follow the Dashboard, and the firewall rules, traffic analysis and event log all use the same lists.
 - No redirects to regional shard hosts.
 - Error messages are close to Meraki's but not always word for word.
 - Rate limits are per API key rather than per organization.

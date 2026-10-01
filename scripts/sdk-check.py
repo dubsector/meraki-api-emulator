@@ -147,6 +147,12 @@ def paging():
         hq = next(n["id"] for n in nets if n["name"] == "HQ - San Francisco")
         r = d.networks.getNetworkEvents(hq, productType="wireless", perPage=20, includedEventTypes=["association"])
         check("events includedEventTypes[] filter", r["events"] and all(e["type"] == "association" for e in r["events"]), {e["type"] for e in r["events"]})
+        client = emu.raw(f"/networks/{hq}/clients?perPage=3")[0]["id"]
+        want = emu.raw(f"/networks/{hq}/clients/{client}/trafficHistory")
+        got = d.networks.getNetworkClientTrafficHistory(hq, client, total_pages="all", perPage=7)
+        check(f"getNetworkClientTrafficHistory perPage=7, all pages ({len(want)} rows)", got == want, len(got))
+        got = d.networks.getNetworkClientsUsageHistories(hq, client, timespan=7 * 86400)
+        check("getNetworkClientsUsageHistories", len(got) == 1 and got[0]["clientId"] == client and got[0]["usageHistory"], got)
 
         # Smart flow resolves the org of a network or device, then loads the
         # org's networks and inventory.
@@ -248,6 +254,12 @@ def writes():
         rules.append({"comment": "sdk", "policy": "deny", "protocol": "tcp", "srcCidr": "Any", "srcPort": "Any", "destCidr": "192.0.2.10/32", "destPort": "22"})
         fw = d.appliance.updateNetworkApplianceFirewallL3FirewallRules(site, rules=rules)
         check("PUT L3 firewall rules, default rule stays last", fw["rules"][-2]["comment"] == "sdk" and fw["rules"][-1]["comment"] == "Default rule", fw["rules"][-2:])
+
+        p = d.networks.provisionNetworkClients(site, [{"mac": "02:00:5e:00:53:01", "name": "SDK kiosk"}], "Blocked")
+        key = p["clients"][0]["clientId"]
+        check("provisionNetworkClients", p["devicePolicy"] == "Blocked" and p["clients"][0]["name"] == "SDK kiosk", p)
+        pol = d.networks.updateNetworkClientPolicy(site, key, "Group policy", groupPolicyId="101")
+        check("updateNetworkClientPolicy on a provisioned client", pol.get("groupPolicyId") == "101" and d.networks.getNetworkClientPolicy(site, key) == pol, pol)
 
         changes = d.organizations.getOrganizationConfigurationChanges(org, total_pages="all", perPage=10, timespan=3600)
         check("writes show up in configurationChanges", sum(1 for c in changes if c.get("page") == "via API") >= 6, len(changes))

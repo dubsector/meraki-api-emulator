@@ -9,6 +9,26 @@ import { eachOutage, eachUplinkFailure } from './outages.js';
 import { END, START, sessions } from './presence.js';
 import { RADIO, apChannel } from './rf.js';
 
+// Every event type the log can hold, as [productType, category, type, description].
+// Categories are the display names the eventTypes endpoint uses.
+export const EVENT_TYPES = [
+  ['wireless', '802.11', 'association', '802.11 association'],
+  ['wireless', '802.11', 'association_rejected', '802.11 association rejected'],
+  ['wireless', '802.11', 'disassociation', '802.11 disassociation'],
+  ['wireless', '802.1X', '8021x_auth', '802.1X authentication'],
+  ['wireless', '802.1X', '8021x_eap_failure', '802.1X EAP failure'],
+  ['wireless', 'WPA', 'wpa_auth', 'WPA authentication'],
+  ['wireless', 'WPA', 'wpa_deauth', 'WPA deauthentication'],
+  ['wireless', 'Splash', 'splash_auth', 'Splash authentication'],
+  ['wireless', 'DHCP', 'dhcp_no_offer', 'DHCP no offers'],
+  ['wireless', 'DNS', 'dns_failure', 'DNS failure'],
+  ['switch', 'Port', 'port_status', 'Port status change'],
+  ['appliance', 'DHCP', 'dhcp_lease', 'DHCP lease'],
+  ['appliance', 'Content filtering', 'cf_block', 'Content filtering blocked URL'],
+  ['appliance', 'VPN', 'vpn_connectivity_change', 'VPN connectivity change'],
+  ['appliance', 'Failover', 'failover_event', 'Failover event'],
+];
+
 // Per-session connection failure, shared with the wireless connectionStats endpoint.
 export function connectFailure(c, start) {
   const rate = c.ap.flaky ? 0.14 : 0.018;

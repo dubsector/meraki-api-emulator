@@ -18,6 +18,12 @@ export function devOf(ctx) {
   return dev;
 }
 
+// A client by its ID, MAC or IP.
+export function findClient(net, id) {
+  const lower = id.toLowerCase();
+  return net.clients.find((c) => c.id === id || c.mac === lower || c.ip === id);
+}
+
 export function requireProduct(net, productType) {
   if (!net.productTypes.includes(productType)) throw badRequest(`This endpoint requires a network with product type '${productType}'`);
 }

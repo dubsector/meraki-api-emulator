@@ -2,7 +2,7 @@
 // once per network from its topology and clients, so it agrees with the
 // addresses and traffic the other endpoints report.
 
-import { VLANS } from './catalog.js';
+import { CF_BLOCKS, CF_CATEGORIES, VLANS, l7Category } from './catalog.js';
 import { derive } from './rng.js';
 
 const ANY = 'Any';
@@ -14,12 +14,7 @@ export const SYSLOG_ROLES = ['Appliance event log', 'Switch event log', 'Wireles
 export const SNMP_V3 = { authentication: { protocol: 'SHA-1' }, privacy: { protocol: 'AES-128' } };
 
 // Content filtering categories blocked everywhere; the names match the cf_block events.
-export const BLOCKED_CATEGORIES = [
-  { id: 'meraki:contentFiltering/category/C9', name: 'Peer to peer' },
-  { id: 'meraki:contentFiltering/category/C26', name: 'Games' },
-  { id: 'meraki:contentFiltering/category/C31', name: 'Malware sites' },
-  { id: 'meraki:contentFiltering/category/C35', name: 'Hacking' },
-];
+export const BLOCKED_CATEGORIES = CF_CATEGORIES.filter((c) => CF_BLOCKS.some((b) => b.category === c.name));
 
 // A version 4 style UUID that stays the same for the same key and salt.
 export function uuid(key, salt) {
@@ -96,8 +91,8 @@ function l3Rules(net, vlans) {
 }
 
 function l7Rules(net) {
-  const rules = [{ policy: 'deny', type: 'applicationCategory', value: { id: 'meraki:layer7/category/2', name: 'Peer-to-peer (P2P)' } }];
-  if (net.kind !== 'office') rules.push({ policy: 'deny', type: 'applicationCategory', value: { id: 'meraki:layer7/category/18', name: 'Gaming' } });
+  const rules = [{ policy: 'deny', type: 'applicationCategory', value: l7Category('Peer-to-peer (P2P)') }];
+  if (net.kind !== 'office') rules.push({ policy: 'deny', type: 'applicationCategory', value: l7Category('Gaming') });
   rules.push({ policy: 'deny', type: 'host', value: 'games.example.com' });
   return rules;
 }
