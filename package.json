@@ -22,6 +22,7 @@
     "test": "node --test \"test/**/*.test.js\"",
     "docs": "node scripts/endpoints.js",
     "check-spec": "node scripts/check-spec.js",
+    "bench": "node scripts/bench.js",
     "schemas": "node scripts/schemas.js"
   },
   "engines": {

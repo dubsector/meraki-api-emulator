@@ -9,6 +9,12 @@ import { eachSession } from './presence.js';
 
 export const SLOT = 300;
 const PER_DAY = DAY / SLOT;
+const PER_HOUR = HOUR / SLOT;
+
+// Days of per-client totals kept: the longest window is 186 days. Hourly
+// totals are only needed for the days at the edges of a window.
+const DAYS_KEPT = 200;
+const HOURS_KEPT = 8;
 
 // Series stored per network day, in KB.
 export const WL_SENT = 0;
@@ -63,13 +69,16 @@ function kbps(c, ss, off, slot) {
 }
 
 // Calls visit(slot, sentKB, recvKB, seconds) for each slot the client used in [a, b).
+// Walks every slot, so endpoints should total usage with clientUsage,
+// clientsUsage or networkTotals, which are cached per day.
 export function eachSlot(c, a, b, visit) {
   keysOf(c);
   const zone = c.net.zone;
   eachSession(c, a, b, (s, e) => {
     const lo = Math.max(s, a);
     const hi = Math.min(e, b);
-    const off = zone.offset(lo);
+    // The offset at the session start, so a slot reads the same through any window.
+    const off = zone.offset(s);
     for (let slot = Math.floor(lo / SLOT); slot * SLOT < hi; slot++) {
       const ss = slot * SLOT;
       const secs = Math.min(hi, ss + SLOT) - Math.max(lo, ss);
@@ -79,14 +88,96 @@ export function eachSlot(c, a, b, visit) {
   });
 }
 
-export function clientUsage(c, a, b) {
+// Hourly KB, sent and received interleaved, 48 values per UTC day. Daily
+// totals are always summed from these, so every way of building a day agrees.
+function hourly(c, d0, d1, out = new Float64Array((d1 - d0) * 48)) {
+  out.fill(0, 0, (d1 - d0) * 48);
+  const base = d0 * PER_DAY;
+  eachSlot(c, d0 * DAY, d1 * DAY, (slot, s, r) => {
+    const i = 2 * Math.floor((slot - base) / PER_HOUR);
+    out[i] += s;
+    out[i + 1] += r;
+  });
+  return out;
+}
+
+function dayTotals(hours, at = 0) {
   let sent = 0;
   let recv = 0;
-  eachSlot(c, a, b, (slot, s, r) => {
-    sent += s;
-    recv += r;
-  });
-  return { sent, recv };
+  for (let i = at; i < at + 48; i += 2) {
+    sent += hours[i];
+    recv += hours[i + 1];
+  }
+  return [sent, recv];
+}
+
+// Reused for hours that only feed daily totals.
+let scratch = new Float64Array(48);
+
+function setDay(c, day, hours, at) {
+  perDay(c, 'dayCache', day, () => dayTotals(hours, at), DAYS_KEPT);
+}
+
+function clientHours(c, day) {
+  return perDay(c, 'hourCache', day, () => hourly(c, day, day + 1), HOURS_KEPT);
+}
+
+function clientDay(c, day) {
+  return perDay(c, 'dayCache', day, () => dayTotals(c.hourCache?.get(day) ?? hourly(c, day, day + 1, scratch)), DAYS_KEPT);
+}
+
+// Totals for the uncached days in [d0, d1), from one walk rather than one per day.
+function fillDays(c, d0, d1) {
+  const cache = c.dayCache;
+  while (d0 < d1 && cache?.has(d0)) d0++;
+  while (d1 > d0 && cache?.has(d1 - 1)) d1--;
+  if (d1 <= d0) return;
+  // Make room first, so the cache doesn't clear itself halfway through.
+  if (cache && cache.size + (d1 - d0) > DAYS_KEPT) cache.clear();
+  if (scratch.length < (d1 - d0) * 48) scratch = new Float64Array((d1 - d0) * 48);
+  hourly(c, d0, d1, scratch);
+  for (let d = d0; d < d1; d++) setDay(c, d, scratch, (d - d0) * 48);
+}
+
+function walk(c, a, b, out) {
+  if (b > a) {
+    eachSlot(c, a, b, (slot, s, r) => {
+      out.sent += s;
+      out.recv += r;
+    });
+  }
+}
+
+// KB over [a, b): cached days in the middle, cached hours on the days at each
+// edge, and a slot walk only for the partial hours at either end.
+export function clientUsage(c, a, b) {
+  const out = { sent: 0, recv: 0 };
+  const h0 = Math.ceil(a / HOUR);
+  const h1 = Math.floor(b / HOUR);
+  if (h1 <= h0) {
+    walk(c, a, b, out);
+    return out;
+  }
+  fillDays(c, Math.ceil(h0 / 24), Math.floor(h1 / 24));
+  walk(c, a, h0 * HOUR, out);
+  for (let h = h0; h < h1; ) {
+    const day = Math.floor(h / 24);
+    const end = Math.min(h1, (day + 1) * 24);
+    if (h === day * 24 && end === (day + 1) * 24) {
+      const [s, r] = clientDay(c, day);
+      out.sent += s;
+      out.recv += r;
+    } else {
+      const hours = clientHours(c, day);
+      for (let i = 2 * (h - day * 24); i < 2 * (end - day * 24); i += 2) {
+        out.sent += hours[i];
+        out.recv += hours[i + 1];
+      }
+    }
+    h = end;
+  }
+  walk(c, h1 * HOUR, b, out);
+  return out;
 }
 
 export function clientsUsage(clients, a, b) {
@@ -106,18 +197,23 @@ export function networkDay(net, day) {
 
 function buildDay(net, day) {
   const arr = new Float64Array(SERIES * PER_DAY);
-  const a = day * DAY;
   const base = day * PER_DAY;
   for (const c of net.clients) {
     const s = c.wired ? WD_SENT : WL_SENT;
     const wan = c.kind.wan;
-    eachSlot(c, a, a + DAY, (slot, sent, recv) => {
+    const hours = scratch.fill(0, 0, 48);
+    eachSlot(c, day * DAY, (day + 1) * DAY, (slot, sent, recv) => {
       const i = slot - base;
       arr[s * PER_DAY + i] += sent;
       arr[(s + 1) * PER_DAY + i] += recv;
       arr[WAN_SENT * PER_DAY + i] += sent * wan;
       arr[WAN_RECV * PER_DAY + i] += recv * wan;
+      const h = 2 * Math.floor(i / PER_HOUR);
+      hours[h] += sent;
+      hours[h + 1] += recv;
     });
+    // The client's daily total comes free with the walk.
+    setDay(c, day, hours, 0);
   }
   return arr;
 }

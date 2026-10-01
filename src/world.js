@@ -286,6 +286,12 @@ function buildClients(r, unique, net, tpl) {
         shift: r.int(0, 1),
         attend: 0.85 + r.next() * 0.15,
         key: 0,
+        // Filled in by the simulation. Declared here so every client keeps one
+        // shape, which keeps the per-slot traffic code fast.
+        keys: null,
+        sessionCache: null,
+        dayCache: null,
+        hourCache: null,
       };
       c.key = hashStr(c.id + c.mac);
       c.switchport = null;
