@@ -7,19 +7,28 @@ import { readFileSync } from 'node:fs';
 import { badRequest } from './http.js';
 
 const UNSAFE = new Set(['__proto__', 'constructor', 'prototype']);
-let schemas;
+let file;
 
 // Loaded on first use, so scripts/schemas.js can import the routes before the file exists.
-export function schemaOf(op) {
-  if (!schemas) {
+function specData() {
+  if (!file) {
     try {
-      schemas = JSON.parse(readFileSync(new URL('./schemas.json', import.meta.url), 'utf8')).schemas;
+      file = JSON.parse(readFileSync(new URL('./schemas.json', import.meta.url), 'utf8'));
     } catch (e) {
       if (e.code !== 'ENOENT') throw e;
-      schemas = {};
+      file = { schemas: {} };
     }
   }
-  return schemas[op];
+  return file;
+}
+
+export function schemaOf(op) {
+  return specData().schemas[op];
+}
+
+// Every assurance alert type the spec knows, for alert profiles.
+export function isAlertType(type) {
+  return (specData().alertTypes ?? []).includes(type);
 }
 
 function describe(name, schema) {

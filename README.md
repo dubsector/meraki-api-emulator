@@ -2,7 +2,7 @@
 
 A local stand-in for the Cisco Meraki Dashboard API v1. It serves two simulated organizations with networks, devices, clients and traffic that change through the day, so you can build, test and demo Meraki integrations without a real Meraki account.
 
-It answers 186 operations (124 reads and 62 writes) with the same paths, operation IDs, paging and error formats as the real API. Writes change the emulator's configuration in memory, so provisioning tools and scripts can create, update and delete things and read them back. It also logs every call your client makes so you can check exactly what it sent.
+It answers 197 operations (130 reads and 67 writes) with the same paths, operation IDs, paging and error formats as the real API. Writes change the emulator's configuration in memory, so provisioning tools and scripts can create, update and delete things and read them back. It also logs every call your client makes so you can check exactly what it sent.
 
 Not affiliated with or endorsed by Cisco or Meraki. All names, addresses and IPs are made up (IPs come from the RFC 5737 documentation ranges).
 
@@ -53,10 +53,11 @@ devices = dashboard.organizations.getOrganizationDevices(org_id, total_pages="al
 
 Every request goes to the emulator, and its `Link` headers keep the name you asked for, so paging, `429` and `5xx` retries and writes behave as they do against the real API. Keep the base URL on `http://`, since the emulator doesn't do TLS. `meraki.aio.AsyncDashboardAPI` takes the same two options.
 
-Two things the SDK does that are easy to trip over:
+Three things the SDK does that are easy to trip over:
 
 - Walking the event log forward (`direction="next"`) stops once the next page starts within 5 minutes of your computer's clock. With `--now` in the past that never happens, so pass `event_log_end_time` or a number for `total_pages`.
 - With `use_iterator_for_get_pages=True`, a forward event log walk loses its last page, because the SDK checks when to stop before handing over the page it just fetched. The default mode keeps it.
+- Paging the assurance alert overviews by network or by type across more than one page raises `TypeError`. The SDK expects `meta.counts.items` to be an object with `remaining`, and the spec makes it a number. One page, the default `perPage` of 1000, works.
 
 [scripts/sdk-check.py](scripts/sdk-check.py) runs the SDK against the emulator: paging, the event log, writes, rate limits, faults and the async client. CI runs it with the SDK version pinned in [scripts/sdk-requirements.txt](scripts/sdk-requirements.txt). To run it yourself:
 
@@ -82,7 +83,7 @@ Everything is generated from a seed and the clock:
 - **Traffic** is built from those sessions on a 5-minute grid, so totals agree across endpoints and resolutions. HQ runs about 60 Mbps at midday, drops to almost nothing overnight, and has a nightly NAS backup.
 - **Devices** have occasional outages. The Reno dock AP drops several times a day, and WAN links fail over now and then.
 - **Events** come from the same sessions and outages: associations, 802.1X and splash auth, DHCP leases, port up and down, VPN peer changes, failovers, content filtering and IDS alerts.
-- **Alerts** are raised from those outages too. A device gone for five minutes becomes an `unreachable` assurance alert that resolves when it comes back, the Austin switch has an open CRC errors alert, and WAN failures show up as `wan_status`.
+- **Alerts** are raised from those outages too. A device gone for five minutes becomes an `unreachable` assurance alert that resolves when it comes back, the Austin switch has an open CRC errors alert, and WAN failures show up as `wan_status`. Dismissing an alert takes it out of the active views until it is restored.
 - **Configuration** is built from the same topology. VLAN subnets hold every client address, the MX is `.1` on each one, firewall rules reference the real VLANs, and the VPN settings export the subnets the VPN status endpoint reports.
 - **Administration**: each organization has admins with different access levels, a change log written by the admins allowed to make each change, and an inventory with a few unassigned spares. Acme Corporation uses co-term licensing and Acme Test Lab uses per-device licensing, with one license expiring soon and one unused.
 
@@ -122,7 +123,7 @@ Apart from claiming, removing and swapping devices, writes change configuration,
 - `t0`, `t1`, `timespan`, `resolution` and `perPage` are checked against each endpoint's limits from the OpenAPI spec (lookback, longest and shortest span, valid resolutions), and bad values get a `400` with an `errors` array.
 - `uplinksLossAndLatency` data ends two minutes before the current time.
 - `getNetworkEvents` needs `productType` on networks with more than one product type.
-- Assurance alerts return only active alerts unless you pass `resolved=true`, like the real defaults.
+- Assurance alerts return only active alerts unless you pass `resolved=true` or `dismissed=true`, like the real defaults.
 - `getOrganizationSwitchPortsStatusesBySwitch` wraps its results in `items` and `meta`, unlike most list endpoints.
 - `getOrganizationLicenses` answers `400` for co-term organizations.
 
@@ -132,7 +133,7 @@ All live under `/api/v1`. [ENDPOINTS.md](ENDPOINTS.md) lists each operation with
 
 - **Organizations**: networks, devices, statuses and availability, uplinks, VPN, clients, top-N summaries, admins, licenses, inventory and device swaps, provisioning statuses, the change log and the API request log.
 - **Networks**: devices and claiming or removing them, clients with their daily usage, application usage, policies and splash authorization, events and event types, traffic, settings, syslog, SNMP, alert settings, webhook servers, group policies, firmware and link layer topology.
-- **Alerts**: assurance alerts across the organization and per-network health alerts.
+- **Alerts**: assurance alerts across the organization with overviews by network, by type and over time, dismissing and restoring them, alert profiles and the alert taxonomy, plus per-network health alerts.
 - **Security appliance (MX)**: LAN ports, VLANs, L3 and L7 firewall rules and the L7 application categories, port forwarding, 1:1 NAT, static routes, site-to-site VPN, content filtering and its categories, intrusion and malware settings, security events, DHCP subnets and uplink settings.
 - **Switches (MS)**: port config and live status per switch and across the organization, LLDP and CDP neighbors.
 - **Wireless (MR)**: SSIDs with their firewall and splash settings, RF profiles, radio settings and status, client counts, usage, connection and latency stats, failed connections, channel utilization and signal quality.
@@ -163,6 +164,7 @@ There is no real authentication, so only use `--host 0.0.0.0` on a network you t
 - Only serials in the organization's inventory can be claimed. The real API also claims devices straight from an order.
 - Syslog roles other than `applianceEventLog`, `applianceUrlLog` and `wirelessEventLog`, and the vMX model names, follow Meraki's naming but haven't been checked against the real API.
 - Content filtering category IDs, and most layer 7 category and application IDs, are stand-ins. The names follow the Dashboard, and the firewall rules, traffic analysis and event log all use the same lists.
+- The alert taxonomy only lists the alert types the emulator raises. Alert profiles accept every type in the spec but never send anything.
 - No redirects to regional shard hosts.
 - Error messages are close to Meraki's but not always word for word.
 - Rate limits are per API key rather than per organization.
