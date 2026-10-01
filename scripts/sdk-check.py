@@ -249,6 +249,15 @@ def writes():
         check("PUT an SSID on a seeded network", after["name"].endswith("(edited)") and after.get("visible") is False, after)
         restored = d.wireless.updateNetworkWirelessSsid(site, 1, **{k: v for k, v in before.items() if k != "number"})
         check("PUT the whole GET body back", restored["name"] == before["name"])
+
+        d.wireless.updateNetworkWirelessSsid(site, 5, name="SDK iPSK", enabled=True, authMode="ipsk-without-radius")
+        psk = d.wireless.createNetworkWirelessSsidIdentityPsk(site, 5, "SDK kiosk", "101", passphrase="sdk-kiosk-pass")
+        check("createNetworkWirelessSsidIdentityPsk", psk.get("passphrase") == "sdk-kiosk-pass" and d.wireless.getNetworkWirelessSsidIdentityPsks(site, 5) == [psk], psk)
+        check("deleteNetworkWirelessSsidIdentityPsk returns nothing", d.wireless.deleteNetworkWirelessSsidIdentityPsk(site, 5, psk["id"]) is None)
+        sched = d.wireless.updateNetworkWirelessSsidSchedules(site, 1, enabled=True, ranges=[{"startDay": "Mon", "startTime": "22:00", "endDay": "Tue", "endTime": "06:00"}])
+        check("updateNetworkWirelessSsidSchedules fills rangesInSeconds", sched.get("rangesInSeconds") == [{"start": 86400 + 79200, "end": 2 * 86400 + 21600}], sched)
+        shaping = d.wireless.updateNetworkWirelessSsidTrafficShapingRules(site, 1, trafficShapingEnabled=True, rules=[{"definitions": [{"type": "host", "value": "video.example.com"}], "perClientBandwidthLimits": {"settings": "custom", "bandwidthLimits": {"limitUp": 1024, "limitDown": 4096}}}])
+        check("updateNetworkWirelessSsidTrafficShapingRules", d.wireless.getNetworkWirelessSsidTrafficShapingRules(site, 1) == shaping and shaping["rules"][0]["dscpTagValue"] is None, shaping)
         fw = d.appliance.getNetworkApplianceFirewallL3FirewallRules(site)
         rules = [r for r in fw["rules"] if r.get("comment") != "Default rule"]
         rules.append({"comment": "sdk", "policy": "deny", "protocol": "tcp", "srcCidr": "Any", "srcPort": "Any", "destCidr": "192.0.2.10/32", "destPort": "22"})
