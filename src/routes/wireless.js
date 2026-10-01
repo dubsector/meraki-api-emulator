@@ -2,7 +2,7 @@
 // channel utilization, signal quality and failed connections.
 
 import { l7Category } from '../catalog.js';
-import { configOf, shapeSsid, stored } from '../config.js';
+import { configOf, shapeSsid, stored, usesRadius } from '../config.js';
 import { arrayParam, badRequest, intParam, notFound, paginate, resolutionParam, timeWindow } from '../http.js';
 import { hashStr } from '../rng.js';
 import { connectFailure, failureTime } from '../sim/events.js';
@@ -20,7 +20,7 @@ const REGULATORY = { 'Europe/London': ['ETSI', 'GB'], 'America/Toronto': ['ISED'
 const FIVE_GHZ = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165];
 const SIX_GHZ = Array.from({ length: 59 }, (_, i) => 1 + i * 4);
 
-function wirelessNet(ctx) {
+export function wirelessNet(ctx) {
   const net = netOf(ctx);
   requireProduct(net, 'wireless');
   return net;
@@ -39,7 +39,7 @@ function findClient(net, id) {
   return c;
 }
 
-function ssidOf(net, ctx) {
+export function ssidOf(net, ctx) {
   const n = Number(ctx.params.number);
   if (!Number.isInteger(n) || n < 0 || n > 14) throw notFound('SSID');
   return { number: n, ssid: net.ssids.find((s) => s.number === n), config: configOf(net).ssids[n] };
@@ -168,7 +168,7 @@ function updateSsid(ctx) {
   const { number: ignored, ...patch } = ctx.body;
   const next = merge(structuredClone(config), patch);
   if (next.authMode === 'psk' && (!next.psk || next.psk.length < 8 || next.psk.length > 63)) throw badRequest("'psk' must be 8 to 63 characters when authMode is psk");
-  if (/-radius/.test(next.authMode) && !next.radiusServers?.length) throw badRequest(`'radiusServers' is required when authMode is ${next.authMode}`);
+  if (usesRadius(next.authMode) && !next.radiusServers?.length) throw badRequest(`'radiusServers' is required when authMode is ${next.authMode}`);
   // Server IDs are assigned by the API: a host and port it already knows keep theirs.
   if (next.radiusServers) {
     next.radiusServers = next.radiusServers.map((s) => ({ id: config.radiusServers?.find((o) => o.host === s.host && o.port === s.port)?.id ?? String(hashStr(`${net.id}:${s.host}:${s.port}`) % 1e9), ...s }));

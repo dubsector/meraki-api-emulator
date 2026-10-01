@@ -215,6 +215,11 @@ function alertSettings(net, servers) {
 const RADIUS_KEYS = ['radiusServers', 'radiusAccountingServers', 'radiusAccountingEnabled', 'radiusEnabled', 'radiusAttributeForGroupPolicies', 'radiusTestingEnabled', 'radiusCalledStationId', 'radiusAuthenticationNasId', 'radiusServerTimeout', 'radiusServerAttemptsLimit', 'radiusFallbackEnabled', 'radiusProxyEnabled', 'radiusCoaEnabled', 'radiusOverride'];
 const RADIUS_DEFAULTS = { radiusEnabled: true, radiusAccountingEnabled: false, radiusAttributeForGroupPolicies: 'Filter-Id', radiusTestingEnabled: false, radiusServerTimeout: 1, radiusServerAttemptsLimit: 3, radiusFallbackEnabled: false, radiusProxyEnabled: false, radiusCoaEnabled: false, radiusOverride: false };
 
+// Modes that authenticate against RADIUS servers. ipsk-without-radius keeps its keys in Dashboard.
+export function usesRadius(mode) {
+  return /^8021x-radius$|with-radius/.test(mode);
+}
+
 function setDefaults(obj, defaults) {
   for (const [k, v] of Object.entries(defaults)) obj[k] ??= structuredClone(v);
 }
@@ -233,7 +238,7 @@ export function shapeSsid(s) {
   if (mode === '8021x-nac') s.localAuth ??= false;
   else delete s.localAuth;
 
-  if (/-radius/.test(mode)) {
+  if (usesRadius(mode)) {
     setDefaults(s, RADIUS_DEFAULTS);
     // Shared secrets are write-only.
     const server = ({ secret, ...r }) => ({ ...r, openRoamingCertificateId: r.openRoamingCertificateId ?? null, caCertificate: r.caCertificate ?? null });
@@ -243,7 +248,7 @@ export function shapeSsid(s) {
   } else {
     for (const k of RADIUS_KEYS) delete s[k];
   }
-  if (!/-radius/.test(mode) && !/RADIUS/.test(s.splashPage)) {
+  if (!usesRadius(mode) && !/RADIUS/.test(s.splashPage)) {
     delete s.radiusFailoverPolicy;
     delete s.radiusLoadBalancingPolicy;
   }
