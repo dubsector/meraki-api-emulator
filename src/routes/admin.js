@@ -196,8 +196,7 @@ function configurationChanges(ctx) {
     .filter((c) => (!networkId || c.net?.id === networkId) && (!adminId || c.admin.id === adminId))
     .sort((a, b) => a.t - b.t)
     .map((c, i) => {
-      const row = { ts: isoMicro(c.t), adminName: c.admin.name, adminEmail: c.admin.email, adminId: c.admin.id, networkName: c.net?.name ?? null, networkId: c.net?.id ?? null, networkUrl: c.net?.url ?? null };
-      if (c.ssidNumber != null) Object.assign(row, { ssidName: c.ssidName, ssidNumber: c.ssidNumber });
+      const row = { ts: isoMicro(c.t), adminName: c.admin.name, adminEmail: c.admin.email, adminId: c.admin.id, networkName: c.net?.name ?? null, networkId: c.net?.id ?? null, networkUrl: c.net?.url ?? null, ssidName: c.ssidName ?? null, ssidNumber: c.ssidNumber ?? null };
       return { key: `${row.ts}:${i}`, row: { ...row, page: c.page, label: c.label, oldValue: c.oldValue, newValue: c.newValue } };
     });
   return paginate(ctx, rows.reverse(), (r) => r.key, { def: 5000, max: 100000 }).map((r) => r.row);
@@ -224,6 +223,7 @@ function apiRequestJson(e) {
     sourceIp: e.sourceIp,
     version: e.version,
     operationId: e.operationId,
+    client: { id: e.clientId, type: 'api_key' },
   };
 }
 

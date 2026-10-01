@@ -1,5 +1,6 @@
 // Assurance alerts across the organization, and the older per-network health alerts view.
 
+import { deviceUrl } from '../format.js';
 import { arrayParam, badRequest, boolParam, hasTags, notFound, paginate } from '../http.js';
 import { DEVICE_TYPE, orgAlerts } from '../sim/alerts.js';
 import { iso, parseTime } from '../time.js';
@@ -7,10 +8,6 @@ import { netOf, orgOf } from './common.js';
 
 const SORT_BY = ['startedAt', 'resolvedAt', 'dismissedAt', 'severity', 'category'];
 const SEVERITY_RANK = { critical: 0, warning: 1, informational: 2 };
-
-function deviceUrl(dev) {
-  return dev.net.url.replace('/usage/list', `/nodes/new_list/${parseInt(dev.mac.replace(/:/g, '').slice(-8), 16)}`);
-}
 
 function alertJson(a) {
   const device = { url: deviceUrl(a.dev), name: a.dev.name, order: 0, productType: a.dev.productType, serial: a.dev.serial, mac: a.dev.mac };

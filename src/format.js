@@ -33,6 +33,15 @@ export function networkRef(net) {
   return { id: net.id, name: net.name, url: net.url, tags: net.tags };
 }
 
+// The Dashboard's node ID for a device, and its page in the network.
+export function nodeId(dev) {
+  return parseInt(dev.mac.replace(/:/g, '').slice(-8), 16);
+}
+
+export function deviceUrl(dev) {
+  return dev.net.url.replace('/usage/list', `/nodes/new_list/${nodeId(dev)}`);
+}
+
 export function deviceJson(dev, { full = false } = {}) {
   const out = {
     name: dev.name,
@@ -51,7 +60,7 @@ export function deviceJson(dev, { full = false } = {}) {
     details: [],
   };
   if (full) {
-    out.url = dev.net.url.replace('/usage/list', `/nodes/new_list/${parseInt(dev.mac.replace(/:/g, '').slice(-8), 16)}`);
+    out.url = deviceUrl(dev);
     out.floorPlanId = dev.floorPlanId ?? null;
     if (dev.productType === 'wireless') {
       out.beaconIdParams = { uuid: '4d52ab1c-0000-4a1e-9d6b-' + dev.net.id.slice(-12), major: dev.net.siteIndex, minor: dev.net.aps.indexOf(dev) + 1 };

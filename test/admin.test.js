@@ -33,6 +33,12 @@ describe('api request log', () => {
     assert.equal(apiAdmin.email, 'api@example.com');
     assert.equal(r.body[0].method, 'GET');
     assert.equal(r.body[0].version, 1);
+    // Each key gets its own client ID, which never contains the key.
+    assert.equal(r.body[0].client.type, 'api_key');
+    assert.ok(!r.body[0].client.id.includes('test-key'));
+    await sb.get(`/organizations/${org.id}/devices`, { key: 'other-key', headers: agent });
+    const [other] = (await sb.get(`/organizations/${org.id}/apiRequests?userAgent=log-test/1.0`)).body;
+    assert.notEqual(other.client.id, r.body[0].client.id);
   });
 
   test('calls on another organization stay out of the log', async () => {

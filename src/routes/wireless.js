@@ -1,7 +1,7 @@
 // Wireless settings, RF profiles, SSID firewall and splash pages, radio status,
 // channel utilization, signal quality and failed connections.
 
-import { configOf, stored } from '../config.js';
+import { configOf, shapeSsid, stored } from '../config.js';
 import { arrayParam, badRequest, intParam, notFound, paginate, resolutionParam, timeWindow } from '../http.js';
 import { hashStr } from '../rng.js';
 import { connectFailure, failureTime } from '../sim/events.js';
@@ -64,6 +64,7 @@ function rfProfile(net, id, name, indoor) {
     fiveGhzSettings: { maxPower: 30, minPower: 8, minBitrate: 12, validAutoChannels: indoor ? FIVE_GHZ : FIVE_GHZ.filter((c) => c >= 100), channelWidth: 'auto', rxsop: null, dot11ax: { enabled: true } },
     sixGhzSettings: { maxPower: 30, minPower: 8, minBitrate: 12, validAutoChannels: SIX_GHZ, channelWidth: 'auto', rxsop: null },
     transmission: { enabled: true },
+    dot11be: { enabled: false },
     perSsidSettings: perSsid,
     isIndoorDefault: indoor,
     isOutdoorDefault: !indoor,
@@ -158,28 +159,20 @@ function splashSettings(net, number) {
   });
 }
 
-// PSK and 802.1X settings only make sense for their own auth mode, so a change
-// of mode drops the other mode's fields. A new name also renames the SSID the
-// simulated clients use.
+// Fields that belong to other auth or IP assignment modes are dropped after the
+// merge (see shapeSsid). A new name also renames the SSID the simulated clients use.
 function updateSsid(ctx) {
   const net = wirelessNet(ctx);
   const { number, ssid, config } = ssidOf(net, ctx);
   const { number: ignored, ...patch } = ctx.body;
   const next = merge(structuredClone(config), patch);
-  if (next.authMode === 'psk') {
-    if (!next.psk || next.psk.length < 8 || next.psk.length > 63) throw badRequest("'psk' must be 8 to 63 characters when authMode is psk");
-    next.encryptionMode ??= 'wpa';
-    next.wpaEncryptionMode ??= 'WPA2 only';
-  } else {
-    delete next.psk;
-    if (!String(next.authMode).startsWith('8021x')) delete next.encryptionMode;
-    if (next.authMode === 'open') delete next.wpaEncryptionMode;
-  }
-  if (next.authMode === '8021x-radius' && !next.radiusServers?.length) throw badRequest("'radiusServers' is required when authMode is 8021x-radius");
+  if (next.authMode === 'psk' && (!next.psk || next.psk.length < 8 || next.psk.length > 63)) throw badRequest("'psk' must be 8 to 63 characters when authMode is psk");
+  if (/-radius/.test(next.authMode) && !next.radiusServers?.length) throw badRequest(`'radiusServers' is required when authMode is ${next.authMode}`);
   // Server IDs are assigned by the API: a host and port it already knows keep theirs.
   if (next.radiusServers) {
     next.radiusServers = next.radiusServers.map((s) => ({ id: config.radiusServers?.find((o) => o.host === s.host && o.port === s.port)?.id ?? String(hashStr(`${net.id}:${s.host}:${s.port}`) % 1e9), ...s }));
   }
+  shapeSsid(next);
   if (patch.name && ssid) ssid.name = patch.name;
   configOf(net).ssids[number] = next;
   return next;

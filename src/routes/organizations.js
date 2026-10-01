@@ -67,6 +67,15 @@ function vpnPeers(net) {
   return net.vpn === 'hub' ? net.org.networks.filter((n) => n.vpn === 'spoke') : [net.org.hub];
 }
 
+// A spoke ranks its hubs by their order in its site-to-site settings, 1 first.
+function vpnPeerStatus(local, peer, now) {
+  const out = { networkId: peer.id, networkName: peer.name, reachability: vpnReachable(local, peer, now) ? 'reachable' : 'unreachable' };
+  const s2s = configOf(local).siteToSite;
+  const rank = s2s.mode === 'spoke' ? s2s.hubs.findIndex((h) => h.hubId === peer.id) : -1;
+  if (rank >= 0) out.priority = rank + 1;
+  return out;
+}
+
 function vpnPeerStats(local, peer, t0, t1) {
   const spoke = local.vpn === 'spoke' ? local : peer;
   const [s, r] = networkTotals(spoke, t0, t1, [WAN_SENT, WAN_RECV]);
@@ -313,7 +322,7 @@ export default [
           uplinks: n.mx.uplinks.map((u) => ({ interface: u.interface, publicIp: u.publicIp })),
           vpnMode: configOf(n).siteToSite.mode,
           exportedSubnets: exportedSubnets(n),
-          merakiVpnPeers: vpnPeers(n).map((p) => ({ networkId: p.id, networkName: p.name, reachability: vpnReachable(n, p, ctx.now) ? 'reachable' : 'unreachable' })),
+          merakiVpnPeers: vpnPeers(n).map((p) => vpnPeerStatus(n, p, ctx.now)),
           thirdPartyVpnPeers: n.vpn === 'hub' ? [{ name: 'Cloud VPC', publicIp: '192.0.2.200', reachability: 'reachable' }] : [],
         }))
         .sort(byId);

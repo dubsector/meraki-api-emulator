@@ -1,6 +1,7 @@
 // HTTP front end: routing, API key auth, rate limiting, fault injection and
 // the bookkeeping around writes.
 
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { ApiLog } from './apilog.js';
 import { ApiError } from './http.js';
@@ -57,6 +58,11 @@ export function apiKeyOf(headers) {
   if (key) return String(key).trim();
   const m = /^Bearer\s+(\S+)$/i.exec(String(headers.authorization || '').trim());
   return m ? m[1] : null;
+}
+
+// The request log names the calling key by a hash, never the key itself.
+export function clientIdOf(key) {
+  return createHash('sha256').update(`meraki-api-emulator:${key}`).digest('base64url');
 }
 
 export function resolveOptions(o = {}) {
@@ -170,6 +176,7 @@ export function createEmulator(options = {}) {
       sourceIp: (req.socket.remoteAddress || '').replace(/^::ffff:/, ''),
       version: 1,
       operationId: route ? route.op : null,
+      clientId: clientIdOf(key),
     });
     return status;
   }

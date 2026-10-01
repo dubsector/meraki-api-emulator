@@ -11,6 +11,7 @@ export const DEFAULT_RULE = { comment: 'Default rule', policy: 'allow', protocol
 const SINGLE_LAN = { subnet: '192.168.128.0/24', applianceIp: '192.168.128.1' };
 export const GUEST_POLICY_ID = '101';
 export const SYSLOG_ROLES = ['Appliance event log', 'Switch event log', 'Wireless event log', 'Security events', 'URLs', 'Flows'];
+export const SNMP_V3 = { authentication: { protocol: 'SHA-1' }, privacy: { protocol: 'AES-128' } };
 
 // Content filtering categories blocked everywhere; the names match the cf_block events.
 export const BLOCKED_CATEGORIES = [
@@ -128,6 +129,8 @@ function siteToSite(net, vlans) {
     mode: net.org.hub ? net.vpn : 'none',
     hubs: net.vpn === 'spoke' ? [{ hubId: net.org.hub.id, useDefaultRoute: false }] : [],
     subnets: vlans.map((v) => ({ localSubnet: v.subnet, useVpn: exported.has(v.id) })),
+    sgt: { enabled: false },
+    subnet: { nat: { isAllowed: false } },
   };
 }
 
@@ -195,14 +198,66 @@ function alertSettings(net, servers) {
   };
 }
 
-const PSK_SSID = { encryptionMode: 'wpa', wpaEncryptionMode: 'WPA2 only', psk: 'example-passphrase' };
+const RADIUS_KEYS = ['radiusServers', 'radiusAccountingServers', 'radiusAccountingEnabled', 'radiusEnabled', 'radiusAttributeForGroupPolicies', 'radiusTestingEnabled', 'radiusCalledStationId', 'radiusAuthenticationNasId', 'radiusServerTimeout', 'radiusServerAttemptsLimit', 'radiusFallbackEnabled', 'radiusProxyEnabled', 'radiusCoaEnabled', 'radiusOverride'];
+const RADIUS_DEFAULTS = { radiusEnabled: true, radiusAccountingEnabled: false, radiusAttributeForGroupPolicies: 'Filter-Id', radiusTestingEnabled: false, radiusServerTimeout: 1, radiusServerAttemptsLimit: 3, radiusFallbackEnabled: false, radiusProxyEnabled: false, radiusCoaEnabled: false, radiusOverride: false };
+
+function setDefaults(obj, defaults) {
+  for (const [k, v] of Object.entries(defaults)) obj[k] ??= structuredClone(v);
+}
+
+// The real API only returns the fields that apply to an SSID's auth mode, IP
+// assignment mode and splash page. Adds the defaults for its modes and drops
+// fields left over from other ones.
+export function shapeSsid(s) {
+  const mode = String(s.authMode);
+  if (mode === 'psk') setDefaults(s, { encryptionMode: 'wpa', wpaEncryptionMode: 'WPA2 only' });
+  else delete s.psk;
+  if (mode.startsWith('8021x')) setDefaults(s, { encryptionMode: 'wpa-eap', wpaEncryptionMode: 'WPA2 only' });
+  if (mode.startsWith('ipsk')) setDefaults(s, { encryptionMode: 'wpa', wpaEncryptionMode: 'WPA2 only' });
+  if (/^(psk|8021x|ipsk)/.test(mode)) setDefaults(s, { dot11w: { enabled: false, required: false }, dot11r: { enabled: false, adaptive: false } });
+  else for (const k of ['encryptionMode', 'wpaEncryptionMode', 'dot11w', 'dot11r']) delete s[k];
+  if (mode === '8021x-nac') s.localAuth ??= false;
+  else delete s.localAuth;
+
+  if (/-radius/.test(mode)) {
+    setDefaults(s, RADIUS_DEFAULTS);
+    // Shared secrets are write-only.
+    const server = ({ secret, ...r }) => ({ ...r, openRoamingCertificateId: r.openRoamingCertificateId ?? null, caCertificate: r.caCertificate ?? null });
+    s.radiusServers = (s.radiusServers || []).map((r) => ({ ...server(r), radsecEnabled: r.radsecEnabled ?? false }));
+    if (s.radiusAccountingEnabled) s.radiusAccountingServers = (s.radiusAccountingServers || []).map(server);
+    else delete s.radiusAccountingServers;
+  } else {
+    for (const k of RADIUS_KEYS) delete s[k];
+  }
+  if (!/-radius/.test(mode) && !/RADIUS/.test(s.splashPage)) {
+    delete s.radiusFailoverPolicy;
+    delete s.radiusLoadBalancingPolicy;
+  }
+
+  const ip = s.ipAssignmentMode;
+  if (ip === 'NAT mode') setDefaults(s, { adultContentFilteringEnabled: false, dnsRewrite: { enabled: false, dnsCustomNameservers: [] } });
+  else for (const k of ['adultContentFilteringEnabled', 'dnsRewrite']) delete s[k];
+  if (ip === 'Bridge mode') s.lanIsolationEnabled ??= false;
+  else delete s.lanIsolationEnabled;
+  if (ip === 'Bridge mode' || ip === 'Layer 3 roaming') s.useVlanTagging ??= false;
+  else delete s.useVlanTagging;
+  if (!s.useVlanTagging) delete s.defaultVlanId;
+  if (ip !== 'Ethernet over GRE') delete s.gre;
+  if (ip !== 'Campus Gateway') delete s.campusGateway;
+
+  if (s.splashPage && s.splashPage !== 'None') setDefaults(s, { adminSplashUrl: '', splashTimeout: '1440 minutes', walledGardenEnabled: false });
+  else for (const k of ['adminSplashUrl', 'splashTimeout', 'walledGardenEnabled']) delete s[k];
+  if (!s.walledGardenEnabled) delete s.walledGardenRanges;
+  if (s.splashPage === 'Google OAuth') s.oauth ??= { allowedDomains: [] };
+  else delete s.oauth;
+  return s;
+}
 
 function ssidJson(net, number) {
   const s = net.ssids.find((x) => x.number === number);
   const common = {
     number,
     ssidAdminAccessible: false,
-    localAuth: false,
     minBitrate: 11,
     bandSelection: 'Dual band operation',
     perClientBandwidthLimitUp: 0,
@@ -215,7 +270,7 @@ function ssidJson(net, number) {
     availabilityTags: [],
     speedBurst: { enabled: false },
   };
-  if (!s) return { ...common, name: `Unconfigured SSID ${number + 1}`, enabled: false, splashPage: 'None', authMode: 'open', ipAssignmentMode: 'NAT mode' };
+  if (!s) return shapeSsid({ ...common, name: `Unconfigured SSID ${number + 1}`, enabled: false, splashPage: 'None', authMode: 'open', ipAssignmentMode: 'NAT mode' });
   const out = {
     ...common,
     name: s.name,
@@ -226,20 +281,16 @@ function ssidJson(net, number) {
     bandSelection: 'Dual band operation with Band Steering',
     minBitrate: 12,
   };
-  if (s.authMode === 'psk') Object.assign(out, PSK_SSID);
+  if (s.authMode === 'psk') out.psk = 'example-passphrase';
   if (s.authMode === '8021x-radius') {
     Object.assign(out, {
-      encryptionMode: 'wpa-eap',
-      wpaEncryptionMode: 'WPA2 only',
       radiusServers: [{ id: String(net.key % 1e9), host: `${net.org.hub ? net.org.hub.subnet(5) : net.subnet(5)}.20`, port: 1812 }],
-      radiusAccountingEnabled: false,
       radiusFailoverPolicy: 'Deny access',
       radiusLoadBalancingPolicy: 'Round robin',
     });
   }
   if (!s.nat) Object.assign(out, { useVlanTagging: true, defaultVlanId: s.vlan });
-  if (s.splashPage) Object.assign(out, { splashTimeout: '1440 minutes', walledGardenEnabled: false });
-  return out;
+  return shapeSsid(out);
 }
 
 function buildConfig(net) {
@@ -267,7 +318,7 @@ function buildConfig(net) {
       net.vpn === 'hub'
         ? [{ id: uuid(net.key, 'route'), ipVersion: 4, networkId: net.id, enabled: true, name: 'Lab network', subnet: '10.100.0.0/16', gatewayIp: `${net.subnet(5)}.254`, gatewayVlanId: 5, fixedIpAssignments: {}, reservedIpRanges: [] }]
         : [],
-    siteToSite: net.mx ? siteToSite(net, vlans) : { mode: 'none', hubs: [], subnets: [] },
+    siteToSite: net.mx ? siteToSite(net, vlans) : { mode: 'none', hubs: [], subnets: [], sgt: { enabled: false }, subnet: { nat: { isAllowed: false } } },
     contentFiltering: { allowedUrlPatterns: [], blockedUrlPatterns: ['games.example.com'], blockedUrlCategories: BLOCKED_CATEGORIES, urlCategoryListSize: 'topSites' },
     intrusion: { mode: 'prevention', idsRulesets: 'balanced', protectedNetworks: { useDefault: true } },
     malware: { mode: 'enabled', allowedUrls: [], allowedFiles: [] },
@@ -279,7 +330,7 @@ function buildConfig(net) {
     groupPolicies: groupPolicies(net),
     syslog: { servers: !seeded ? [] : [{ host: syslogHost, port: 514, roles: SYSLOG_ROLES.filter((r) => net.mx || !/Appliance|Security|URLs|Flows/.test(r)) }] },
     ssids: Array.from({ length: 15 }, (_, n) => ssidJson(net, n)),
-    snmp: net.vpn === 'hub' ? { access: 'users', users: [{ username: 'netmon', passphrase: 'example-passphrase' }] } : { access: 'none' },
+    snmp: net.vpn === 'hub' ? { access: 'users', users: [{ username: 'netmon', passphrase: 'example-passphrase' }], ...structuredClone(SNMP_V3) } : { access: 'none' },
     httpServers: servers,
     alerts: alertSettings(net, servers),
     settings: {
@@ -290,6 +341,14 @@ function buildConfig(net) {
       fips: { enabled: false },
       namedVlans: { enabled: false },
     },
-    switchSettings: { vlan: 1, useCombinedPower: false, powerExceptions: [], uplinkClientSampling: { enabled: false }, macBlocklist: { enabled: false } },
+    switchSettings: {
+      vlan: 1,
+      useCombinedPower: false,
+      powerExceptions: [],
+      uplinkClientSampling: { enabled: false },
+      macBlocklist: { enabled: false },
+      portChannelFallback: false,
+      uplinkSelection: { failback: { enabled: true }, candidates: 'all' },
+    },
   };
 }
