@@ -1,7 +1,8 @@
 import { configOf, exportedSubnets } from '../config.js';
 import { deviceJson, networkJson, networkRef, orgJson } from '../format.js';
-import { arrayParam, badRequest, hasTags, intParam, notFound, paginate, timeWindow } from '../http.js';
+import { arrayParam, badRequest, hasTags, intParam, notFound, paginate, paginateItems, timeWindow } from '../http.js';
 import { linkAverage, linkSample, pathLatency, vpnReachable } from '../sim/links.js';
+import { memorySamples, ramKb } from '../sim/memory.js';
 import { deviceStatus, lastReportedAt, statusChanges, uplinkStatus } from '../sim/outages.js';
 import { presenceIn } from '../sim/presence.js';
 import { trafficRows, uplinkBytes } from '../sim/traffic.js';
@@ -10,6 +11,7 @@ import { DAY, HOUR, MIN, iso, isoMicro } from '../time.js';
 import { validTimeZone } from '../validate.js';
 import { addNetwork, addOrganization, removeOrganization } from '../world.js';
 import { byId, bySerial, filterDevices, orgOf, round } from './common.js';
+import { managementInterface } from './networkwide.js';
 
 const MAX_ORGS = 100;
 const MAX_NETWORKS = 500;
@@ -30,6 +32,108 @@ function createNetwork(ctx) {
 }
 
 const MB = 1024;
+
+// The address the cloud sees a device on: its MX's WAN 1, or a stand-in without an MX.
+function publicIpOf(d) {
+  const mx = d.net.mx;
+  return mx ? mx.uplinks[0].publicIp : `192.0.2.${40 + d.net.siteIndex}`;
+}
+
+function powerSupplies(d) {
+  return Array.from({ length: d.info.psus ?? 0 }, (_, i) => ({ slot: i + 1, serial: `${d.serial.slice(0, 4)}-PSU${i + 1}`, model: 'PWR-C6-600WAC' }));
+}
+
+// An MX lists each WAN with the address its management interface gives it.
+// Other devices list their management address, behind the MX's NAT, on the
+// management VLAN.
+function uplinkAddresses(d) {
+  const mgmt = managementInterface(d);
+  const ipv4 = (w, dhcp) => ({
+    protocol: 'ipv4',
+    ...(w.usingStaticIp ? { assignmentMode: 'static', address: w.staticIp, gateway: w.staticGatewayIp, nameservers: { addresses: w.staticDns ?? [] } } : { assignmentMode: 'dynamic', ...dhcp }),
+  });
+  if (d.productType === 'appliance') {
+    return d.uplinks.map((u) => {
+      const w = mgmt[u.interface] ?? { usingStaticIp: false };
+      const a = ipv4(w, { address: u.publicIp, gateway: u.gateway, nameservers: { addresses: ['8.8.8.8', '1.1.1.1'] } });
+      return { interface: u.interface, addresses: [{ ...a, public: { address: a.address }, ...(w.vlan != null && { vlan: { id: String(w.vlan) } }) }] };
+    });
+  }
+  const w = mgmt.wan1;
+  const lan = `${d.net.subnet(1)}.1`;
+  const vlan = w.vlan ?? (d.productType === 'switch' ? configOf(d.net).switchSettings.vlan : 1);
+  return [{ interface: 'man1', addresses: [{ ...ipv4(w, { address: d.lanIp, gateway: lan, nameservers: { addresses: [lan, '8.8.4.4'] } }), public: { address: publicIpOf(d) }, vlan: { id: String(vlan) } }] }];
+}
+
+const MEMORY_INTERVALS = [300, 1200, 3600, 14400];
+
+function median(values) {
+  const v = [...values].sort((a, b) => a - b);
+  const mid = v.length >> 1;
+  return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+}
+
+// Whole intervals inside the window, newest first. One the device was down
+// for all of is left out.
+function memoryItem(d, t0, t1, interval) {
+  const total = ramKb(d);
+  const first = Math.ceil(t0 / interval) * interval;
+  const last = Math.floor(t1 / interval) * interval;
+  const samples = last > first ? memorySamples(d, first, last) : [];
+  const byEnd = new Map();
+  for (const s of samples) {
+    const end = Math.ceil(s.t / interval) * interval;
+    if (!byEnd.has(end)) byEnd.set(end, []);
+    byEnd.get(end).push(s.used);
+  }
+  const intervals = [];
+  for (let end = last; end > first; end -= interval) {
+    const used = byEnd.get(end);
+    if (!used) continue;
+    const lo = Math.min(...used);
+    const hi = Math.max(...used);
+    const mid = median(used);
+    intervals.push({
+      startTs: iso(end - interval),
+      endTs: iso(end),
+      memory: {
+        used: { minimum: lo, maximum: hi, median: Math.ceil(mid), percentages: { maximum: Math.round((hi / total) * 100) } },
+        free: { minimum: total - hi, maximum: total - lo, median: Math.ceil(total - mid) },
+      },
+    });
+  }
+  const mid = samples.length ? median(samples.map((s) => s.used)) : null;
+  return {
+    serial: d.serial,
+    model: d.model,
+    name: d.name,
+    mac: d.mac,
+    tags: d.tags,
+    provisioned: total,
+    used: { median: mid == null ? null : Math.ceil(mid) },
+    free: { median: mid == null ? null : Math.ceil(total - mid) },
+    network: { id: d.net.id, name: d.net.name, tags: d.net.tags },
+    intervals,
+  };
+}
+
+// Two hours of five-minute intervals by default. An interval on its own sets
+// a window of the same 24 intervals. With a time range, the interval is the
+// shortest that keeps each device to 300 intervals, or the one asked for if
+// that is longer.
+function memoryHistory(ctx) {
+  const q = ctx.query;
+  let interval = 300;
+  if (q.has('interval')) {
+    interval = Number(q.get('interval'));
+    if (!MEMORY_INTERVALS.includes(interval)) throw badRequest(`'interval' must be one of: ${MEMORY_INTERVALS.join(', ')}`);
+  }
+  const timed = ['t0', 't1', 'timespan'].some((k) => q.has(k));
+  const { t0, t1 } = timeWindow(q, ctx.now, { maxSpan: 31 * DAY, defaultSpan: timed ? 2 * HOUR : 24 * interval, lookback: 31 * DAY });
+  if (timed) interval = Math.max(interval, MEMORY_INTERVALS.find((i) => (t1 - t0) / i <= 300) ?? MEMORY_INTERVALS.at(-1));
+  const devices = filterDevices(q, orgOf(ctx).devices).sort(bySerial);
+  return paginateItems(ctx, devices, (d) => d.serial, { def: 10, max: 20 }, (d) => memoryItem(d, t0, t1, interval));
+}
 
 function uplinkJson(mx, u, now) {
   return {
@@ -224,12 +328,11 @@ export default [
         .sort(bySerial)
         .map((d) => {
           const status = deviceStatus(d, ctx.now);
-          const mx = d.net.mx;
           const out = {
             name: d.name,
             serial: d.serial,
             mac: d.mac,
-            publicIp: mx ? mx.uplinks[0].publicIp : `192.0.2.${40 + d.net.siteIndex}`,
+            publicIp: publicIpOf(d),
             networkId: d.net.id,
             status,
             lastReportedAt: iso(lastReportedAt(d, ctx.now)),
@@ -243,9 +346,7 @@ export default [
             tags: d.tags,
           };
           if (d.info.psus) {
-            out.components = {
-              powerSupplies: [1, 2].map((slot) => ({ slot, serial: `${d.serial.slice(0, 4)}-PSU${slot}`, model: 'PWR-C6-600WAC', status: status === 'offline' ? 'not powering' : 'powering', poe: { unit: 'watts', maximum: 740 } })),
-            };
+            out.components = { powerSupplies: powerSupplies(d).map((p) => ({ ...p, status: status === 'offline' ? 'not powering' : 'powering', poe: { unit: 'watts', maximum: 740 } })) };
           }
           return out;
         })
@@ -273,6 +374,37 @@ export default [
         .filter((d) => !statuses.length || statuses.includes(d.status));
       return paginate(ctx, rows, (d) => d.serial, { def: 1000, max: 1000 });
     },
+  },
+  {
+    op: 'getOrganizationDevicesPowerModulesStatusesByDevice',
+    path: '/organizations/{organizationId}/devices/powerModules/statuses/byDevice',
+    handler: (ctx) => {
+      const rows = filterDevices(ctx.query, orgOf(ctx).devices)
+        .filter((d) => d.info.psus)
+        .sort(bySerial)
+        .map((d) => {
+          // A device that is down last reported its supplies without input power.
+          const up = !['offline', 'dormant'].includes(deviceStatus(d, ctx.now));
+          const slots = powerSupplies(d).map((p) => ({ number: p.slot, serial: p.serial, model: p.model, status: up ? 'powering' : 'not connected' }));
+          return { mac: d.mac, name: d.name, network: { id: d.net.id }, productType: d.productType, serial: d.serial, tags: d.tags, slots };
+        });
+      return paginate(ctx, rows, (d) => d.serial, { def: 1000, max: 1000 });
+    },
+  },
+  {
+    op: 'getOrganizationDevicesUplinksAddressesByDevice',
+    path: '/organizations/{organizationId}/devices/uplinks/addresses/byDevice',
+    handler: (ctx) => {
+      const rows = filterDevices(ctx.query, orgOf(ctx).devices)
+        .sort(bySerial)
+        .map((d) => ({ mac: d.mac, name: d.name, network: { id: d.net.id }, productType: d.productType, serial: d.serial, tags: d.tags, uplinks: uplinkAddresses(d) }));
+      return paginate(ctx, rows, (d) => d.serial, { def: 1000, max: 1000 });
+    },
+  },
+  {
+    op: 'getOrganizationDevicesSystemMemoryUsageHistoryByInterval',
+    path: '/organizations/{organizationId}/devices/system/memory/usage/history/byInterval',
+    handler: memoryHistory,
   },
   {
     op: 'getOrganizationDevicesAvailabilitiesChangeHistory',

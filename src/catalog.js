@@ -2,29 +2,29 @@
 // decides IDs, serials, MACs, client identities and every time-varying value.
 
 export const MODELS = {
-  // lan: first and last LAN port number; lower numbers are WAN.
-  MX250: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 4000, lan: [3, 26] },
-  MX85: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 1000, lan: [3, 12] },
-  MX75: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 1000, lan: [3, 12] },
-  MX68: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 600, lan: [3, 12] },
-  MX67: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 450, lan: [2, 5] },
+  // lan: first and last LAN port number; lower numbers are WAN. ram: system memory in MB.
+  MX250: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 4000, lan: [3, 26], ram: 16384 },
+  MX85: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 1000, lan: [3, 12], ram: 4096 },
+  MX75: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 1000, lan: [3, 12], ram: 4096 },
+  MX68: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 600, lan: [3, 12], ram: 2048 },
+  MX67: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 450, lan: [2, 5], ram: 2048 },
   // Virtual MXs have no LAN ports; they only come from claim/vmx.
-  'VMX-S': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 200, lan: [] },
-  'VMX-M': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 500, lan: [] },
-  'VMX-L': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 1000, lan: [] },
-  'VMX-XL': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 2000, lan: [] },
-  VMX100: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 500, lan: [] },
-  'MS390-48UX': { productType: 'switch', firmware: 'switch-17-1-4', ports: 48, uplinks: 8, accessSpeed: '1 Gbps', uplinkSpeed: '10 Gbps', psus: 2 },
-  'MS250-48FP': { productType: 'switch', firmware: 'switch-17-1-4', ports: 48, uplinks: 4, accessSpeed: '1 Gbps', uplinkSpeed: '10 Gbps' },
-  'MS130-48P': { productType: 'switch', firmware: 'switch-17-1-4', ports: 48, uplinks: 4, accessSpeed: '1 Gbps', uplinkSpeed: '10 Gbps' },
-  'MS130-24P': { productType: 'switch', firmware: 'switch-17-1-4', ports: 24, uplinks: 4, accessSpeed: '1 Gbps', uplinkSpeed: '10 Gbps' },
-  'MS120-8LP': { productType: 'switch', firmware: 'switch-17-1-4', ports: 8, uplinks: 2, accessSpeed: '1 Gbps', uplinkSpeed: '1 Gbps' },
-  CW9166I: { productType: 'wireless', firmware: 'wireless-31-1-6', watts: 24, speed: '5 Gbps', bands: ['2.4', '5', '6'] },
-  MR46: { productType: 'wireless', firmware: 'wireless-31-1-6', watts: 18, speed: '2.5 Gbps', bands: ['2.4', '5'] },
-  MR36: { productType: 'wireless', firmware: 'wireless-31-1-6', watts: 13, speed: '1 Gbps', bands: ['2.4', '5'] },
-  MR78: { productType: 'wireless', firmware: 'wireless-31-1-6', watts: 15, speed: '1 Gbps', bands: ['2.4', '5'] },
-  MV22: { productType: 'camera', firmware: 'camera-6-3', watts: 7, speed: '1 Gbps' },
-  MV72: { productType: 'camera', firmware: 'camera-6-3', watts: 11, speed: '1 Gbps' },
+  'VMX-S': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 200, lan: [], ram: 2048 },
+  'VMX-M': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 500, lan: [], ram: 4096 },
+  'VMX-L': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 1000, lan: [], ram: 8192 },
+  'VMX-XL': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 2000, lan: [], ram: 16384 },
+  VMX100: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 500, lan: [], ram: 4096 },
+  'MS390-48UX': { productType: 'switch', firmware: 'switch-17-1-4', ports: 48, uplinks: 8, accessSpeed: '1 Gbps', uplinkSpeed: '10 Gbps', psus: 2, ram: 8192 },
+  'MS250-48FP': { productType: 'switch', firmware: 'switch-17-1-4', ports: 48, uplinks: 4, accessSpeed: '1 Gbps', uplinkSpeed: '10 Gbps', ram: 2048 },
+  'MS130-48P': { productType: 'switch', firmware: 'switch-17-1-4', ports: 48, uplinks: 4, accessSpeed: '1 Gbps', uplinkSpeed: '10 Gbps', ram: 1024 },
+  'MS130-24P': { productType: 'switch', firmware: 'switch-17-1-4', ports: 24, uplinks: 4, accessSpeed: '1 Gbps', uplinkSpeed: '10 Gbps', ram: 1024 },
+  'MS120-8LP': { productType: 'switch', firmware: 'switch-17-1-4', ports: 8, uplinks: 2, accessSpeed: '1 Gbps', uplinkSpeed: '1 Gbps', ram: 512 },
+  CW9166I: { productType: 'wireless', firmware: 'wireless-31-1-6', watts: 24, speed: '5 Gbps', bands: ['2.4', '5', '6'], ram: 2048 },
+  MR46: { productType: 'wireless', firmware: 'wireless-31-1-6', watts: 18, speed: '2.5 Gbps', bands: ['2.4', '5'], ram: 1024 },
+  MR36: { productType: 'wireless', firmware: 'wireless-31-1-6', watts: 13, speed: '1 Gbps', bands: ['2.4', '5'], ram: 512 },
+  MR78: { productType: 'wireless', firmware: 'wireless-31-1-6', watts: 15, speed: '1 Gbps', bands: ['2.4', '5'], ram: 512 },
+  MV22: { productType: 'camera', firmware: 'camera-6-3', watts: 7, speed: '1 Gbps', ram: 2048 },
+  MV72: { productType: 'camera', firmware: 'camera-6-3', watts: 11, speed: '1 Gbps', ram: 2048 },
 };
 
 export const VMX_SIZES = { small: 'VMX-S', medium: 'VMX-M', large: 'VMX-L', xlarge: 'VMX-XL', 100: 'VMX100' };

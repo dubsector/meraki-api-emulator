@@ -134,6 +134,18 @@ def paging():
                 check(f"{mode} {op} perPage=3, all pages ({len(want)} rows)", got == want, f"got {len(got)}: {got[:6]}")
                 two = ids(getattr(d.organizations, op)(org, total_pages=2, perPage=3), key)
                 check(f"{mode} {op} total_pages=2", two == want[:6], two)
+            # These wrap each page in {items, meta}. Legacy mode merges the pages' items, iterator mode yields them.
+            serials = sorted(ids(emu.raw(f"/organizations/{org}/devices?perPage=1000"), "serial"))
+            networks = [x["network"]["id"] for x in emu.raw(f"/organizations/{org}/devices/syslog/servers/byNetwork?perPage=1000")["items"]]
+            for op, want in [
+                ("getOrganizationDevicesSystemMemoryUsageHistoryByInterval", serials),
+                ("getOrganizationDevicesSyslogServersByNetwork", networks),
+                ("getOrganizationDevicesSyslogServersRolesByNetwork", networks),
+            ]:
+                key = lambda x: x.get("serial") or x["network"]["id"]
+                got = getattr(d.organizations, op)(org, total_pages="all", perPage=3)
+                got = [key(x) for x in (got["items"] if isinstance(got, dict) else got)]
+                check(f"{mode} {op} perPage=3, all pages ({len(want)} items)", got == want, f"got {len(got)}: {got[:6]}")
 
         # The SDK sends list kwargs as key[]=a&key[]=b.
         d = dashboard(emu, smart_flow_enabled=False)
@@ -296,6 +308,18 @@ def writes():
         check("updateNetworkDevicesSyslogServers", s["servers"][0]["roles"] == ["wirelessEventLog", "applianceUrlLog"] and d.networks.getNetworkSyslogServers(site)["servers"][0]["roles"] == ["Wireless event log", "URLs"], s)
         s = d.organizations.bulkUpdateOrganizationDevicesDetails(org, [sw["serial"]], [{"name": "username", "value": "admin"}])
         check("bulkUpdateOrganizationDevicesDetails", s == {"serials": [sw["serial"]]}, s)
+        rows = d.organizations.getOrganizationDevicesSyslogServersByNetwork(org, networkIds=[site])["items"]
+        check("getOrganizationDevicesSyslogServersByNetwork shows the update", rows[0]["servers"][0]["roles"] == ["wirelessEventLog", "applianceUrlLog"], rows)
+        addr = d.organizations.getOrganizationDevicesUplinksAddressesByDevice(org, total_pages="all", perPage=3, serials=[sw["serial"]])
+        check("getOrganizationDevicesUplinksAddressesByDevice follows the management interface", addr[0]["uplinks"][0]["addresses"][0]["address"] == ip and addr[0]["uplinks"][0]["addresses"][0]["assignmentMode"] == "static", addr)
+        s = d.switch.cycleDeviceSwitchPorts(sw["serial"], ["1", "2-3"])
+        check("cycleDeviceSwitchPorts", s == {"ports": ["1", "2-3"]}, s)
+        packets = d.switch.getDeviceSwitchPortsStatusesPackets(sw["serial"], timespan=3600)
+        check("getDeviceSwitchPortsStatusesPackets", len(packets) == len(d.switch.getDeviceSwitchPorts(sw["serial"])) and packets[0]["packets"][0]["desc"] == "Total", packets[:1])
+        psus = d.organizations.getOrganizationDevicesPowerModulesStatusesByDevice(org, total_pages="all", perPage=3)
+        check("getOrganizationDevicesPowerModulesStatusesByDevice", len(psus) == 1 and len(psus[0]["slots"]) == 2, psus)
+        eox = d.organizations.getOrganizationInventoryDevicesEoxOverview(org)
+        check("getOrganizationInventoryDevicesEoxOverview", set(eox["counts"]["byStatus"]) == {"endOfSale", "endOfSupport", "nearEndOfSupport"}, eox)
 
         # Assurance alerts: dismiss and restore answer 204, profiles are kept per organization.
         active = d.organizations.getOrganizationAssuranceAlerts(org, total_pages="all")

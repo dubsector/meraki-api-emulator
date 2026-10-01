@@ -360,6 +360,20 @@ export default [
     },
   },
   {
+    op: 'getOrganizationInventoryDevicesEoxOverview',
+    path: '/organizations/{organizationId}/inventory/devices/eox/overview',
+    handler: (ctx) => {
+      // Counts the EOX status inventory reports. No model in the catalog has one yet.
+      const org = orgOf(ctx);
+      const byStatus = { endOfSale: { total: 0 }, endOfSupport: { total: 0 }, nearEndOfSupport: { total: 0 } };
+      for (const d of [...org.devices, ...org.spares]) {
+        const { status } = inventoryJson(d, org).eox;
+        if (status) byStatus[status].total++;
+      }
+      return { counts: { byStatus } };
+    },
+  },
+  {
     op: 'getOrganizationDevicesOverviewByModel',
     path: '/organizations/{organizationId}/devices/overview/byModel',
     handler: (ctx) => {

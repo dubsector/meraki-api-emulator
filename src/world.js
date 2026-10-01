@@ -605,6 +605,7 @@ export function swapDevice(world, dev, spare, afterAction) {
   else for (const l of org.licenses || []) if (l.deviceSerial === old.serial) Object.assign(l, { deviceSerial: null, networkId: null });
   world.deviceBySerial.delete(dev.serial);
   Object.assign(dev, { serial: spare.serial, mac: spare.mac, model: spare.model, info: MODELS[spare.model], orderNumber: spare.orderNumber, claimedAt: spare.claimedAt });
+  delete dev.memoryCache; // sized to the old model's RAM
   world.deviceBySerial.set(dev.serial, dev);
   for (const l of org.licenses || []) if (l.deviceSerial === dev.serial) l.networkId = dev.net.id;
   if (dev.productType === 'wireless') for (const c of dev.net.clients) if (c.ap === dev && !dev.info.bands.includes(c.band)) c.band = '5';
