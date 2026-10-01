@@ -50,6 +50,7 @@ const CONDITIONAL = [
   [/\.(localAuth|psk|radiusAccountingServers|walledGardenRanges|oauth|adminSplashUrl|splashTimeout|walledGardenEnabled|adultContentFilteringEnabled|dnsRewrite)$/, /WirelessSsids?$/, 'other auth, splash or IP assignment modes'],
   [/^\.policiesBySsid$/, 'getNetworkClientPolicy', 'per-SSID policies (the sample has a group policy)'],
   [/^\.products\.(cellularGateway|sensor|wirelessController|campusGateway|secureConnect)$|\.nextUpgrade\.(toVersion\.|strategy|predownload)/, 'getNetworkFirmwareUpgrades', 'other products, or a scheduled upgrade'],
+  [/\.encryption\.certificate$/, 'getOrganizationDevicesSyslogServersByNetwork', 'encrypted syslog servers (the seeded ones are plain UDP)'],
 ];
 
 function conditional(op, field) {

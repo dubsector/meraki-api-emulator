@@ -144,6 +144,14 @@ export function paginate(ctx, items, keyOf, opts) {
   return page;
 }
 
+// The same paging in the {items, meta} envelope some newer endpoints use.
+// Only the page's items go through map.
+export function paginateItems(ctx, items, keyOf, opts, map = (x) => x) {
+  const page = paginate(ctx, items, keyOf, opts);
+  const end = page.length ? items.indexOf(page[page.length - 1]) + 1 : items.length;
+  return { items: page.map(map), meta: { counts: { items: { total: items.length, remaining: items.length - end } } } };
+}
+
 export function hasTags(itemTags, wanted, mode) {
   if (!wanted.length) return true;
   return mode === 'withAllTags' ? wanted.every((t) => itemTags.includes(t)) : wanted.some((t) => itemTags.includes(t));

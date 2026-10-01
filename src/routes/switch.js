@@ -3,12 +3,13 @@
 
 import { configOf } from '../config.js';
 import { deviceUrl } from '../format.js';
-import { arrayParam, badRequest, notFound, paginate, timeWindow } from '../http.js';
+import { arrayParam, badRequest, notFound, paginate, paginateItems, timeWindow } from '../http.js';
+import { derive, unit } from '../rng.js';
 import { crcPort } from '../sim/alerts.js';
 import { eachOutage, isDown } from '../sim/outages.js';
 import { isOnline, presenceIn } from '../sim/presence.js';
 import { WAN_RECV, WAN_SENT, clientUsage, networkTotals } from '../sim/usage.js';
-import { DAY, HOUR } from '../time.js';
+import { DAY, HOUR, parseTime } from '../time.js';
 import { merge } from '../validate.js';
 import { bySerial, devOf, netOf, orgOf, requireModel, requireProduct, round } from './common.js';
 
@@ -173,11 +174,8 @@ function defaultPortConfig(net, sw, port) {
   return out;
 }
 
-function portStatus(sw, port, t0, t1, now) {
-  if (port.config?.enabled === false) {
-    const zero = { total: 0, sent: 0, recv: 0 };
-    return { portId: port.portId, enabled: false, status: 'Disabled', isUplink: port.isUplink, errors: [], warnings: [], speed: '', duplex: '', spanningTree: { statuses: [] }, poe: { isAllocated: false }, usageInKb: zero, clientCount: 0, powerUsageInWh: 0, trafficInKbps: zero, securePort: { enabled: false, active: false, authenticationStatus: 'Disabled', configOverrides: {} } };
-  }
+// A port's load in kB, from the switch's point of view.
+function portTraffic(sw, port, t0, t1) {
   const peer = port.peer?.device;
   let load;
   let dir = 1;
@@ -191,11 +189,20 @@ function portStatus(sw, port, t0, t1, now) {
   } else {
     load = portLoad(port, t0, t1);
   }
+  // Switch view: "sent" leaves the port toward the device, so it is the device's download.
+  const toward = dir === 1 && port.uplinkPort;
+  return { ...load, sent: toward ? load.sent : load.recv, recv: toward ? load.recv : load.sent };
+}
+
+function portStatus(sw, port, t0, t1, now) {
+  if (port.config?.enabled === false) {
+    const zero = { total: 0, sent: 0, recv: 0 };
+    return { portId: port.portId, enabled: false, status: 'Disabled', isUplink: port.isUplink, errors: [], warnings: [], speed: '', duplex: '', spanningTree: { statuses: [] }, poe: { isAllocated: false }, usageInKb: zero, clientCount: 0, powerUsageInWh: 0, trafficInKbps: zero, securePort: { enabled: false, active: false, authenticationStatus: 'Disabled', configOverrides: {} } };
+  }
+  const load = portTraffic(sw, port, t0, t1);
+  const { sent, recv } = load;
   const connected = peerConnected(port, now);
   const secs = t1 - t0;
-  // Switch view: "sent" leaves the port toward the device, so it is the device's download.
-  const sent = dir === 1 && port.uplinkPort ? load.sent : load.recv;
-  const recv = dir === 1 && port.uplinkPort ? load.recv : load.sent;
   const alertPort = sw.alerting && port === crcPort(sw);
   const seen = connected ? neighbor(port) : {};
   delete seen.cdp?.model; // the port status view's CDP block has no model
@@ -217,6 +224,80 @@ function portStatus(sw, port, t0, t1, now) {
     trafficInKbps: { total: round(((sent + recv) * 8) / secs, 1), sent: round((sent * 8) / secs, 1), recv: round((recv * 8) / secs, 1) },
     securePort: { enabled: false, active: false, authenticationStatus: 'Disabled', configOverrides: {} },
   };
+}
+
+// The packet counter windows the real API snaps a requested span to.
+const PACKET_WINDOWS = [300, 900, HOUR, DAY];
+const PACKET_BYTES = 1100;
+const PACKET_ROWS = ['Total', 'Broadcast', 'Multicast', 'CRC align errors', 'Fragments', 'Collisions', 'Topology changes'];
+
+function packetWindow(q, now) {
+  let span = DAY;
+  if (q.has('timespan')) {
+    if (q.has('t0')) throw badRequest("'timespan' cannot be combined with 't0'");
+    span = Number(q.get('timespan'));
+    if (!(span > 0) || span > DAY) throw badRequest(`'timespan' must be a number of seconds up to ${DAY}`);
+  } else if (q.has('t0')) {
+    const t0 = parseTime(q.get('t0'));
+    if (Number.isNaN(t0)) throw badRequest("'t0' must be an ISO 8601 timestamp or epoch seconds");
+    if (t0 >= now) throw badRequest("'t0' must be in the past");
+    span = now - t0;
+  }
+  return PACKET_WINDOWS.reduce((best, w) => (Math.abs(w - span) < Math.abs(best - span) ? w : best));
+}
+
+// Seconds the link was up within [t0, t1).
+function linkSeconds(sw, port, t0, t1) {
+  const peer = port.peer?.device;
+  if (peer) return Math.min(upSeconds(sw, t0, t1), upSeconds(peer, t0, t1));
+  const c = port.clients[0];
+  return c ? (presenceIn(c, t0, t1)?.seconds ?? 0) : 0;
+}
+
+// Data packets from the port's traffic, one ACK back for every two, plus
+// broadcast and multicast (ARP, DHCP, mDNS, STP) while the link is up. Trunks
+// carry more of those. Only the port with the CRC alert sees errors, and a
+// port gets a topology change each time the device on it comes back up.
+function portPackets(sw, port, t0, t1) {
+  const secs = t1 - t0;
+  const row = (desc, s, r) => {
+    const sent = Math.round(s);
+    const recv = Math.round(r);
+    return { desc, total: sent + recv, sent, recv, ratePerSec: { total: Math.round((sent + recv) / secs), sent: Math.round(sent / secs), recv: Math.round(recv / secs) } };
+  };
+  if (port.config?.enabled === false) return { portId: port.portId, packets: PACKET_ROWS.map((desc) => row(desc, 0, 0)) };
+  const up = linkSeconds(sw, port, t0, t1);
+  const t = portTraffic(sw, port, t0, t1);
+  const dataSent = (t.sent * 1024) / PACKET_BYTES;
+  const dataRecv = (t.recv * 1024) / PACKET_BYTES;
+  const peer = port.peer?.device;
+  const trunk = port.uplinkPort || peer?.productType === 'wireless';
+  const vary = 0.7 + unit(derive(sw.key, `packets:${port.portId}`), 0) * 0.6;
+  const bcast = [up * (trunk ? 2 : 0.4) * vary, up * (trunk ? 0.3 : 0.05) * vary];
+  const mcast = [up * (trunk ? 3 : 0.8) * vary, up * (trunk ? 1.5 : 0.2) * vary];
+  const sent = dataSent + dataRecv / 2 + bcast[0] + mcast[0];
+  const recv = dataRecv + dataSent / 2 + bcast[1] + mcast[1];
+  const crc = sw.alerting && port === crcPort(sw) ? recv * 0.004 : 0;
+  let changes = 0;
+  if (peer) eachOutage(peer, t0, t1, (s, e) => e >= t0 && e < t1 && changes++);
+  return {
+    portId: port.portId,
+    packets: [[sent, recv], bcast, mcast, [0, crc], [0, crc * 0.1], [0, 0], [changes, 0]].map(([s, r], i) => row(PACKET_ROWS[i], s, r)),
+  };
+}
+
+// Takes single ports and ranges, as in "1" and "2-5".
+function cyclePorts(ctx) {
+  const dev = devOf(ctx);
+  requireModel(dev, 'switch');
+  const { ports } = ctx.body;
+  if (!ports.length) throw badRequest("'ports' must not be empty");
+  const ids = new Set(dev.ports.map((p) => p.portId));
+  for (const p of ports) {
+    const m = /^(\d+)(?:-(\d+))?$/.exec(String(p).trim());
+    if (!m || !ids.has(m[1]) || (m[2] && (!ids.has(m[2]) || Number(m[2]) < Number(m[1])))) throw badRequest(`'${p}' is not a port or port range on this switch`);
+  }
+  return { ports };
 }
 
 function portOf(dev, portId) {
@@ -333,6 +414,23 @@ export default [
     },
   },
   {
+    op: 'getDeviceSwitchPortsStatusesPackets',
+    path: '/devices/{serial}/switch/ports/statuses/packets',
+    handler: (ctx) => {
+      const dev = devOf(ctx);
+      requireModel(dev, 'switch');
+      const span = packetWindow(ctx.query, ctx.now);
+      return dev.ports.map((p) => portPackets(dev, p, ctx.now - span, ctx.now));
+    },
+  },
+  {
+    op: 'cycleDeviceSwitchPorts',
+    method: 'POST',
+    status: 200,
+    path: '/devices/{serial}/switch/ports/cycle',
+    handler: cyclePorts,
+  },
+  {
     op: 'getDeviceSwitchPort',
     path: '/devices/{serial}/switch/ports/{portId}',
     sample: { portId: '1' },
@@ -373,15 +471,7 @@ export default [
   {
     op: 'getOrganizationSwitchPortsStatusesBySwitch',
     path: '/organizations/{organizationId}/switch/ports/statuses/bySwitch',
-    handler: (ctx) => {
-      const switches = orgSwitches(ctx);
-      const page = paginate(ctx, switches, (sw) => sw.serial, { def: 10, max: 20 });
-      const end = page.length ? switches.indexOf(page[page.length - 1]) + 1 : switches.length;
-      return {
-        items: page.map((sw) => ({ ...switchHeader(sw), ports: sw.ports.map((p) => liveStatus(sw, p, ctx.now)) })),
-        meta: { counts: { items: { total: switches.length, remaining: switches.length - end } } },
-      };
-    },
+    handler: (ctx) => paginateItems(ctx, orgSwitches(ctx), (sw) => sw.serial, { def: 10, max: 20 }, (sw) => ({ ...switchHeader(sw), ports: sw.ports.map((p) => liveStatus(sw, p, ctx.now)) })),
   },
   {
     op: 'getNetworkSwitchSettings',

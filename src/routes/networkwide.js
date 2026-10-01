@@ -2,13 +2,13 @@
 // policies, firmware, floor plans and the link layer topology.
 
 import { SNMP_V3, SYSLOG_ROLES, configOf, syslogRolesFor } from '../config.js';
-import { badRequest, notFound } from '../http.js';
+import { arrayParam, badRequest, notFound, paginateItems } from '../http.js';
 import { hashStr } from '../rng.js';
 import { deviceStatus, lastReportedAt } from '../sim/outages.js';
 import { isOnline } from '../sim/presence.js';
 import { DAY, iso } from '../time.js';
 import { merge } from '../validate.js';
-import { devOf, netOf } from './common.js';
+import { byId, devOf, netOf, orgOf } from './common.js';
 
 const MAX_ITEMS = 100;
 const SYSLOG_TITLES = ['Wireless event log', 'Appliance event log', 'Switch event log', 'Air Marshal events', 'Flows', 'URLs', 'IDS alerts', 'Security events'];
@@ -98,7 +98,7 @@ function shapeWan(w, mx) {
 }
 
 // MX WAN addressing; other devices use DHCP on the management VLAN until a PUT says otherwise.
-function managementInterface(dev) {
+export function managementInterface(dev) {
   const mx = dev.productType === 'appliance';
   let wans = dev.managementInterface;
   if (!wans && !mx) wans = { wan1: shapeWan({ usingStaticIp: false }, false) };
@@ -245,6 +245,13 @@ function deviceSyslogServers(ctx) {
   return { network: { id: net.id }, servers: structuredClone(servers) };
 }
 
+// One row per network in the organization, including networks without servers.
+function syslogByNetwork(ctx, row) {
+  const networkIds = arrayParam(ctx.query, 'networkIds');
+  const nets = orgOf(ctx).networks.filter((n) => !networkIds.length || networkIds.includes(n.id)).sort(byId);
+  return paginateItems(ctx, nets, (n) => n.id, { def: 10, max: 1000 }, row);
+}
+
 // Only the fields for the chosen access mode are kept.
 function snmp(ctx) {
   const c = configOf(netOf(ctx));
@@ -334,6 +341,16 @@ export default [
   setting('getNetworkSyslogServers', 'syslogServers', legacySyslog),
   write('updateNetworkSyslogServers', 'PUT', 'syslogServers', legacySyslogServers),
   write('updateNetworkDevicesSyslogServers', 'PUT', 'devices/syslog/servers', deviceSyslogServers),
+  {
+    op: 'getOrganizationDevicesSyslogServersByNetwork',
+    path: '/organizations/{organizationId}/devices/syslog/servers/byNetwork',
+    handler: (ctx) => syslogByNetwork(ctx, (n) => ({ network: { id: n.id }, servers: structuredClone(configOf(n).syslog.servers) })),
+  },
+  {
+    op: 'getOrganizationDevicesSyslogServersRolesByNetwork',
+    path: '/organizations/{organizationId}/devices/syslog/servers/roles/byNetwork',
+    handler: (ctx) => syslogByNetwork(ctx, (n) => ({ network: { id: n.id }, available: syslogRolesFor(n).map(({ name, value }) => ({ name, value })) })),
+  },
   setting('getNetworkSnmp', 'snmp', (c) => c.snmp),
   write('updateNetworkSnmp', 'PUT', 'snmp', snmp),
   setting('getNetworkAlertsSettings', 'alerts/settings', (c) => c.alerts),
