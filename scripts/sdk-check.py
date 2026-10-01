@@ -261,6 +261,33 @@ def writes():
         pol = d.networks.updateNetworkClientPolicy(site, key, "Group policy", groupPolicyId="101")
         check("updateNetworkClientPolicy on a provisioned client", pol.get("groupPolicyId") == "101" and d.networks.getNetworkClientPolicy(site, key) == pol, pol)
 
+        # Claim, remove and swap answer 200, 204 and 207.
+        spare = d.organizations.getOrganizationInventoryDevices(org, usedState="unused", productTypes=["wireless"])[0]["serial"]
+        c = d.networks.claimNetworkDevices(site, [spare])
+        check("claimNetworkDevices", c.get("serials") == [spare] and not c.get("errors") and d.devices.getDevice(spare)["networkId"] == site, c)
+        c = d.networks.claimNetworkDevices(site, [spare, "Q2XX-NOPE-NOPE"], addAtomically=False)
+        check("claimNetworkDevices addAtomically=False lists errors per device", c.get("serials") == [] and len(c.get("errors", [])) == 2, c)
+        check("removeNetworkDevices returns nothing", d.networks.removeNetworkDevices(site, spare) is None)
+        check("a removed device is back in inventory", spare in ids(d.organizations.getOrganizationInventoryDevices(org, usedState="unused"), "serial"))
+        vmx = d.networks.vmxNetworkDevicesClaim(nid, "small")
+        check("vmxNetworkDevicesClaim", vmx.get("model") == "VMX-S" and vmx.get("networkId") == nid, vmx)
+        old = next(x for x in d.networks.getNetworkDevices(site) if x["productType"] == "wireless")
+        swap = d.organizations.createOrganizationInventoryDevicesSwapsBulk(org, [{"devices": {"old": old["serial"], "new": spare}, "afterAction": "remove from network"}])
+        check("createOrganizationInventoryDevicesSwapsBulk", swap.get("jobId") and swap["swaps"][0]["status"] == "pending", swap)
+        job = d.organizations.getOrganizationInventoryDevicesSwapsBulk(org, swap["jobId"])
+        check("getOrganizationInventoryDevicesSwapsBulk", job["swaps"][0]["status"] == "complete" and d.devices.getDevice(spare)["name"] == old["name"], job)
+        statuses = d.organizations.getOrganizationDevicesProvisioningStatuses(org, total_pages="all", perPage=5)
+        unprovisioned = {s["serial"] for s in statuses if s["status"] == "unprovisioned"}
+        check(f"getOrganizationDevicesProvisioningStatuses perPage=5, all pages ({len(statuses)} rows)", len(statuses) == len(d.organizations.getOrganizationInventoryDevices(org)) and old["serial"] in unprovisioned, len(statuses))
+        sw = next(x for x in d.networks.getNetworkDevices(site) if x["productType"] == "switch")
+        ip = sw["lanIp"].rsplit(".", 1)[0] + ".250"
+        m = d.devices.updateDeviceManagementInterface(sw["serial"], wan1={"usingStaticIp": True, "staticIp": ip, "staticSubnetMask": "255.255.255.0", "staticGatewayIp": sw["lanIp"].rsplit(".", 1)[0] + ".1", "vlan": 1})
+        check("updateDeviceManagementInterface", m["wan1"].get("staticIp") == ip and d.devices.getDevice(sw["serial"])["lanIp"] == ip, m)
+        s = d.networks.updateNetworkDevicesSyslogServers(site, [{"host": "192.0.2.50", "port": 514, "roles": ["wirelessEventLog", "applianceUrlLog"]}])
+        check("updateNetworkDevicesSyslogServers", s["servers"][0]["roles"] == ["wirelessEventLog", "applianceUrlLog"] and d.networks.getNetworkSyslogServers(site)["servers"][0]["roles"] == ["Wireless event log", "URLs"], s)
+        s = d.organizations.bulkUpdateOrganizationDevicesDetails(org, [sw["serial"]], [{"name": "username", "value": "admin"}])
+        check("bulkUpdateOrganizationDevicesDetails", s == {"serials": [sw["serial"]]}, s)
+
         changes = d.organizations.getOrganizationConfigurationChanges(org, total_pages="all", perPage=10, timespan=3600)
         check("writes show up in configurationChanges", sum(1 for c in changes if c.get("page") == "via API") >= 6, len(changes))
 

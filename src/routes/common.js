@@ -53,7 +53,7 @@ export function filterDevices(q, devices) {
       (!models.length || models.includes(d.model)) &&
       (!macs.length || macs.includes(d.mac)) &&
       hasTags(d.tags, tags, mode) &&
-      (!name || d.name.includes(name)) &&
+      (!name || (d.name ?? '').includes(name)) &&
       (!mac || d.mac.includes(mac)) &&
       (!serial || d.serial.includes(serial)) &&
       (!model || d.model.includes(model)),

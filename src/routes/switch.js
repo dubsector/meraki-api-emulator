@@ -285,7 +285,7 @@ function orgSwitches(ctx) {
         (!networkIds.length || networkIds.includes(d.net.id)) &&
         (!serials.length || serials.includes(d.serial)) &&
         (!macs.length || macs.includes(d.mac)) &&
-        (!name || d.name.toLowerCase().includes(name)) &&
+        (!name || (d.name ?? '').toLowerCase().includes(name)) &&
         (!serial || d.serial.includes(serial)) &&
         (!mac || d.mac.includes(mac)),
     )
