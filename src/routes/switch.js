@@ -492,12 +492,4 @@ export default [
       return merge(configOf(net).switchSettings, ctx.body);
     },
   },
-  {
-    op: 'getNetworkSwitchStacks',
-    path: '/networks/{networkId}/switch/stacks',
-    handler: (ctx) => {
-      requireProduct(netOf(ctx), 'switch');
-      return [];
-    },
-  },
 ];
