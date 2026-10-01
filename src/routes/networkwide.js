@@ -1,7 +1,7 @@
 // Network-wide settings: status page, syslog, SNMP, alerts, webhooks, group
 // policies, firmware, floor plans and the link layer topology.
 
-import { SNMP_V3, configOf } from '../config.js';
+import { SNMP_V3, SYSLOG_ROLES, configOf, syslogRolesFor } from '../config.js';
 import { badRequest, notFound } from '../http.js';
 import { hashStr } from '../rng.js';
 import { deviceStatus, lastReportedAt } from '../sim/outages.js';
@@ -11,7 +11,7 @@ import { merge } from '../validate.js';
 import { devOf, netOf } from './common.js';
 
 const MAX_ITEMS = 100;
-const SYSLOG_ROLES = ['Wireless event log', 'Appliance event log', 'Switch event log', 'Air Marshal events', 'Flows', 'URLs', 'IDS alerts', 'Security events'];
+const SYSLOG_TITLES = ['Wireless event log', 'Appliance event log', 'Switch event log', 'Air Marshal events', 'Flows', 'URLs', 'IDS alerts', 'Security events'];
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
 // Firmware trains per product: [firmware, short name, release date].
@@ -89,21 +89,57 @@ function topology(net, now) {
   return { nodes, links, errors: [] };
 }
 
-// MX WAN addressing; other devices only report that they use DHCP on the management VLAN.
+// Static fields only show with a static IP, and wanEnabled only on an MX.
+function shapeWan(w, mx) {
+  const out = mx ? { wanEnabled: w.wanEnabled ?? 'not configured', usingStaticIp: !!w.usingStaticIp } : { usingStaticIp: !!w.usingStaticIp };
+  if (w.usingStaticIp) Object.assign(out, { staticIp: w.staticIp, staticSubnetMask: w.staticSubnetMask, staticGatewayIp: w.staticGatewayIp, staticDns: w.staticDns ?? [] });
+  out.vlan = w.vlan ?? null;
+  return out;
+}
+
+// MX WAN addressing; other devices use DHCP on the management VLAN until a PUT says otherwise.
 function managementInterface(dev) {
-  if (dev.productType !== 'appliance') return { wan1: { usingStaticIp: false, vlan: null } };
+  const mx = dev.productType === 'appliance';
+  let wans = dev.managementInterface;
+  if (!wans && !mx) wans = { wan1: shapeWan({ usingStaticIp: false }, false) };
+  if (!wans) {
+    const wan = (u) => {
+      if (!u) return { wanEnabled: 'disabled', usingStaticIp: false };
+      if (u.isp !== 'fiber') return { wanEnabled: 'enabled', usingStaticIp: false };
+      return { wanEnabled: 'enabled', usingStaticIp: true, staticIp: u.publicIp, staticSubnetMask: '255.255.255.0', staticGatewayIp: u.gateway, staticDns: ['8.8.8.8', '1.1.1.1'] };
+    };
+    wans = { wan1: shapeWan(wan(dev.uplinks[0]), true), wan2: shapeWan(wan(dev.uplinks[1]), true) };
+  }
+  if (!mx) return structuredClone(wans);
   const host = configOf(dev.net).applianceSettings.dynamicDns.url;
   const [prefix, ...rest] = host.split('.');
-  const wan = (u) => {
-    if (!u) return { wanEnabled: 'disabled', usingStaticIp: false, vlan: null };
-    if (u.isp !== 'fiber') return { wanEnabled: 'enabled', usingStaticIp: false, vlan: null };
-    return { wanEnabled: 'enabled', usingStaticIp: true, staticIp: u.publicIp, staticSubnetMask: '255.255.255.0', staticGatewayIp: u.gateway, staticDns: ['8.8.8.8', '1.1.1.1'], vlan: null };
-  };
   return {
     ddnsHostnames: { activeDdnsHostname: host, ddnsHostnameWan1: [`${prefix}-1`, ...rest].join('.'), ddnsHostnameWan2: [`${prefix}-2`, ...rest].join('.') },
-    wan1: wan(dev.uplinks[0]),
-    wan2: wan(dev.uplinks[1]),
+    ...structuredClone(wans),
   };
+}
+
+// A static IP on a switch, AP or camera becomes its LAN IP.
+function updateManagementInterface(ctx) {
+  const dev = devOf(ctx);
+  const mx = dev.productType === 'appliance';
+  if (!mx && ctx.body.wan2) throw badRequest("'wan2' is only supported on MX appliances");
+  const current = managementInterface(dev);
+  const next = {};
+  for (const k of mx ? ['wan1', 'wan2'] : ['wan1']) {
+    const w = { ...current[k], ...ctx.body[k] };
+    if (w.usingStaticIp) {
+      for (const f of ['staticIp', 'staticSubnetMask', 'staticGatewayIp']) if (!w[f]) throw badRequest(`'${k}.${f}' is required when usingStaticIp is true`);
+      if ((w.staticDns?.length ?? 0) > 2) throw badRequest(`'${k}.staticDns' takes at most two addresses`);
+    }
+    next[k] = shapeWan(w, mx);
+  }
+  dev.managementInterface = next;
+  if (!mx) {
+    dev.dhcpLanIp ??= dev.lanIp;
+    dev.lanIp = next.wan1.usingStaticIp ? next.wan1.staticIp : dev.dhcpLanIp;
+  }
+  return managementInterface(dev);
 }
 
 // ── Writes ──
@@ -157,21 +193,56 @@ function deleteServer(ctx) {
   for (const d of [c.alerts.defaultDestinations, ...c.alerts.alerts.map((a) => a.alertDestinations)]) d.httpServerIds = d.httpServerIds.filter((id) => id !== server.id);
 }
 
-// Role names are matched without regard to case, as the spec allows.
-function syslogServers(ctx) {
-  const c = configOf(netOf(ctx));
-  const servers = ctx.body.servers.map((s) => ({
-    host: s.host,
-    port: Number(s.port),
-    roles: (s.roles || []).map((r) => {
-      const role = SYSLOG_ROLES.find((x) => x.toLowerCase() === String(r).toLowerCase());
-      if (!role) throw badRequest(`'${r}' is not a syslog role. Use one of: ${SYSLOG_ROLES.join(', ')}`);
-      return role;
-    }),
-  }));
+// Servers are stored with per-product role values. The deprecated endpoints
+// show each role's title once, and a title stands for every role behind it
+// that the network's products have.
+function legacySyslog(c) {
+  const title = (v) => SYSLOG_ROLES.find((r) => r.value === v).title;
+  return { servers: c.syslog.servers.map((s) => ({ host: s.host, port: s.port, roles: [...new Set(s.roles.map(title))] })) };
+}
+
+function setSyslog(net, servers) {
   if (servers.length > MAX_ITEMS) throw badRequest(`Networks are limited to ${MAX_ITEMS} syslog servers in the emulator`);
-  c.syslog = { servers };
-  return c.syslog;
+  configOf(net).syslog = { servers };
+}
+
+// Role titles are matched without regard to case, as the spec allows.
+function legacySyslogServers(ctx) {
+  const net = netOf(ctx);
+  const c = configOf(net);
+  const available = syslogRolesFor(net);
+  setSyslog(
+    net,
+    ctx.body.servers.map((s) => {
+      const roles = (s.roles || []).flatMap((r) => {
+        const title = SYSLOG_TITLES.find((x) => x.toLowerCase() === String(r).toLowerCase());
+        if (!title) throw badRequest(`'${r}' is not a syslog role. Use one of: ${SYSLOG_TITLES.join(', ')}`);
+        const values = available.filter((x) => x.title === title).map((x) => x.value);
+        if (!values.length) throw badRequest(`'${title}' is not available on this network`);
+        return values;
+      });
+      // This endpoint can't set the transport or encryption, so a server that was already there keeps its own.
+      const was = c.syslog.servers.find((x) => x.host === s.host && x.port === Number(s.port));
+      return { host: s.host, port: Number(s.port), roles: [...new Set(roles)], transportProtocol: was?.transportProtocol ?? 'UDP', encryption: structuredClone(was?.encryption ?? { enabled: false }) };
+    }),
+  );
+  return legacySyslog(c);
+}
+
+function deviceSyslogServers(ctx) {
+  const net = netOf(ctx);
+  const available = syslogRolesFor(net);
+  const servers = ctx.body.servers.map((s, i) => {
+    const roles = s.roles.map((r) => {
+      const role = available.find((x) => x.value.toLowerCase() === String(r).toLowerCase());
+      if (!role) throw badRequest(`'servers[${i}].roles' has '${r}', which is not a role on this network. Use one of: ${available.map((x) => x.value).join(', ')}`);
+      return role.value;
+    });
+    const enc = s.encryption?.enabled ? { enabled: true, ...(s.encryption.certificate?.id != null && { certificate: { id: s.encryption.certificate.id } }) } : { enabled: false };
+    return { host: s.host, port: Number(s.port), roles: [...new Set(roles)], transportProtocol: s.transportProtocol ?? 'UDP', encryption: enc };
+  });
+  setSyslog(net, servers);
+  return { network: { id: net.id }, servers: structuredClone(servers) };
 }
 
 // Only the fields for the chosen access mode are kept.
@@ -260,8 +331,9 @@ const write = (op, method, path, handler) => ({ op, method, path: `/networks/{ne
 export default [
   setting('getNetworkSettings', 'settings', (c) => c.settings),
   write('updateNetworkSettings', 'PUT', 'settings', (ctx) => merge(configOf(netOf(ctx)).settings, ctx.body)),
-  setting('getNetworkSyslogServers', 'syslogServers', (c) => c.syslog),
-  write('updateNetworkSyslogServers', 'PUT', 'syslogServers', syslogServers),
+  setting('getNetworkSyslogServers', 'syslogServers', legacySyslog),
+  write('updateNetworkSyslogServers', 'PUT', 'syslogServers', legacySyslogServers),
+  write('updateNetworkDevicesSyslogServers', 'PUT', 'devices/syslog/servers', deviceSyslogServers),
   setting('getNetworkSnmp', 'snmp', (c) => c.snmp),
   write('updateNetworkSnmp', 'PUT', 'snmp', snmp),
   setting('getNetworkAlertsSettings', 'alerts/settings', (c) => c.alerts),
@@ -294,5 +366,11 @@ export default [
     path: '/devices/{serial}/managementInterface',
     sample: { serial: 'appliance' },
     handler: (ctx) => managementInterface(devOf(ctx)),
+  },
+  {
+    op: 'updateDeviceManagementInterface',
+    method: 'PUT',
+    path: '/devices/{serial}/managementInterface',
+    handler: updateManagementInterface,
   },
 ];

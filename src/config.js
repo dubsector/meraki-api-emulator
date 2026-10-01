@@ -10,7 +10,26 @@ export const DEFAULT_RULE = { comment: 'Default rule', policy: 'allow', protocol
 // A new appliance network starts as one LAN, before VLANs are turned on.
 const SINGLE_LAN = { subnet: '192.168.128.0/24', applianceIp: '192.168.128.1' };
 export const GUEST_POLICY_ID = '101';
-export const SYSLOG_ROLES = ['Appliance event log', 'Switch event log', 'Wireless event log', 'Security events', 'URLs', 'Flows'];
+// Syslog roles per product type, with the title the deprecated
+// /syslogServers endpoints roll each one up into. Only applianceEventLog,
+// applianceUrlLog and wirelessEventLog are confirmed names; the rest follow them.
+export const SYSLOG_ROLES = [
+  { value: 'applianceEventLog', name: 'Appliance Event log', productType: 'appliance', title: 'Appliance event log' },
+  { value: 'switchEventLog', name: 'Switch Event Log', productType: 'switch', title: 'Switch event log' },
+  { value: 'wirelessEventLog', name: 'Wireless Event Log', productType: 'wireless', title: 'Wireless event log' },
+  { value: 'applianceSecurityEvents', name: 'Appliance Security Events', productType: 'appliance', title: 'Security events' },
+  { value: 'applianceUrlLog', name: 'Appliance URLs', productType: 'appliance', title: 'URLs' },
+  { value: 'wirelessUrlLog', name: 'Wireless URLs', productType: 'wireless', title: 'URLs' },
+  { value: 'applianceFlows', name: 'Appliance Flows', productType: 'appliance', title: 'Flows' },
+  { value: 'wirelessFlows', name: 'Wireless Flows', productType: 'wireless', title: 'Flows' },
+  { value: 'applianceIdsAlerts', name: 'Appliance IDS Alerts', productType: 'appliance', title: 'IDS alerts' },
+  { value: 'wirelessAirMarshalEvents', name: 'Wireless Air Marshal Events', productType: 'wireless', title: 'Air Marshal events' },
+];
+
+export function syslogRolesFor(net) {
+  return SYSLOG_ROLES.filter((r) => net.productTypes.includes(r.productType));
+}
+
 export const SNMP_V3 = { authentication: { protocol: 'SHA-1' }, privacy: { protocol: 'AES-128' } };
 
 // Content filtering categories blocked everywhere; the names match the cf_block events.
@@ -122,7 +141,7 @@ function siteToSite(net, vlans) {
   const exported = new Set(net.vpn === 'hub' ? ['5', '10', '20'] : ['10', '20', '50']);
   return {
     mode: net.org.hub ? net.vpn : 'none',
-    hubs: net.vpn === 'spoke' ? [{ hubId: net.org.hub.id, useDefaultRoute: false }] : [],
+    hubs: net.vpn === 'spoke' && net.org.hub ? [{ hubId: net.org.hub.id, useDefaultRoute: false }] : [],
     subnets: vlans.map((v) => ({ localSubnet: v.subnet, useVpn: exported.has(v.id) })),
     sgt: { enabled: false },
     subnet: { nat: { isAllowed: false } },
@@ -323,7 +342,7 @@ function buildConfig(net) {
       dynamicDns: { enabled: true, prefix: `acme-${net.code.toLowerCase()}`, url: `acme-${net.code.toLowerCase()}-${org.slug.toLowerCase()}.dynamic-m.com` },
     },
     groupPolicies: groupPolicies(net),
-    syslog: { servers: !seeded ? [] : [{ host: syslogHost, port: 514, roles: SYSLOG_ROLES.filter((r) => net.mx || !/Appliance|Security|URLs|Flows/.test(r)) }] },
+    syslog: { servers: !seeded ? [] : [{ host: syslogHost, port: 514, roles: syslogRolesFor(net).filter((r) => !/IdsAlerts|AirMarshal/.test(r.value)).map((r) => r.value), transportProtocol: 'UDP', encryption: { enabled: false } }] },
     ssids: Array.from({ length: 15 }, (_, n) => ssidJson(net, n)),
     snmp: net.vpn === 'hub' ? { access: 'users', users: [{ username: 'netmon', passphrase: 'example-passphrase' }], ...structuredClone(SNMP_V3) } : { access: 'none' },
     httpServers: servers,

@@ -2,7 +2,7 @@
 
 A local stand-in for the Cisco Meraki Dashboard API v1. It serves two simulated organizations with networks, devices, clients and traffic that change through the day, so you can build, test and demo Meraki integrations without a real Meraki account.
 
-It answers 177 operations (122 reads and 55 writes) with the same paths, operation IDs, paging and error formats as the real API. Writes change the emulator's configuration in memory, so provisioning tools and scripts can create, update and delete things and read them back. It also logs every call your client makes so you can check exactly what it sent.
+It answers 186 operations (124 reads and 62 writes) with the same paths, operation IDs, paging and error formats as the real API. Writes change the emulator's configuration in memory, so provisioning tools and scripts can create, update and delete things and read them back. It also logs every call your client makes so you can check exactly what it sent.
 
 Not affiliated with or endorsed by Cisco or Meraki. All names, addresses and IPs are made up (IPs come from the RFC 5737 documentation ranges).
 
@@ -99,18 +99,19 @@ The same seed and the same time always give the same answer. Freeze the clock wi
 
 ## Writes
 
-`PUT`, `POST` and `DELETE` work on organizations, networks, devices, admins, VLANs, firewall and NAT rules, static routes, site-to-site VPN, threat protection, SSIDs and their firewall and splash settings, RF profiles, radio settings, switch ports, syslog, SNMP, alert settings, webhook servers, group policies, client policies and splash authorization, and client provisioning. [ENDPOINTS.md](ENDPOINTS.md) lists them all.
+`PUT`, `POST` and `DELETE` work on organizations, networks, devices, admins, VLANs, firewall and NAT rules, static routes, site-to-site VPN, threat protection, SSIDs and their firewall and splash settings, RF profiles, radio settings, switch ports, syslog, SNMP, alert settings, webhook servers, group policies, client policies and splash authorization, client provisioning, management interfaces, and claiming, removing and swapping devices. [ENDPOINTS.md](ENDPOINTS.md) lists them all.
 
 - Bodies are checked against the request schemas in the official spec: types, enums, required fields and ranges. A bad value gets a `400` naming the field.
 - `PUT` is a partial update. Fields you leave out keep their values, nested objects merge, and lists replace.
 - Unknown and read-only fields are ignored, so you can `GET` an object, change it and `PUT` the whole thing back.
-- `POST` answers `201` with the new object, and `DELETE` answers `204`.
+- `POST` answers `201` with the new object, and `DELETE` answers `204`. Actions use the spec's code instead: a claim answers `200`, a removal `204` and a bulk swap `207`.
 - The checks that matter to real clients are there: VLAN subnets can't overlap and the appliance IP has to be inside the subnet, static routes need a next hop on a local subnet, names and admin emails have to be unique, a PSK SSID needs an 8 to 63 character key, a switch port only takes link speeds it lists, and the default firewall rule always stays last.
 - An SSID only shows the fields for its current auth mode, IP assignment mode and splash page, the way the real API does. Switching from PSK to 802.1X drops `psk` and adds the RADIUS settings, and moving out of NAT mode drops `dnsRewrite`. RADIUS shared secrets are accepted but never sent back.
 - Related data follows along. New VLANs join the site-to-site VPN list, the VPN status endpoint reports what you export, renaming a device renames it in the event log, renaming an SSID renames it for its clients, and deleting a network returns its devices to inventory.
+- Devices can be claimed from the organization's inventory. A claimed device is online right away with no clients: a switch gets empty ports and an MX one DHCP uplink. Removing a device returns it to inventory, an AP's clients move to the network's other APs, a switch's wired clients leave with it, and a network that loses its MX drops out of AutoVPN. A swap puts the new device in the old one's place with its name, settings and clients. Network settings stay as they were through all of this.
 - Every write shows up in `getOrganizationConfigurationChanges` the way the real change log records API calls: page `via API`, the method and path as the label, and the object before and after as JSON.
 
-Writes change configuration, not the simulation. Clients keep their addresses and schedules, traffic stays the same, and a network you create is empty: no devices, clients or traffic. Changing a network's time zone changes what the API reports, not the site's schedule. Start with `--read-only` to refuse every write with `405`.
+Apart from claiming, removing and swapping devices, writes change configuration, not the simulation. Clients keep their addresses and schedules, traffic stays the same, and a network you create is empty: no devices, clients or traffic. Changing a network's time zone changes what the API reports, not the site's schedule. Start with `--read-only` to refuse every write with `405`.
 
 ## Behavior that matches the real API
 
@@ -129,8 +130,8 @@ Writes change configuration, not the simulation. Clients keep their addresses an
 
 All live under `/api/v1`. [ENDPOINTS.md](ENDPOINTS.md) lists each operation with its method and path. In short:
 
-- **Organizations**: networks, devices, statuses and availability, uplinks, VPN, clients, top-N summaries, admins, licenses, inventory, the change log and the API request log.
-- **Networks**: devices, clients with their daily usage, application usage, policies and splash authorization, events and event types, traffic, settings, syslog, SNMP, alert settings, webhook servers, group policies, firmware and link layer topology.
+- **Organizations**: networks, devices, statuses and availability, uplinks, VPN, clients, top-N summaries, admins, licenses, inventory and device swaps, provisioning statuses, the change log and the API request log.
+- **Networks**: devices and claiming or removing them, clients with their daily usage, application usage, policies and splash authorization, events and event types, traffic, settings, syslog, SNMP, alert settings, webhook servers, group policies, firmware and link layer topology.
 - **Alerts**: assurance alerts across the organization and per-network health alerts.
 - **Security appliance (MX)**: LAN ports, VLANs, L3 and L7 firewall rules and the L7 application categories, port forwarding, 1:1 NAT, static routes, site-to-site VPN, content filtering and its categories, intrusion and malware settings, security events, DHCP subnets and uplink settings.
 - **Switches (MS)**: port config and live status per switch and across the organization, LLDP and CDP neighbors.
@@ -158,7 +159,9 @@ There is no real authentication, so only use `--host 0.0.0.0` on a network you t
 ## Differences from the real API
 
 - Only the operations in [ENDPOINTS.md](ENDPOINTS.md) exist. Other paths return `404`, and other methods on a known path return `405`.
-- Writes live in memory and are gone after a restart or a reset. Devices can't be claimed into or removed from a network yet.
+- Writes live in memory and are gone after a restart or a reset.
+- Only serials in the organization's inventory can be claimed. The real API also claims devices straight from an order.
+- Syslog roles other than `applianceEventLog`, `applianceUrlLog` and `wirelessEventLog`, and the vMX model names, follow Meraki's naming but haven't been checked against the real API.
 - Content filtering category IDs, and most layer 7 category and application IDs, are stand-ins. The names follow the Dashboard, and the firewall rules, traffic analysis and event log all use the same lists.
 - No redirects to regional shard hosts.
 - Error messages are close to Meraki's but not always word for word.

@@ -8,6 +8,12 @@ export const MODELS = {
   MX75: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 1000, lan: [3, 12] },
   MX68: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 600, lan: [3, 12] },
   MX67: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 450, lan: [2, 5] },
+  // Virtual MXs have no LAN ports; they only come from claim/vmx.
+  'VMX-S': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 200, lan: [] },
+  'VMX-M': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 500, lan: [] },
+  'VMX-L': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 1000, lan: [] },
+  'VMX-XL': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 2000, lan: [] },
+  VMX100: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 500, lan: [] },
   'MS390-48UX': { productType: 'switch', firmware: 'switch-17-1-4', ports: 48, uplinks: 8, accessSpeed: '1 Gbps', uplinkSpeed: '10 Gbps', psus: 2 },
   'MS250-48FP': { productType: 'switch', firmware: 'switch-17-1-4', ports: 48, uplinks: 4, accessSpeed: '1 Gbps', uplinkSpeed: '10 Gbps' },
   'MS130-48P': { productType: 'switch', firmware: 'switch-17-1-4', ports: 48, uplinks: 4, accessSpeed: '1 Gbps', uplinkSpeed: '10 Gbps' },
@@ -21,7 +27,9 @@ export const MODELS = {
   MV72: { productType: 'camera', firmware: 'camera-6-3', watts: 11, speed: '1 Gbps' },
 };
 
-export const SERIAL_PREFIX = { appliance: 'Q2PN', switch: 'Q2HP', wireless: 'Q3AC', camera: 'Q2FV' };
+export const VMX_SIZES = { small: 'VMX-S', medium: 'VMX-M', large: 'VMX-L', xlarge: 'VMX-XL', 100: 'VMX100' };
+
+export const SERIAL_PREFIX ={ appliance: 'Q2PN', switch: 'Q2HP', wireless: 'Q3AC', camera: 'Q2FV' };
 export const DEVICE_OUI = { appliance: 'e0:55:3d', switch: 'e0:cb:bc', wireless: '0c:8d:db', camera: '34:56:fe' };
 
 // Link profiles: baseline RTT to 8.8.8.8 in ms, and loss/latency behaviour.

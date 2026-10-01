@@ -35,7 +35,7 @@ export function intParam(q, name, def, { min = -Infinity, max = Infinity } = {})
 export function boolParam(q, name, def = false) {
   const v = q.get(name);
   if (v == null) return def;
-  return v === 'true' || v === '1';
+  return v.toLowerCase() === 'true' || v === '1';
 }
 
 function time(q, name) {

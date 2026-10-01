@@ -1,6 +1,7 @@
 // Builds the static world (orgs, networks, devices, clients, switch ports) from a seed.
 
 import { CLIENT_PROFILES, DEVICE_OUI, FIRST_NAMES, ISPS, KINDS, LAST_NAMES, MODELS, ORGS, SERIAL_PREFIX, SSIDS } from './catalog.js';
+import { configOf } from './config.js';
 import { Rand, derive, hashStr } from './rng.js';
 import { DAY, Zone } from './time.js';
 
@@ -303,20 +304,19 @@ function attachWireless(r, c) {
   c.band = bands.includes('6') && r.chance(0.2) ? '6' : r.chance(0.8) ? '5' : '2.4';
 }
 
+function makePorts(sw) {
+  const ports = [];
+  for (let p = 1; p <= sw.info.ports + sw.info.uplinks; p++) {
+    ports.push({ portId: String(p), switch: sw, isUplink: false, uplinkPort: p > sw.info.ports, peer: null, clients: [] });
+  }
+  return ports;
+}
+
 // APs and cameras get PoE ports first, then wired clients spread across switches.
 function buildSwitchPorts(r, net) {
   if (!net.switches.length) return;
   const cursor = new Map(net.switches.map((s) => [s.serial, 0]));
-  const ports = new Map();
-  for (const sw of net.switches) {
-    const total = sw.info.ports + sw.info.uplinks;
-    sw.ports = [];
-    for (let p = 1; p <= total; p++) {
-      const uplinkPort = p > sw.info.ports;
-      sw.ports.push({ portId: String(p), switch: sw, isUplink: false, uplinkPort, peer: null, clients: [] });
-    }
-    ports.set(sw.serial, sw.ports);
-  }
+  for (const sw of net.switches) sw.ports = makePorts(sw);
 
   const core = net.switches[0];
   // Core uplinks to the MX; every other switch uplinks to a core uplink port.
@@ -449,11 +449,165 @@ export function removeNetwork(world, net) {
   org.devices = org.devices.filter((d) => !gone.has(d));
   for (const d of gone) {
     world.deviceBySerial.delete(d.serial);
-    org.spares.push({ serial: d.serial, model: d.model, productType: d.productType, mac: d.mac, orderNumber: d.orderNumber, claimedAt: d.claimedAt, net: null, tags: d.tags, name: d.name });
+    org.spares.push(spareOf(d));
   }
-  const clients = new Set(net.clients);
-  world.clients = world.clients.filter((c) => !clients.has(c));
-  for (const c of clients) world.clientById.delete(c.id);
+  dropClients(world, net, new Set(net.clients));
   if (org.hub === net) org.hub = null;
   net.deleted = true;
+}
+
+// ── Claiming, removing and swapping devices ──
+
+// The inventory entry a device leaves behind. Its license stays with it.
+function spareOf(dev) {
+  for (const l of dev.net.org.licenses || []) if (l.deviceSerial === dev.serial) l.networkId = null;
+  return { serial: dev.serial, model: dev.model, productType: dev.productType, mac: dev.mac, orderNumber: dev.orderNumber, claimedAt: dev.claimedAt, net: null, tags: dev.tags, name: dev.name };
+}
+
+function dropClients(world, net, gone) {
+  if (!gone.size) return;
+  net.clients = net.clients.filter((c) => !gone.has(c));
+  world.clients = world.clients.filter((c) => !gone.has(c));
+  for (const c of gone) world.clientById.delete(c.id);
+}
+
+// Settings are built from the topology the first time they're read. A network
+// keeps its settings when devices come and go, so build them all first.
+function settle(org) {
+  for (const net of org.networks) configOf(net);
+}
+
+// Events, usage and the change history are cached per day from the devices and
+// clients, and a hub's events mention its spokes, so the whole org starts over.
+function dropCaches(org) {
+  for (const net of org.networks) for (const k of ['eventCache', 'securityCache', 'usageCache']) delete net[k];
+  delete org.changeCache;
+}
+
+export function serialTaken(world, serial) {
+  return world.deviceBySerial.has(serial) || world.orgs.some((o) => o.spares.some((s) => s.serial === serial));
+}
+
+function nextLanIp(net) {
+  const prefix = `${net.subnet(1)}.`;
+  const used = net.devices.filter((d) => d.lanIp?.startsWith(prefix)).map((d) => Number(d.lanIp.slice(prefix.length)));
+  return prefix + (Math.max(1, ...used) + 1);
+}
+
+// A claimed device checks in right away and never goes down. It starts with no
+// clients: a switch gets empty ports and an MX one DHCP uplink. Claiming a new
+// kind of device adds its product type to the network.
+export function claimDevice(world, net, spare) {
+  const org = net.org;
+  settle(org);
+  const i = org.spares.indexOf(spare);
+  if (i >= 0) org.spares.splice(i, 1);
+  const info = MODELS[spare.model];
+  const pt = info.productType;
+  const dev = {
+    serial: spare.serial,
+    name: spare.name,
+    model: spare.model,
+    productType: pt,
+    firmware: info.firmware,
+    mac: spare.mac,
+    net,
+    info,
+    tags: spare.tags,
+    lat: net.lat,
+    lng: net.lng,
+    key: hashStr(spare.serial),
+    outageRate: 0,
+    orderNumber: spare.orderNumber,
+    claimedAt: spare.claimedAt,
+    lanIp: pt === 'appliance' ? null : nextLanIp(net),
+  };
+  if (pt === 'appliance') {
+    const host = 10 + (net.siteIndex % 240);
+    dev.uplinks = [{ interface: 'wan1', isp: 'cable', ...ISPS.cable, publicIp: `198.51.100.${host}`, gateway: '198.51.100.1', key: derive(dev.key, 'wan1') }];
+    if (!net.mx) net.mx = dev;
+  } else if (pt === 'switch') {
+    dev.ports = makePorts(dev);
+    net.switches.push(dev);
+  } else if (pt === 'wireless') {
+    net.aps.push(dev);
+  } else if (pt === 'camera') {
+    net.cameras.push(dev);
+  }
+  if (!net.productTypes.includes(pt)) net.productTypes.push(pt);
+  net.devices.push(dev);
+  org.devices.push(dev);
+  world.devices.push(dev);
+  world.deviceBySerial.set(dev.serial, dev);
+  for (const l of org.licenses || []) if (l.deviceSerial === dev.serial) l.networkId = net.id;
+  dropCaches(org);
+  return dev;
+}
+
+// A brand new virtual MX, straight into the network.
+export function claimVmx(world, net, model, now) {
+  const r = nextRand(world, 'vmx');
+  let serial;
+  do serial = `${SERIAL_PREFIX.appliance}-${r.chars(4, SERIAL_CHARS)}-${r.chars(4, SERIAL_CHARS)}`;
+  while (serialTaken(world, serial));
+  return claimDevice(world, net, { serial, model, mac: macFrom(r, DEVICE_OUI.appliance), orderNumber: null, claimedAt: now, tags: [], name: null });
+}
+
+// Removing a device returns it to inventory along with what hung off it: an
+// AP's clients roam to the other APs (or leave with the last one), a switch's
+// wired clients are unplugged, and a network without its MX leaves AutoVPN.
+export function removeDevice(world, dev) {
+  const net = dev.net;
+  const org = net.org;
+  settle(org);
+  for (const list of [net.devices, net.aps, net.switches, net.cameras, org.devices, world.devices]) {
+    const i = list.indexOf(dev);
+    if (i >= 0) list.splice(i, 1);
+  }
+  world.deviceBySerial.delete(dev.serial);
+  org.spares.push(spareOf(dev));
+
+  const gone = new Set();
+  if (dev.productType === 'wireless') {
+    for (const c of net.clients) {
+      if (c.ap !== dev) continue;
+      if (!net.aps.length) gone.add(c);
+      else {
+        c.ap = net.aps[c.key % net.aps.length];
+        if (!c.ap.info.bands.includes(c.band)) c.band = '5';
+      }
+    }
+  }
+  for (const port of dev.ports || []) {
+    for (const c of port.clients) gone.add(c);
+    if (port.peer?.device.switchPort === port) port.peer.device.switchPort = null;
+  }
+  for (const sw of net.switches) for (const port of sw.ports) if (port.peer?.device === dev) port.peer = null;
+  if (net.mx === dev) {
+    net.mx = net.devices.find((d) => d.productType === 'appliance') || null;
+    if (!net.mx) {
+      if (org.hub === net) org.hub = null;
+      net.vpn = null;
+    }
+  }
+  dropClients(world, net, gone);
+  dropCaches(org);
+}
+
+// The new device takes the old one's place with all its settings and links.
+// The old one goes back to inventory, or leaves it and frees its license.
+export function swapDevice(world, dev, spare, afterAction) {
+  const org = dev.net.org;
+  settle(org);
+  const old = spareOf(dev);
+  org.spares.splice(org.spares.indexOf(spare), 1);
+  if (afterAction === 'remove from network') org.spares.push(old);
+  else for (const l of org.licenses || []) if (l.deviceSerial === old.serial) Object.assign(l, { deviceSerial: null, networkId: null });
+  world.deviceBySerial.delete(dev.serial);
+  Object.assign(dev, { serial: spare.serial, mac: spare.mac, model: spare.model, info: MODELS[spare.model], orderNumber: spare.orderNumber, claimedAt: spare.claimedAt });
+  world.deviceBySerial.set(dev.serial, dev);
+  for (const l of org.licenses || []) if (l.deviceSerial === dev.serial) l.networkId = dev.net.id;
+  if (dev.productType === 'wireless') for (const c of dev.net.clients) if (c.ap === dev && !dev.info.bands.includes(c.band)) c.band = '5';
+  dropCaches(org);
+  return old;
 }
