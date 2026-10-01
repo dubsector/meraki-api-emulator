@@ -2,6 +2,7 @@
 // switch and across the organization.
 
 import { configOf } from '../config.js';
+import { deviceUrl } from '../format.js';
 import { arrayParam, badRequest, notFound, paginate, timeWindow } from '../http.js';
 import { crcPort } from '../sim/alerts.js';
 import { eachOutage, isDown } from '../sim/outages.js';
@@ -94,16 +95,33 @@ export function neighbor(port) {
       managementAddress: peer.lanIp ?? peer.uplinks?.[0].publicIp ?? null,
       systemCapabilities: { wireless: 'WLAN access point', camera: 'Other', appliance: 'Router' }[peer.productType] ?? 'Switch',
     };
+    // Switches also send their management VLAN and the native VLAN of their port.
+    if (peer.productType === 'switch') Object.assign(lldp, switchVlans(peer, portOf(peer, port.peer.portId)));
     return { lldp };
   }
   const c = port.clients[0];
   if (c?.kindName === 'deskPhone') {
     return {
-      cdp: { systemName: '', platform: 'Cisco IP Phone 8845', deviceId: c.description, portId: 'Port 1', nativeVlan: 10, address: c.ip, managementAddress: c.ip, version: 'sip88xx.14-2-1-0101-40', vtpManagementDomain: '', capabilities: 'Host, Phone' },
-      lldp: { systemName: c.description, systemDescription: 'Cisco IP Phone 8845', chassisId: c.mac, portId: c.mac, portDescription: 'SW PORT', systemCapabilities: 'Telephone' },
+      cdp: { systemName: '', platform: 'Cisco IP Phone 8845', deviceId: c.description, model: 'CP-8845', portId: 'Port 1', nativeVlan: 10, address: c.ip, managementAddress: c.ip, version: 'sip88xx.14-2-1-0101-40', vtpManagementDomain: '', capabilities: 'Host, Phone' },
+      lldp: { systemName: c.description, systemDescription: 'Cisco IP Phone 8845', chassisId: c.mac, portId: c.mac, portDescription: 'SW PORT', managementAddress: c.ip, systemCapabilities: 'Telephone' },
     };
   }
   return {};
+}
+
+function switchVlans(sw, port) {
+  return { managementVlan: configOf(sw.net).switchSettings.vlan, portVlan: portConfig(sw.net, sw, port).vlan };
+}
+
+const GIG_SPEEDS = ['Auto negotiate', '1 Gigabit full duplex (auto)', '100 Megabit (auto)', '100 Megabit half duplex (forced)', '100 Megabit full duplex (forced)', '10 Megabit (auto)', '10 Megabit half duplex (forced)', '10 Megabit full duplex (forced)'];
+const MGIG_SPEEDS = ['Auto negotiate', '10 Gigabit full duplex (auto)', '5 Gigabit full duplex (auto)', '2.5 Gigabit full duplex (auto)', '1 Gigabit full duplex (auto)', '100 Megabit (auto)', '100 Megabit full duplex (forced)'];
+// The org-wide view carries fewer fields per port than the per-switch one.
+const BY_SWITCH_FIELDS = ['portId', 'name', 'tags', 'enabled', 'poeEnabled', 'perpetualPoe', 'fastPoe', 'type', 'vlan', 'voiceVlan', 'allowedVlans', 'rstpEnabled', 'stpGuard', 'linkNegotiation', 'accessPolicyType', 'stickyMacAllowList', 'stickyMacAllowListLimit'];
+
+// Uplinks are SFP cages; the MS390-48UX has multigigabit access ports.
+function linkSpeeds(sw, port) {
+  if (port.uplinkPort) return sw.info.uplinkSpeed === '10 Gbps' ? ['Auto negotiate', '10 Gigabit full duplex (forced)', '1 Gigabit full duplex (forced)'] : ['Auto negotiate', '1 Gigabit full duplex (forced)'];
+  return [...(sw.model === 'MS390-48UX' ? MGIG_SPEEDS : GIG_SPEEDS)];
 }
 
 // Topology decides the defaults; anything written through the API sits on top.
@@ -121,6 +139,8 @@ function defaultPortConfig(net, sw, port) {
     tags: [],
     enabled: true,
     poeEnabled: !port.uplinkPort,
+    perpetualPoe: { enabled: false },
+    fastPoe: { enabled: false },
     type: 'trunk',
     vlan: 1,
     voiceVlan: null,
@@ -128,7 +148,9 @@ function defaultPortConfig(net, sw, port) {
     isolationEnabled: false,
     rstpEnabled: true,
     stpGuard: 'disabled',
+    stpPortFastTrunk: false,
     linkNegotiation: 'Auto negotiate',
+    linkNegotiationCapabilities: linkSpeeds(sw, port),
     portScheduleId: null,
     udld: 'Alert only',
     accessPolicyType: 'Open',
@@ -175,6 +197,8 @@ function portStatus(sw, port, t0, t1, now) {
   const sent = dir === 1 && port.uplinkPort ? load.sent : load.recv;
   const recv = dir === 1 && port.uplinkPort ? load.recv : load.sent;
   const alertPort = sw.alerting && port === crcPort(sw);
+  const seen = connected ? neighbor(port) : {};
+  delete seen.cdp?.model; // the port status view's CDP block has no model
   return {
     portId: port.portId,
     enabled: true,
@@ -187,7 +211,7 @@ function portStatus(sw, port, t0, t1, now) {
     spanningTree: { statuses: connected ? ['Forwarding'] : [] },
     poe: { isAllocated: connected && load.wh > 0 },
     usageInKb: { total: Math.round(sent + recv), sent: Math.round(sent), recv: Math.round(recv) },
-    ...(connected ? neighbor(port) : {}),
+    ...seen,
     clientCount: load.clients,
     powerUsageInWh: round(load.wh, 1),
     trafficInKbps: { total: round(((sent + recv) * 8) / secs, 1), sent: round((sent * 8) / secs, 1), recv: round((recv * 8) / secs, 1) },
@@ -213,16 +237,23 @@ export function lldpCdp(dev, now) {
       chassisId: sw.mac,
       managementAddress: sw.lanIp,
       systemCapabilities: 'Switch',
+      ...switchVlans(sw, port),
     },
     deviceMac: sw.mac,
+    device: { url: deviceUrl(sw) },
   });
   if (dev.productType === 'switch') {
     for (const port of dev.ports) {
       if (!peerConnected(port, now)) continue;
       const n = neighbor(port);
       if (!n.lldp) continue;
-      ports[port.portId] = { lldp: { ...n.lldp, sourcePort: port.portId }, ...(n.cdp ? { cdp: { ...n.cdp, sourcePort: port.portId } } : {}) };
-      if (port.peer) ports[port.portId].deviceMac = port.peer.device.mac;
+      ports[port.portId] = { lldp: { ...n.lldp, sourcePort: port.portId } };
+      // This view's CDP block has the model where the port status view has a system name.
+      if (n.cdp) {
+        const { systemName, managementAddress, ...cdp } = n.cdp;
+        ports[port.portId].cdp = { ...cdp, sourcePort: port.portId };
+      }
+      if (port.peer) Object.assign(ports[port.portId], { deviceMac: port.peer.device.mac, device: { url: deviceUrl(port.peer.device) } });
     }
   } else if (dev.switchPort) {
     const n = describe(dev.switchPort.switch, dev.switchPort);
@@ -323,6 +354,8 @@ export default [
         const v = ctx.body[k];
         if (v != null && (v < 1 || v > 4094)) throw badRequest(`'${k}' must be a VLAN from 1 to 4094`);
       }
+      const speeds = linkSpeeds(dev, port);
+      if (ctx.body.linkNegotiation != null && !speeds.includes(ctx.body.linkNegotiation)) throw badRequest(`'linkNegotiation' must be one of: ${speeds.join(', ')}`);
       const { portId, ...patch } = ctx.body;
       port.config = merge(port.config || {}, patch);
       return portConfig(dev.net, dev, port);
@@ -332,7 +365,8 @@ export default [
     op: 'getOrganizationSwitchPortsBySwitch',
     path: '/organizations/{organizationId}/switch/ports/bySwitch',
     handler: (ctx) => {
-      const rows = orgSwitches(ctx).map((sw) => ({ ...switchHeader(sw), ports: sw.ports.map((p) => portConfig(sw.net, sw, p)) }));
+      const pick = (port) => Object.fromEntries(BY_SWITCH_FIELDS.filter((k) => k in port).map((k) => [k, port[k]]));
+      const rows = orgSwitches(ctx).map((sw) => ({ ...switchHeader(sw), ports: sw.ports.map((p) => pick(portConfig(sw.net, sw, p))) }));
       return paginate(ctx, rows, (r) => r.serial, { def: 50, max: 50 });
     },
   },

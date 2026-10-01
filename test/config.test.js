@@ -37,6 +37,8 @@ describe('appliance config', () => {
       assert.equal(vpn.mode, s.vpnMode);
       assert.deepEqual(s.exportedSubnets.map((x) => x.subnet), vpn.subnets.filter((x) => x.useVpn).map((x) => x.localSubnet));
       if (vpn.mode === 'spoke') assert.deepEqual(vpn.hubs.map((h) => h.hubId), [org.hub.id]);
+      // Spokes rank their hubs; the hub's own peer list has no priority.
+      for (const p of s.merakiVpnPeers) assert.equal(p.priority, vpn.mode === 'spoke' ? 1 : undefined);
     }
   });
 
@@ -90,12 +92,42 @@ describe('switching and topology', () => {
     assert.equal(configs.length, switches.length);
   });
 
+  test('ports list their link speeds, and the org-wide view keeps fewer fields', async () => {
+    const core = hq.switches[0];
+    const ports = (await sb.get(`/devices/${core.serial}/switch/ports`)).body;
+    for (const p of ports) {
+      assert.deepEqual([p.perpetualPoe, p.fastPoe, p.stpPortFastTrunk], [{ enabled: false }, { enabled: false }, false]);
+      assert.ok(p.linkNegotiationCapabilities.includes(p.linkNegotiation));
+    }
+    assert.ok(ports[0].linkNegotiationCapabilities.includes('5 Gigabit full duplex (auto)'), 'MS390-48UX access ports are multigigabit');
+    const byOrg = (await sb.get(`/organizations/${hq.org.id}/switch/ports/bySwitch?serials[]=${core.serial}`)).body[0].ports;
+    assert.equal(byOrg.length, ports.length);
+    assert.equal(byOrg[0].udld, undefined);
+    assert.deepEqual(byOrg[0].perpetualPoe, { enabled: false });
+  });
+
   test('an AP and its switch port see each other over LLDP', async () => {
     const ap = hq.aps[0];
+    const sw = ap.switchPort.switch;
     const mine = (await sb.get(`/devices/${ap.serial}/lldpCdp`)).body;
-    assert.equal(mine.ports.wired0.lldp.chassisId, ap.switchPort.switch.mac);
-    const theirs = (await sb.get(`/devices/${ap.switchPort.switch.serial}/lldpCdp`)).body;
+    assert.equal(mine.ports.wired0.lldp.chassisId, sw.mac);
+    assert.equal(mine.ports.wired0.lldp.managementVlan, 1);
+    assert.match(mine.ports.wired0.device.url, /\/manage\/nodes\/new_list\/\d+$/);
+    const theirs = (await sb.get(`/devices/${sw.serial}/lldpCdp`)).body;
     assert.equal(theirs.ports[ap.switchPort.portId].lldp.chassisId, ap.mac);
+    assert.equal(theirs.ports[ap.switchPort.portId].deviceMac, ap.mac);
+  });
+
+  test('desk phones answer over CDP, with a model only in the lldpCdp view', async () => {
+    const sw = hq.switches.find((s) => s.ports.some((p) => p.clients[0]?.kindName === 'deskPhone'));
+    const neighbors = Object.values((await sb.get(`/devices/${sw.serial}/lldpCdp`)).body.ports).filter((p) => p.cdp);
+    assert.ok(neighbors.length);
+    assert.equal(neighbors[0].cdp.model, 'CP-8845');
+    assert.equal(neighbors[0].cdp.systemName, undefined);
+    const statuses = (await sb.get(`/devices/${sw.serial}/switch/ports/statuses`)).body.filter((p) => p.cdp);
+    assert.equal(statuses.length, neighbors.length);
+    assert.equal(statuses[0].cdp.model, undefined);
+    assert.equal(statuses[0].lldp.managementAddress, statuses[0].cdp.address);
   });
 
   test('topology links only join known nodes and the MX is the root', async () => {
@@ -162,6 +194,26 @@ describe('wireless', () => {
     const fw = (await sb.get(`/networks/${hq.id}/wireless/ssids/${guest}/firewall/l3FirewallRules`)).body;
     assert.equal(fw.allowLanAccess, false);
     assert.equal((await sb.get(`/networks/${hq.id}/wireless/ssids/${guest}/splash/settings`)).body.splashPage, 'Click-through splash page');
+  });
+
+  test('each SSID carries the fields for its auth mode, IP assignment and splash page', async () => {
+    const ssids = (await sb.get(`/networks/${hq.id}/wireless/ssids`)).body;
+    const byKey = (key) => ssids[hq.ssids.find((s) => s.key === key).number];
+    const corp = byKey('corp');
+    assert.equal(corp.radiusEnabled, true);
+    assert.equal(corp.radiusServers[0].radsecEnabled, false);
+    assert.deepEqual(corp.dot11r, { enabled: false, adaptive: false });
+    assert.equal(corp.lanIsolationEnabled, false);
+    assert.equal(corp.dnsRewrite, undefined);
+    const iot = byKey('iot');
+    assert.ok(iot.psk.length >= 8);
+    assert.equal(iot.radiusEnabled, undefined);
+    const guest = byKey('guest');
+    assert.equal(guest.dot11w, undefined);
+    assert.deepEqual(guest.dnsRewrite, { enabled: false, dnsCustomNameservers: [] });
+    assert.equal(guest.adminSplashUrl, '');
+    assert.equal(guest.useVlanTagging, undefined);
+    assert.ok(ssids.every((s) => !('localAuth' in s)), 'localAuth is only for 8021x-nac');
   });
 });
 

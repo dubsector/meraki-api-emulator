@@ -105,7 +105,8 @@ The same seed and the same time always give the same answer. Freeze the clock wi
 - `PUT` is a partial update. Fields you leave out keep their values, nested objects merge, and lists replace.
 - Unknown and read-only fields are ignored, so you can `GET` an object, change it and `PUT` the whole thing back.
 - `POST` answers `201` with the new object, and `DELETE` answers `204`.
-- The checks that matter to real clients are there: VLAN subnets can't overlap and the appliance IP has to be inside the subnet, static routes need a next hop on a local subnet, names and admin emails have to be unique, a PSK SSID needs an 8 to 63 character key, and the default firewall rule always stays last.
+- The checks that matter to real clients are there: VLAN subnets can't overlap and the appliance IP has to be inside the subnet, static routes need a next hop on a local subnet, names and admin emails have to be unique, a PSK SSID needs an 8 to 63 character key, a switch port only takes link speeds it lists, and the default firewall rule always stays last.
+- An SSID only shows the fields for its current auth mode, IP assignment mode and splash page, the way the real API does. Switching from PSK to 802.1X drops `psk` and adds the RADIUS settings, and moving out of NAT mode drops `dnsRewrite`. RADIUS shared secrets are accepted but never sent back.
 - Related data follows along. New VLANs join the site-to-site VPN list, the VPN status endpoint reports what you export, renaming a device renames it in the event log, renaming an SSID renames it for its clients, and deleting a network returns its devices to inventory.
 - Every write shows up in `getOrganizationConfigurationChanges` the way the real change log records API calls: page `via API`, the method and path as the label, and the object before and after as JSON.
 
@@ -170,7 +171,7 @@ There is no real authentication, so only use `--host 0.0.0.0` on a network you t
 npm test
 ```
 
-After adding a route, give it the `op` name from the official spec and run `npm run docs` to update ENDPOINTS.md. A new `PUT` or `POST` route also needs its request schema: `npm run schemas` copies them from the spec into `src/schemas.json`. `npm run check-spec` downloads the [Meraki OpenAPI spec](https://github.com/meraki/openapi) and reports routes whose path or operation ID don't match it, plus response fields the spec's examples have that ours don't. Pass a path to use a local copy of `spec3.json` instead.
+After adding a route, give it the `op` name from the official spec and run `npm run docs` to update ENDPOINTS.md. A new `PUT` or `POST` route also needs its request schema: `npm run schemas` copies them from the spec into `src/schemas.json`. `npm run check-spec` downloads the [Meraki OpenAPI spec](https://github.com/meraki/openapi) and reports routes whose path or operation ID don't match it, plus response fields the spec's examples have that ours don't. Fields the real API only sends in situations the emulator doesn't have (cellular uplinks, templates, adaptive policy and so on) are listed in `CONDITIONAL` in the script and left out of the report; `-- --all` shows them too. Pass a path to use a local copy of `spec3.json` instead.
 
 ## License
 

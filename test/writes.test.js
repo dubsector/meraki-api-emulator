@@ -160,10 +160,41 @@ describe('writes', () => {
     assert.match((await sb.put(path, { authMode: 'psk', psk: 'short' })).body.errors[0], /psk/);
     const psk = await sb.put(path, { name: 'Acme-Staff', enabled: true, authMode: 'psk', psk: 'correct horse battery' });
     assert.equal(psk.body.encryptionMode, 'wpa');
+    assert.deepEqual(psk.body.dot11w, { enabled: false, required: false });
     const open = await sb.put(path, { authMode: 'open' });
     assert.equal(open.body.psk, undefined);
+    assert.equal(open.body.dot11w, undefined);
     const status = (await sb.get(`/devices/${hq.aps[0].serial}/wireless/status`)).body.basicServiceSets;
     assert.ok(status.some((b) => b.ssidName === 'Acme-Staff' && b.ssidNumber === 5));
+    // RADIUS modes get the RADIUS settings, and shared secrets are never sent back.
+    assert.match((await sb.put(path, { authMode: 'open-with-radius' })).body.errors[0], /radiusServers/);
+    const radius = await sb.put(path, { authMode: 'open-with-radius', radiusServers: [{ host: '192.0.2.10', port: 1812, secret: 'hunter22' }] });
+    assert.equal(radius.body.radiusServerTimeout, 1);
+    assert.equal(radius.body.radiusServers[0].secret, undefined);
+    assert.ok(radius.body.radiusServers[0].id);
+    assert.equal(radius.body.encryptionMode, undefined, 'open-with-radius has no encryption');
+    const bridged = await sb.put(path, { ipAssignmentMode: 'Bridge mode', useVlanTagging: true, defaultVlanId: 10 });
+    assert.equal(bridged.body.dnsRewrite, undefined);
+    assert.equal(bridged.body.lanIsolationEnabled, false);
+    assert.equal(bridged.body.defaultVlanId, 10);
+    const untagged = await sb.put(path, { useVlanTagging: false });
+    assert.equal(untagged.body.defaultVlanId, undefined);
+  });
+
+  test('SNMP v3 settings only show with SNMP users', async () => {
+    fresh();
+    const path = `/networks/${hq.id}/snmp`;
+    assert.deepEqual((await sb.get(path)).body.authentication, { protocol: 'SHA-1' });
+    assert.deepEqual((await sb.put(path, { privacy: { protocol: 'DES' } })).body.privacy, { protocol: 'DES' });
+    assert.deepEqual((await sb.put(path, { access: 'community', communityString: 'example' })).body, { access: 'community', communityString: 'example' });
+  });
+
+  test('a switch port only takes speeds it supports', async () => {
+    fresh();
+    const path = `/devices/${hq.switches[1].serial}/switch/ports/5`;
+    const r = await sb.put(path, { linkNegotiation: '100 Megabit full duplex (forced)' });
+    assert.equal(r.body.linkNegotiation, '100 Megabit full duplex (forced)');
+    assert.match((await sb.put(path, { linkNegotiation: '10 Gigabit full duplex (forced)' })).body.errors[0], /linkNegotiation/);
   });
 
   test('a disabled switch port reports Disabled', async () => {
@@ -202,6 +233,10 @@ describe('writes', () => {
     const logged = (await sb.get(`/organizations/${org.id}/apiRequests?method=PUT`)).body[0];
     assert.equal(logged.operationId, 'updateNetworkWirelessSsid');
     assert.equal(logged.responseCode, 200);
+    // Changes outside an SSID still carry the SSID fields, as null.
+    await sb.put(`/networks/${hq.id}/settings`, { localStatusPageEnabled: false });
+    const [latest] = (await sb.get(`/organizations/${org.id}/configurationChanges?timespan=3600`)).body;
+    assert.deepEqual([latest.ssidName, latest.ssidNumber], [null, null]);
   });
 
   test('admins can be added, changed and removed, but not the API admin', async () => {

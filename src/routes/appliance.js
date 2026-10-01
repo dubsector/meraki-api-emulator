@@ -231,6 +231,8 @@ function updateSiteToSite(ctx) {
     else s2s.subnets.push({ useVpn: false, ...s });
   }
   Object.assign(s2s, { mode, hubs: hubs.map((h) => ({ hubId: h.hubId, useDefaultRoute: h.useDefaultRoute ?? false })) });
+  if (b.subnet) merge(s2s.subnet, b.subnet);
+  if (b.sgt) merge(s2s.sgt, b.sgt);
   return s2s;
 }
 

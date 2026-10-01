@@ -1,4 +1,4 @@
-import { clientJson, deviceJson, networkJson } from '../format.js';
+import { clientJson, deviceJson, networkJson, nodeId, recentDevice } from '../format.js';
 import { validTimeZone } from '../validate.js';
 import { removeNetwork } from '../world.js';
 import { arrayParam, badRequest, intParam, linkHeader, notFound, paginate, perPageParam, resolutionParam, timeWindow } from '../http.js';
@@ -318,7 +318,7 @@ export default [
       if (!c) throw notFound('Client');
       const p = presenceIn(c, ctx.now - 31 * DAY, ctx.now);
       const { usage, adaptivePolicyGroup, ...row } = clientJson(c, { usage: { sent: 0, recv: 0 }, last: p ? p.last : c.firstSeen, online: isOnline(c, ctx.now) });
-      return { ...row, model: c.prediction, clientVpnConnections: null, lldp: null, cdp: null };
+      return { ...row, recentDeviceId: String(nodeId(recentDevice(c))), model: c.prediction, clientVpnConnections: null, lldp: null, cdp: null };
     },
   },
   {

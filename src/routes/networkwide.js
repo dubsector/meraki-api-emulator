@@ -1,7 +1,7 @@
 // Network-wide settings: status page, syslog, SNMP, alerts, webhooks, group
 // policies, firmware, floor plans and the link layer topology.
 
-import { configOf } from '../config.js';
+import { SNMP_V3, configOf } from '../config.js';
 import { badRequest, notFound } from '../http.js';
 import { hashStr } from '../rng.js';
 import { deviceStatus, lastReportedAt } from '../sim/outages.js';
@@ -177,7 +177,7 @@ function syslogServers(ctx) {
 // Only the fields for the chosen access mode are kept.
 function snmp(ctx) {
   const c = configOf(netOf(ctx));
-  const { access = c.snmp.access, communityString, users } = ctx.body;
+  const { access = c.snmp.access, communityString, users, authentication, privacy } = ctx.body;
   if (access === 'community') {
     const community = communityString ?? c.snmp.communityString;
     if (!community) throw badRequest("'communityString' is required when access is community");
@@ -185,7 +185,12 @@ function snmp(ctx) {
   } else if (access === 'users') {
     const list = users ?? c.snmp.users;
     if (!list?.length) throw badRequest("'users' is required when access is users");
-    c.snmp = { access, users: list };
+    c.snmp = {
+      access,
+      users: list,
+      authentication: { ...SNMP_V3.authentication, ...c.snmp.authentication, ...authentication },
+      privacy: { ...SNMP_V3.privacy, ...c.snmp.privacy, ...privacy },
+    };
   } else {
     c.snmp = { access: 'none' };
   }
