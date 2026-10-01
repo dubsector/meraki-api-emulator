@@ -288,6 +288,28 @@ def writes():
         s = d.organizations.bulkUpdateOrganizationDevicesDetails(org, [sw["serial"]], [{"name": "username", "value": "admin"}])
         check("bulkUpdateOrganizationDevicesDetails", s == {"serials": [sw["serial"]]}, s)
 
+        # Assurance alerts: dismiss and restore answer 204, profiles are kept per organization.
+        active = d.organizations.getOrganizationAssuranceAlerts(org, total_pages="all")
+        first = active[0]["id"]
+        check("dismissOrganizationAssuranceAlerts returns nothing", d.organizations.dismissOrganizationAssuranceAlerts(org, [first]) is None)
+        gone = d.organizations.getOrganizationAssuranceAlerts(org, total_pages="all", active=False, dismissed=True)
+        check("a dismissed alert lists with dismissed=True", ids(gone) == [first] and gone[0]["dismissedAt"], gone)
+        check("restoreOrganizationAssuranceAlerts", d.organizations.restoreOrganizationAssuranceAlerts(org, [first]) is None and d.organizations.getOrganizationAssuranceAlert(org, first)["dismissedAt"] is None)
+        by_net = d.organizations.getOrganizationAssuranceAlertsOverviewByNetwork(org)
+        by_type = d.organizations.getOrganizationAssuranceAlertsOverviewByType(org, includeNetworks=True)
+        check("alert overviews by network and by type add up", sum(n["alertCount"] for n in by_net["items"]) == sum(t["count"] for t in by_type["items"]) == len(active), (by_net, by_type))
+        t0 = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(days=3)
+        fmt = "%Y-%m-%dT%H:%M:%SZ"
+        hist = d.organizations.getOrganizationAssuranceAlertsOverviewHistorical(org, 86400, t0.strftime(fmt), tsEnd=(t0 + timedelta(days=3)).strftime(fmt))
+        check("getOrganizationAssuranceAlertsOverviewHistorical", hist["meta"]["counts"]["items"] == 3 and all("totals" in x for x in hist["items"]), hist)
+        hook = d.networks.createNetworkWebhooksHttpServer(site, "SDK hook", "https://hooks.example.com/sdk")
+        dest = {"email": {"enabled": True, "recipients": ["noc@example.com"]}, "webhook": {"enabled": True, "recipients": [hook["id"]]}}
+        prof = d.organizations.createOrganizationAssuranceAlertsProfile(org, "SDK profile", [site], ["unreachable", "vlan_mismatch"], {"alertDestinations": dest})
+        check("createOrganizationAssuranceAlertsProfile", prof["configuration"]["alertDestinations"]["webhook"]["recipients"][0]["url"] == "https://hooks.example.com/sdk", prof)
+        prof = d.organizations.updateOrganizationAssuranceAlertsProfile(org, prof["profileId"], "SDK profile 2", [site], ["unreachable"], {"enabled": False})
+        check("updateOrganizationAssuranceAlertsProfile", d.organizations.getOrganizationAssuranceAlertsProfiles(org)["items"] == [prof], prof)
+        check("deleteOrganizationAssuranceAlertsProfile", d.organizations.deleteOrganizationAssuranceAlertsProfile(org, prof["profileId"]) is None and d.organizations.getOrganizationAssuranceAlertsProfiles(org)["items"] == [])
+
         changes = d.organizations.getOrganizationConfigurationChanges(org, total_pages="all", perPage=10, timespan=3600)
         check("writes show up in configurationChanges", sum(1 for c in changes if c.get("page") == "via API") >= 6, len(changes))
 

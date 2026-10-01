@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Writes src/schemas.json: the request body schema of every write route, taken
-// from the official OpenAPI spec and trimmed to what validation needs.
+// from the official OpenAPI spec and trimmed to what validation needs, plus the
+// assurance alert types that alert profiles accept.
 //
 // node scripts/schemas.js [path/to/spec3.json]   (downloads the spec if no path)
 
@@ -32,5 +33,9 @@ for (const r of ROUTES) {
   const schema = op.requestBody?.content?.['application/json']?.schema;
   if (schema) schemas[r.op] = trim(schema);
 }
-writeFileSync(new URL('../src/schemas.json', import.meta.url), JSON.stringify({ version: spec.info.version, schemas }) + '\n');
-console.log(`${Object.keys(schemas).length} request schemas from spec ${spec.info.version}`);
+// The profile body takes any string, so use the list the alert filters enumerate.
+const typesParam = spec.paths['/organizations/{organizationId}/assurance/alerts']?.get.parameters.find((p) => p.name === 'types');
+const alertTypes = typesParam?.schema.items.enum;
+if (!alertTypes?.length) throw new Error(`No assurance alert types in spec ${spec.info.version}`);
+writeFileSync(new URL('../src/schemas.json', import.meta.url), JSON.stringify({ version: spec.info.version, schemas, alertTypes }) + '\n');
+console.log(`${Object.keys(schemas).length} request schemas and ${alertTypes.length} alert types from spec ${spec.info.version}`);
