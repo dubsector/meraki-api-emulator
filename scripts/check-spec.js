@@ -48,7 +48,7 @@ const CONDITIONAL = [
   [/\.securePort\.configOverrides\./, 'getDeviceSwitchPortsStatuses', 'an active Secure Port'],
   [/\.(wlanIdentifier|enterpriseAdminAccess|radiusCalledStationId|radiusAuthenticationNasId|gre|campusGateway|localAuthFallback|namedVlans|wifiPersonalNetworkEnabled|security)$/, /WirelessSsids?$/, 'Meraki admins, enterprise admins, EoGRE, campus gateways, named VLANs or WPA3'],
   [/\.(localAuth|psk|radiusAccountingServers|walledGardenRanges|oauth|adminSplashUrl|splashTimeout|walledGardenEnabled|adultContentFilteringEnabled|dnsRewrite)$/, /WirelessSsids?$/, 'other auth, splash or IP assignment modes'],
-  [/^\.ports\.\w+\.(deviceMac|device|lldp\.managementVlan|lldp\.portVlan)$/, 'getDeviceLldpCdp', 'Meraki or switch neighbors (the sample port has a phone)'],
+  [/^\.policiesBySsid$/, 'getNetworkClientPolicy', 'per-SSID policies (the sample has a group policy)'],
   [/^\.products\.(cellularGateway|sensor|wirelessController|campusGateway|secureConnect)$|\.nextUpgrade\.(toVersion\.|strategy|predownload)/, 'getNetworkFirmwareUpgrades', 'other products, or a scheduled upgrade'],
 ];
 
@@ -78,6 +78,14 @@ function compare(ours, example, schema, at, out) {
   }
   if (!ours || typeof ours !== 'object' || !example || typeof example !== 'object' || Array.isArray(example)) return;
   const props = schema?.properties || {};
+  // Maps keyed by number (SSIDs, ports) hold the same shape under every key,
+  // so all our entries are checked against the example's first one.
+  const numbered = (o) => Object.keys(o).length > 0 && Object.keys(o).every((k) => /^\d+$/.test(k));
+  if (numbered(ours) && numbered(example)) {
+    const k = Object.keys(example)[0];
+    compare(mergeItems(Object.values(ours)), example[k], props[k], `${at}.${k}`, out);
+    return;
+  }
   const free = schema?.additionalProperties;
   for (const k of Object.keys(example)) if (!(k in ours) && !free) out.missing.push(`${at}.${k}`);
   for (const k of Object.keys(ours)) {

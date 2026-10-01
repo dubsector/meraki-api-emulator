@@ -2,13 +2,13 @@ import { clientJson, deviceJson, networkJson, nodeId, recentDevice } from '../fo
 import { validTimeZone } from '../validate.js';
 import { removeNetwork } from '../world.js';
 import { arrayParam, badRequest, intParam, linkHeader, notFound, paginate, perPageParam, resolutionParam, timeWindow } from '../http.js';
-import { networkEventsOnDay, securityEventsOnDay } from '../sim/events.js';
+import { EVENT_TYPES, networkEventsOnDay, securityEventsOnDay } from '../sim/events.js';
 import { eachSession, isOnline, presenceIn } from '../sim/presence.js';
 import { trafficRows, uplinkBytes } from '../sim/traffic.js';
 import { SLOT, WD_RECV, WD_SENT, WL_RECV, WL_SENT, buckets, clientUsage, eachSlot, networkTotals } from '../sim/usage.js';
 import { connectionStats, latencyStats } from '../sim/wireless.js';
 import { DAY, iso, isoMicro, isoUs, parseUs } from '../time.js';
-import { byId, bySerial, netOf, requireProduct, round } from './common.js';
+import { byId, bySerial, findClient, netOf, requireProduct, round } from './common.js';
 
 const US = 1e6;
 const DAY_US = DAY * US;
@@ -42,11 +42,6 @@ function clientFilter(q) {
     has(row.description, description) &&
     has(row.namedVlan, namedVlan) &&
     (!vlan || row.vlan === vlan);
-}
-
-function findClient(net, id) {
-  const lower = id.toLowerCase();
-  return net.clients.find((c) => c.id === id || c.mac === lower || c.ip === id);
 }
 
 // ── Events ──
@@ -326,6 +321,14 @@ export default [
     path: '/networks/{networkId}/events',
     sample: { query: 'productType=wireless&perPage=20' },
     handler: networkEvents,
+  },
+  {
+    op: 'getNetworkEventsEventTypes',
+    path: '/networks/{networkId}/events/eventTypes',
+    handler: (ctx) => {
+      const net = netOf(ctx);
+      return EVENT_TYPES.filter(([product]) => net.productTypes.includes(product)).map(([, category, type, description]) => ({ category, type, description }));
+    },
   },
   {
     op: 'getNetworkTraffic',

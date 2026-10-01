@@ -204,3 +204,53 @@ export const CF_BLOCKS = [
   { category: 'Malware sites', url: 'http://malicious.example.org/payload' },
   { category: 'Hacking', url: 'http://tools.example.net/crack' },
 ];
+
+// Content filtering categories, in the Talos style the MX uses. The position
+// in the list is the C number; the four the seeded config blocks sit at C9,
+// C26, C31 and C35 with the names the cf_block events report.
+const CF_NAMES = [
+  'Adult', 'Advertisements', 'Alcohol', 'Arts', 'Auctions', 'Business and Industry', 'Chat and Instant Messaging', 'Computer Security', 'Peer to peer', 'Computers and Internet',
+  'Dating', 'Education', 'Entertainment', 'File Transfer Services', 'Filter Avoidance', 'Finance', 'Freeware and Shareware', 'Gambling', 'Generative AI', 'Government and Law',
+  'Hate Speech', 'Health and Medicine', 'Illegal Activities', 'Illegal Drugs', 'Job Search', 'Games', 'News', 'Online Storage and Backup', 'Personal VPN', 'Phishing',
+  'Malware sites', 'Pornography', 'Real Estate', 'Search Engines and Portals', 'Hacking', 'Shopping', 'Social Networking', 'Software Updates', 'Sports and Recreation', 'Streaming Audio',
+  'Streaming Video', 'Travel', 'Weapons', 'Web-based Email',
+];
+export const CF_CATEGORIES = CF_NAMES.map((name, i) => ({ id: `meraki:contentFiltering/category/C${i + 1}`, name }));
+
+// Layer 7 firewall categories as [id, name, [[appId, appName], ...]]. Category
+// IDs 7, 8, 13, 16, 20 and 24 and apps 4 and 5 match the real API; the other
+// IDs are stand-ins. The apps include everything traffic analysis reports by name.
+const L7 = [
+  [1, 'Email', [[4, 'Gmail'], [10, 'Outlook.com'], [11, 'Yahoo Mail']]],
+  [2, 'Blogging', [[12, 'Blogger'], [13, 'Tumblr'], [14, 'WordPress']]],
+  [3, 'Business management', [[15, 'Salesforce'], [16, 'Concur'], [17, 'Workday']]],
+  [4, 'Databases & cloud services', [[18, 'Amazon AWS'], [19, 'Microsoft Azure'], [20, 'Google Cloud']]],
+  [5, 'File sharing', [[21, 'Dropbox'], [22, 'Box'], [23, 'Google Drive']]],
+  [6, 'Health care', [[24, 'MyChart'], [25, 'Practice Fusion']]],
+  [7, 'Online backup', [[26, 'iCloud'], [27, 'Carbonite'], [28, 'Backblaze']]],
+  [8, 'Peer-to-peer (P2P)', [[29, 'BitTorrent'], [30, 'eDonkey'], [31, 'Gnutella']]],
+  [9, 'News', [[32, 'CNN'], [33, 'BBC'], [34, 'The New York Times']]],
+  [10, 'Productivity', [[35, 'Microsoft 365'], [36, 'Slack'], [37, 'Google Docs']]],
+  [11, 'Security', [[38, 'Okta'], [39, 'Duo Security']]],
+  [12, 'Social web & photo sharing', [[40, 'Facebook'], [41, 'Instagram'], [42, 'LinkedIn'], [43, 'X (Twitter)']]],
+  [13, 'Video & music', [[44, 'YouTube'], [45, 'Netflix'], [46, 'Spotify'], [47, 'Hulu']]],
+  [14, 'Software & anti-virus updates', [[48, 'Windows Update'], [49, 'Apple Software Update']]],
+  [15, 'Sports', [[50, 'ESPN'], [51, 'MLB.com']]],
+  [16, 'VoIP & video conferencing', [[52, 'Zoom'], [53, 'Webex'], [54, 'Microsoft Teams'], [55, 'Skype']]],
+  [17, 'Web file sharing', [[56, 'WeTransfer'], [57, 'MediaFire']]],
+  [18, 'Gaming', [[58, 'Steam'], [59, 'Xbox Live'], [60, 'PlayStation Network']]],
+  [19, 'Web payments', [[61, 'PayPal'], [62, 'Venmo']]],
+  [20, 'Remote monitoring & management', [[63, 'TeamViewer'], [64, 'LogMeIn'], [65, 'AnyDesk']]],
+  [24, 'Advertising', [[5, 'Advertising.com'], [66, 'DoubleClick']]],
+];
+export const L7_CATEGORIES = L7.map(([id, name, apps]) => ({
+  id: `meraki:layer7/category/${id}`,
+  name,
+  applications: apps.map(([appId, appName]) => ({ id: `meraki:layer7/application/${appId}`, name: appName })),
+}));
+
+// A category as firewall rules reference it.
+export function l7Category(name) {
+  const { id } = L7_CATEGORIES.find((c) => c.name === name);
+  return { id, name };
+}

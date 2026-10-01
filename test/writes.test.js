@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { after, afterEach, before, describe, test } from 'node:test';
 import { ROUTES } from '../src/server.js';
 import { schemaOf } from '../src/validate.js';
-import { start } from './helpers.js';
+import { NOW, start } from './helpers.js';
 
 describe('writes', () => {
   let sb;
@@ -282,6 +282,89 @@ describe('writes', () => {
     fresh();
     assert.equal((await sb.get(`/networks/${hq.id}`)).body.name, 'HQ - San Francisco');
     assert.equal((await sb.get(`/organizations/${org.id}/networks`)).body.length, 5);
+  });
+
+  test('guests start on the Guest group policy and a PUT changes a client policy', async () => {
+    fresh();
+    const guest = hq.clients.find((c) => c.kindName === 'guest');
+    const laptop = hq.clients.find((c) => c.kindName === 'laptop');
+    const path = (c) => `/networks/${hq.id}/clients/${c}/policy`;
+    assert.deepEqual((await sb.get(path(guest.id))).body, { mac: guest.mac, devicePolicy: 'Group policy', groupPolicyId: '101' });
+    assert.deepEqual((await sb.get(path(laptop.mac))).body, { mac: laptop.mac, devicePolicy: 'Normal' });
+    const put = await sb.put(path(laptop.id), { devicePolicy: 'Blocked' });
+    assert.deepEqual(put.body, { mac: laptop.mac, devicePolicy: 'Blocked' });
+    assert.deepEqual((await sb.get(path(laptop.ip))).body, put.body);
+    assert.equal((await sb.put(path(laptop.id), { devicePolicy: 'Group policy' })).status, 400);
+    assert.equal((await sb.put(path(laptop.id), { devicePolicy: 'Group policy', groupPolicyId: '999' })).status, 400);
+    assert.equal((await sb.put(path(laptop.id), { devicePolicy: 'Sometimes' })).status, 400);
+    assert.equal((await sb.put(path(guest.id), { devicePolicy: 'Normal' })).body.groupPolicyId, undefined);
+    // Without the Guest policy, guests fall back to Normal.
+    await sb.del(`/networks/${hq.id}/groupPolicies/101`);
+    const other = hq.clients.filter((c) => c.kindName === 'guest')[1];
+    assert.equal((await sb.get(path(other.id))).body.devicePolicy, 'Normal');
+  });
+
+  test('provisioning gives new MACs a client key and sets the policy', async () => {
+    fresh();
+    const known = hq.clients[0];
+    const path = `/networks/${hq.id}/clients/provision`;
+    const r = await sb.post(path, { clients: [{ mac: '02:00:5E:10:00:01', name: 'Kiosk' }, { mac: known.mac }], devicePolicy: 'Group policy', groupPolicyId: '101' });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.groupPolicyId, '101');
+    const [added, existing] = r.body.clients;
+    assert.match(added.clientId, /^k[0-9a-f]{6}$/);
+    assert.deepEqual([added.mac, added.name], ['02:00:5e:10:00:01', 'Kiosk']);
+    assert.deepEqual([existing.clientId, existing.name], [known.id, known.description]);
+    assert.equal((await sb.get(`/networks/${hq.id}/clients/${added.clientId}/policy`)).body.groupPolicyId, '101');
+    assert.equal((await sb.get(`/networks/${hq.id}/clients/${known.id}/policy`)).body.devicePolicy, 'Group policy');
+    // Provisioning the same MAC again keeps its key.
+    const again = await sb.post(path, { clients: [{ mac: '02:00:5e:10:00:01' }], devicePolicy: 'Blocked' });
+    assert.equal(again.body.clients[0].clientId, added.clientId);
+    assert.ok(again.body.clients[0].message);
+    const perSsid = await sb.post(path, { clients: [{ mac: '02:00:5e:10:00:01' }], devicePolicy: 'Per connection', policiesBySsid: { 1: { devicePolicy: 'Blocked' } } });
+    assert.equal(perSsid.status, 201);
+    assert.deepEqual((await sb.get(`/networks/${hq.id}/clients/${added.clientId}/policy`)).body, {
+      mac: '02:00:5e:10:00:01',
+      devicePolicy: 'Different policies by SSID',
+      policiesBySsid: [{ ssidNumber: 1, devicePolicy: 'Blocked' }],
+    });
+    assert.equal((await sb.post(path, { clients: [{ mac: 'not-a-mac' }], devicePolicy: 'Normal' })).status, 400);
+    assert.equal((await sb.post(path, { clients: [], devicePolicy: 'Normal' })).status, 400);
+    assert.equal((await sb.post(path, { clients: [{ mac: '02:00:5e:10:00:02' }], devicePolicy: 'Group policy' })).status, 400);
+    assert.equal((await sb.get(`/networks/${hq.id}/clients/k000000/policy`)).status, 404);
+  });
+
+  test('splash authorization follows sign-ons and API changes', async () => {
+    fresh();
+    const now = Date.parse(NOW) / 1000;
+    const path = (c) => `/networks/${hq.id}/clients/${c.id}/splashAuthorizationStatus`;
+    let guest;
+    let status;
+    for (const c of hq.clients.filter((x) => x.kindName === 'guest')) {
+      status = (await sb.get(path(c))).body.ssids[c.ssid.number];
+      if (status?.isAuthorized) {
+        guest = c;
+        break;
+      }
+    }
+    assert.ok(guest, 'some guest signed on in the last day');
+    const n = guest.ssid.number;
+    assert.equal(Date.parse(status.expiresAt) - Date.parse(status.authorizedAt), 1440 * 60 * 1000);
+    // The sign-on is the client's latest splash_auth event.
+    const events = (await sb.get(`/networks/${hq.id}/events?productType=wireless&includedEventTypes[]=splash_auth&clientMac=${guest.mac}&perPage=3`)).body.events;
+    assert.equal(events[0].occurredAt.slice(0, 19), status.authorizedAt.slice(0, 19));
+
+    const off = await sb.put(path(guest), { ssids: { [n]: { isAuthorized: false } } });
+    assert.deepEqual(off.body.ssids[n], { isAuthorized: false, authorizedAt: null, expiresAt: null });
+    const on = await sb.put(path(guest), { ssids: { [n]: { isAuthorized: true } } });
+    assert.equal(Date.parse(on.body.ssids[n].authorizedAt) / 1000, Math.floor(now));
+    assert.deepEqual((await sb.get(path(guest))).body, on.body);
+    assert.equal((await sb.put(path(guest), { ssids: { 0: { isAuthorized: true } } })).status, 400);
+    const laptop = hq.clients.find((c) => c.kindName === 'laptop' && !c.wired);
+    assert.deepEqual((await sb.get(path(laptop))).body, { ssids: {} });
+    // Turning the splash page off hides the SSID.
+    await sb.put(`/networks/${hq.id}/wireless/ssids/${n}`, { splashPage: 'None' });
+    assert.deepEqual((await sb.get(path(guest))).body, { ssids: {} });
   });
 });
 

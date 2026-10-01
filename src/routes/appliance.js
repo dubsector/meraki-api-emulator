@@ -1,7 +1,8 @@
 // MX security appliance configuration: LAN ports, VLANs, firewall, NAT, VPN
 // and threat protection, plus the device-level uplink and DHCP views.
 
-import { BLOCKED_CATEGORIES, DEFAULT_RULE, configOf, uuid } from '../config.js';
+import { CF_CATEGORIES, L7_CATEGORIES } from '../catalog.js';
+import { DEFAULT_RULE, configOf, uuid } from '../config.js';
 import { badRequest, notFound } from '../http.js';
 import { derive, hashStr, unit } from '../rng.js';
 import { isDown } from '../sim/outages.js';
@@ -238,7 +239,8 @@ function updateSiteToSite(ctx) {
 
 // PUT takes category IDs; GET shows each with its name.
 function categoryOf(id) {
-  return BLOCKED_CATEGORIES.find((c) => c.id === id) ?? { id, name: `Category ${id.split('/').pop()}` };
+  const known = CF_CATEGORIES.find((c) => c.id === id);
+  return known ? { ...known } : { id, name: `Category ${id.split('/').pop()}` };
 }
 
 // ── Device level ──
@@ -371,6 +373,14 @@ export default [
       return { rules: c.l7Rules };
     },
   },
+  {
+    op: 'getNetworkApplianceFirewallL7FirewallRulesApplicationCategories',
+    path: '/networks/{networkId}/appliance/firewall/l7FirewallRules/applicationCategories',
+    handler: (ctx) => {
+      mxConfig(ctx);
+      return { applicationCategories: structuredClone(L7_CATEGORIES) };
+    },
+  },
   { op: 'getNetworkApplianceFirewallInboundFirewallRules', path: '/networks/{networkId}/appliance/firewall/inboundFirewallRules', handler: (ctx) => inboundJson(mxConfig(ctx)) },
   {
     op: 'updateNetworkApplianceFirewallInboundFirewallRules',
@@ -482,6 +492,14 @@ export default [
       merge(cf, rest);
       if (blockedUrlCategories) cf.blockedUrlCategories = blockedUrlCategories.map(categoryOf);
       return cf;
+    },
+  },
+  {
+    op: 'getNetworkApplianceContentFilteringCategories',
+    path: '/networks/{networkId}/appliance/contentFiltering/categories',
+    handler: (ctx) => {
+      mxConfig(ctx);
+      return { categories: structuredClone(CF_CATEGORIES) };
     },
   },
   ...settings('SecurityIntrusion', 'security/intrusion', (c) => c.intrusion),

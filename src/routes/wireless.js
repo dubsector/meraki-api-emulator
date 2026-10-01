@@ -1,6 +1,7 @@
 // Wireless settings, RF profiles, SSID firewall and splash pages, radio status,
 // channel utilization, signal quality and failed connections.
 
+import { l7Category } from '../catalog.js';
 import { configOf, shapeSsid, stored } from '../config.js';
 import { arrayParam, badRequest, intParam, notFound, paginate, resolutionParam, timeWindow } from '../http.js';
 import { hashStr } from '../rng.js';
@@ -128,7 +129,7 @@ function ssidL3Json(set) {
 function ssidL7(net, number) {
   const all = stored(net, 'ssidL7', () => ({}));
   const guest = net.ssids.find((s) => s.number === number)?.key === 'guest';
-  return (all[number] ??= { rules: guest ? [{ policy: 'deny', type: 'applicationCategory', value: { id: 'meraki:layer7/category/2', name: 'Peer-to-peer (P2P)' } }] : [] });
+  return (all[number] ??= { rules: guest ? [{ policy: 'deny', type: 'applicationCategory', value: l7Category('Peer-to-peer (P2P)') }] : [] });
 }
 
 function splashSettings(net, number) {
