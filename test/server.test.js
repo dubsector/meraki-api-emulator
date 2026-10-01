@@ -1,21 +1,25 @@
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import { after, before, describe, test } from 'node:test';
-import { AUTH_ERROR, apiKeyOf } from '../src/server.js';
+import { AUTH_ERROR, CONNECT_HINT, SDK_HINT, apiKeyOf } from '../src/server.js';
 import { NOW, collect, relLink, sampleUrls, start } from './helpers.js';
 
-// Sends a path exactly as given; fetch would normalize or reject it first.
-function rawGet(base, path) {
+// Sends a request target exactly as given; fetch would normalize or reject it first.
+function raw(base, path, headers = {}) {
   const { hostname, port } = new URL(base);
   return new Promise((resolve, reject) => {
-    const req = request({ hostname, port, path, headers: { 'X-Cisco-Meraki-API-Key': 'k' } }, (res) => {
-      res.resume();
-      res.on('end', () => resolve(res.statusCode));
+    const req = request({ hostname, port, path, headers: { 'X-Cisco-Meraki-API-Key': 'k', ...headers } }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => (body += c));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
     });
     req.on('error', reject);
     req.end();
   });
 }
+
+const rawGet = async (base, path) => (await raw(base, path)).status;
 
 describe('server', () => {
   let sb;
@@ -65,6 +69,37 @@ describe('server', () => {
     assert.equal(await rawGet(sb.base, '/api/v1/organizations/%ZZ'), 400);
     assert.equal(await rawGet(sb.base, '/api/v1/networks/%E0%A4%A/clients'), 400);
     assert.equal(await rawGet(sb.base, '//['), 400);
+  });
+
+  // The Python SDK setup from the README: base_url on a meraki.com name and
+  // the emulator as its HTTP proxy, so Link URLs stay on that name.
+  test('proxied requests page with links on the requested host', async () => {
+    const org = sb.world.orgs[0];
+    const r = await raw(sb.base, `http://emulator.meraki.com/api/v1/organizations/${org.id}/devices?perPage=5`, { Host: 'emulator.meraki.com' });
+    assert.equal(r.status, 200);
+    assert.match(relLink(r.headers.link, 'next'), /^http:\/\/emulator\.meraki\.com\/api\/v1\/organizations\/\d+\/devices\?/);
+  });
+
+  test('a Link URL glued onto the base URL gets a 404 that explains the SDK setup', async () => {
+    const r = await raw(sb.base, '/api/v1http://127.0.0.1:8765/api/v1/organizations?perPage=3&startingAfter=1');
+    assert.equal(r.status, 404);
+    assert.deepEqual(JSON.parse(r.body), { errors: [SDK_HINT] });
+    assert.equal(await rawGet(sb.base, '/api/v1nope'), 404);
+  });
+
+  test('CONNECT gets a 501 asking for an http:// base URL', async () => {
+    const { hostname, port } = new URL(sb.base);
+    const res = await new Promise((resolve, reject) => {
+      const req = request({ hostname, port, method: 'CONNECT', path: 'emulator.meraki.com:443' });
+      req.on('connect', (res, socket) => {
+        socket.destroy();
+        resolve(res);
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(res.statusCode, 501);
+    assert.equal(res.statusMessage, CONNECT_HINT);
   });
 
   test('HEAD sends headers only and OPTIONS answers the CORS preflight', async () => {

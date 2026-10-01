@@ -25,6 +25,12 @@ export const AUTH_ERROR = 'No valid authentication method found';
 export const RESET_PATH = '/_emulator/reset';
 const MAX_BODY = 1024 * 1024;
 
+// The Meraki Python SDK only follows Link URLs on meraki.com hosts and glues
+// any other one onto its base URL. Both hints point at the README's setup.
+const GLUED_URL = new RegExp(`^${API_PREFIX}https?://`, 'i');
+export const SDK_HINT = 'This path has a full URL appended to the base URL. The Meraki Python SDK sends that when paging from a host outside meraki.com: use base_url="http://emulator.meraki.com/api/v1" with requests_proxy set to the emulator (see the README)';
+export const CONNECT_HINT = 'The emulator speaks plain HTTP, use an http:// base URL';
+
 export const ROUTES = [...organizations, ...admin, ...alerts, ...networks, ...networkwide, ...appliance, ...switches, ...wireless, ...devices].map((r) => ({ method: 'GET', ...r }));
 
 // One entry per path template, holding a route per method.
@@ -250,6 +256,8 @@ export function createEmulator(options = {}) {
       }
     } else if (url.pathname === API_PREFIX || url.pathname.startsWith(API_PREFIX + '/')) {
       status = await api(req, res, url);
+    } else if (GLUED_URL.test(url.pathname)) {
+      status = send(res, 404, { errors: [SDK_HINT] });
     } else {
       status = send(res, 404, { errors: ['Not found'] });
     }
@@ -261,6 +269,13 @@ export function createEmulator(options = {}) {
       console.error(e);
       if (!res.headersSent) send(res, 500, { errors: ['Internal server error'] });
     });
+  });
+  // An https:// base URL through the emulator as a proxy arrives as CONNECT.
+  // httpx puts the reason phrase in its error message.
+  server.on('connect', (req, socket) => {
+    socket.on('error', () => {});
+    socket.end(`HTTP/1.1 501 ${CONNECT_HINT}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+    opts.log?.(`CONNECT ${req.url} 501`);
   });
   return {
     server,
