@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
+import { Rand, hashStr } from '../src/rng.js';
 import { networkEventsOnDay } from '../src/sim/events.js';
 import { statusChanges } from '../src/sim/outages.js';
-import { DAY } from '../src/time.js';
+import { clientUsage, eachSlot } from '../src/sim/usage.js';
+import { DAY, HOUR } from '../src/time.js';
 import { buildWorld } from '../src/world.js';
 import { NOW, collect, relLink, start } from './helpers.js';
 
@@ -63,6 +65,51 @@ describe('dormant device', () => {
     const day = b.cam.dormantSince / DAY;
     assert.equal(a.portEvents(day).length, 0);
     assert.equal(b.portEvents(day).length, 1);
+  });
+});
+
+describe('client usage', () => {
+  const world = buildWorld({ seed: 1, bootTime: BOOT });
+  const total = (u) => u.sent + u.recv;
+
+  test('cached totals match a walk over every slot, in any order', () => {
+    // One client of each kind, so every schedule and time zone is covered.
+    const kinds = new Map();
+    for (const c of world.clients) if (!kinds.has(c.kindName)) kinds.set(c.kindName, c);
+    const r = new Rand(hashStr('usage windows'));
+    const from = Date.parse('2026-02-15T00:00:00Z') / 1000;
+    const to = Date.parse('2026-11-15T00:00:00Z') / 1000;
+    for (let i = 0; i < 600; i++) {
+      const c = r.pick([...kinds.values()]);
+      // Short, multi-day and long windows that start and end at any second.
+      const x = r.next();
+      const span = Math.floor(r.next() * (x < 0.3 ? 2 * HOUR : x < 0.6 ? 3 * DAY : 40 * DAY)) + 1;
+      const a = from + Math.floor(r.next() * (to - from));
+      let sent = 0;
+      let recv = 0;
+      eachSlot(c, a, a + span, (slot, s, rv) => {
+        sent += s;
+        recv += rv;
+      });
+      const got = clientUsage(c, a, a + span);
+      const msg = `${c.kindName} ${new Date(a * 1000).toISOString()} +${span}s`;
+      assert.ok(Math.abs(got.sent - sent) <= 1e-9 * Math.max(1, sent), msg);
+      assert.ok(Math.abs(got.recv - recv) <= 1e-9 * Math.max(1, recv), msg);
+    }
+  });
+
+  test('backups follow local time through a DST change', () => {
+    // The NAS backs up from 2:00 to 3:30 local time, every day.
+    const nas = world.clients.find((c) => c.kindName === 'nas');
+    const zone = nas.net.zone;
+    for (const date of ['2026-03-08', '2026-11-01']) {
+      const day = Date.parse(date) / 1000 / DAY;
+      const hours = [];
+      for (let t = zone.midnight(day); t < zone.midnight(day + 1); t += HOUR) hours.push({ local: Math.floor(zone.hourOf(t)), kb: total(clientUsage(nas, t, t + HOUR)) });
+      const median = hours.map((h) => h.kb).sort((a, b) => a - b)[hours.length >> 1];
+      const busy = hours.filter((h) => h.kb > 50 * median).map((h) => h.local);
+      assert.ok(busy.length && busy.every((h) => h === 2 || h === 3), `${date}: busy at ${busy}`);
+    }
   });
 });
 

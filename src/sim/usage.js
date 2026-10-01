@@ -12,9 +12,10 @@ const PER_DAY = DAY / SLOT;
 const PER_HOUR = HOUR / SLOT;
 
 // Days of per-client totals kept: the longest window is 186 days. Hourly
-// totals are only needed for the days at the edges of a window.
+// totals serve the days a window only partly covers. Per-day client
+// histories split at local midnight, so up to 31 days need them at once.
 const DAYS_KEPT = 200;
-const HOURS_KEPT = 8;
+const HOURS_KEPT = 40;
 
 // Series stored per network day, in KB.
 export const WL_SENT = 0;
@@ -77,12 +78,14 @@ export function eachSlot(c, a, b, visit) {
   eachSession(c, a, b, (s, e) => {
     const lo = Math.max(s, a);
     const hi = Math.min(e, b);
-    // The offset at the session start, so a slot reads the same through any window.
-    const off = zone.offset(s);
+    // Each slot uses the offset at its own time, so it reads the same through
+    // any window and follows local time across a DST change.
+    const off = zone.offset(lo);
+    const fixed = off === zone.offset(hi - 1);
     for (let slot = Math.floor(lo / SLOT); slot * SLOT < hi; slot++) {
       const ss = slot * SLOT;
       const secs = Math.min(hi, ss + SLOT) - Math.max(lo, ss);
-      const kb = (kbps(c, ss, off, slot) * secs) / 8;
+      const kb = (kbps(c, ss, fixed ? off : zone.offset(ss), slot) * secs) / 8;
       visit(slot, kb * c.kind.up, kb * (1 - c.kind.up), secs);
     }
   });

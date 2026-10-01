@@ -139,10 +139,58 @@ describe('organization device views', () => {
     assert.equal(step(await q('timespan=86400&interval=3600')), 3600);
     const alone = await q('interval=1200');
     assert.equal(step(alone), 1200);
-    assert.ok(alone.body.items[0].intervals.length <= 24);
+    assert.equal(alone.body.items[0].intervals.length, 24);
     assert.equal((await q('interval=60')).status, 400);
     assert.equal((await q('perPage=21')).status, 400);
     assert.equal((await q(`t0=${now - 40 * DAY}`)).status, 400);
+  });
+
+  test('memory history without a time range ends at the last whole interval', async () => {
+    fresh();
+    // A clock between interval boundaries.
+    const other = await start({ now: new Date((now + 4321) * 1000).toISOString() });
+    try {
+      const at = now + 4321;
+      for (const interval of [300, 14400]) {
+        const r = await other.get(`/organizations/${org.id}/devices/system/memory/usage/history/byInterval?perPage=20${interval === 300 ? '' : `&interval=${interval}`}`);
+        assert.equal(r.status, 200);
+        const end = Math.floor(at / interval) * interval;
+        const lengths = r.body.items.map((i) => i.intervals.length);
+        assert.equal(Math.max(...lengths), 24, `interval ${interval}`);
+        for (const item of r.body.items) {
+          for (const { startTs, endTs } of item.intervals) {
+            assert.ok(Date.parse(endTs) / 1000 <= end && Date.parse(startTs) / 1000 >= end - 24 * interval, `${item.serial} ${startTs}`);
+          }
+        }
+      }
+    } finally {
+      await other.close();
+    }
+  });
+
+  test('power supplies read as disconnected while their switch is down', async () => {
+    fresh();
+    const core = hq.switches[0];
+    let mid = null;
+    eachOutage(core, now - 60 * DAY, now, (s, e) => (mid ??= Math.round((s + e) / 2)));
+    assert.ok(mid, 'the core switch has an outage in the last 60 days');
+    // Outages only depend on the seed, so another emulator in the middle of it sees it too.
+    const other = await start({ now: new Date(mid * 1000).toISOString() });
+    try {
+      const status = (await other.get(`/organizations/${org.id}/devices/statuses?serials[]=${core.serial}`)).body[0];
+      assert.equal(status.status, 'offline');
+      assert.deepEqual(
+        status.components.powerSupplies.map((p) => p.status),
+        ['disconnected', 'disconnected'],
+      );
+      const modules = (await other.get(`/organizations/${org.id}/devices/powerModules/statuses/byDevice`)).body[0];
+      assert.deepEqual(
+        modules.slots.map((p) => p.status),
+        ['not connected', 'not connected'],
+      );
+    } finally {
+      await other.close();
+    }
   });
 
   test('syslog servers and roles come one row per network', async () => {

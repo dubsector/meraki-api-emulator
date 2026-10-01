@@ -39,8 +39,10 @@ function publicIpOf(d) {
   return mx ? mx.uplinks[0].publicIp : `192.0.2.${40 + d.net.siteIndex}`;
 }
 
-function powerSupplies(d) {
-  return Array.from({ length: d.info.psus ?? 0 }, (_, i) => ({ slot: i + 1, serial: `${d.serial.slice(0, 4)}-PSU${i + 1}`, model: 'PWR-C6-600WAC' }));
+// A device that is down last reported its supplies without input power.
+function powerSupplies(d, status) {
+  const up = status !== 'offline' && status !== 'dormant';
+  return Array.from({ length: d.info.psus ?? 0 }, (_, i) => ({ slot: i + 1, serial: `${d.serial.slice(0, 4)}-PSU${i + 1}`, model: 'PWR-C6-600WAC', up }));
 }
 
 // An MX lists each WAN with the address its management interface gives it.
@@ -117,10 +119,9 @@ function memoryItem(d, t0, t1, interval) {
   };
 }
 
-// Two hours of five-minute intervals by default. An interval on its own sets
-// a window of the same 24 intervals. With a time range, the interval is the
-// shortest that keeps each device to 300 intervals, or the one asked for if
-// that is longer.
+// The last 24 whole intervals, five minutes each unless an interval is given.
+// With a time range, the interval is the shortest that keeps each device to
+// 300 intervals, or the one asked for if that is longer.
 function memoryHistory(ctx) {
   const q = ctx.query;
   let interval = 300;
@@ -129,8 +130,13 @@ function memoryHistory(ctx) {
     if (!MEMORY_INTERVALS.includes(interval)) throw badRequest(`'interval' must be one of: ${MEMORY_INTERVALS.join(', ')}`);
   }
   const timed = ['t0', 't1', 'timespan'].some((k) => q.has(k));
-  const { t0, t1 } = timeWindow(q, ctx.now, { maxSpan: 31 * DAY, defaultSpan: timed ? 2 * HOUR : 24 * interval, lookback: 31 * DAY });
-  if (timed) interval = Math.max(interval, MEMORY_INTERVALS.find((i) => (t1 - t0) / i <= 300) ?? MEMORY_INTERVALS.at(-1));
+  let { t0, t1 } = timeWindow(q, ctx.now, { maxSpan: 31 * DAY, defaultSpan: 2 * HOUR, lookback: 31 * DAY });
+  if (timed) {
+    interval = Math.max(interval, MEMORY_INTERVALS.find((i) => (t1 - t0) / i <= 300) ?? MEMORY_INTERVALS.at(-1));
+  } else {
+    t1 = Math.floor(ctx.now / interval) * interval;
+    t0 = t1 - 24 * interval;
+  }
   const devices = filterDevices(q, orgOf(ctx).devices).sort(bySerial);
   return paginateItems(ctx, devices, (d) => d.serial, { def: 10, max: 20 }, (d) => memoryItem(d, t0, t1, interval));
 }
@@ -346,7 +352,7 @@ export default [
             tags: d.tags,
           };
           if (d.info.psus) {
-            out.components = { powerSupplies: powerSupplies(d).map((p) => ({ ...p, status: status === 'offline' ? 'not powering' : 'powering', poe: { unit: 'watts', maximum: 740 } })) };
+            out.components = { powerSupplies: powerSupplies(d, status).map(({ up, ...p }) => ({ ...p, status: up ? 'powering' : 'disconnected', poe: { unit: 'watts', maximum: 740 } })) };
           }
           return out;
         })
@@ -383,9 +389,7 @@ export default [
         .filter((d) => d.info.psus)
         .sort(bySerial)
         .map((d) => {
-          // A device that is down last reported its supplies without input power.
-          const up = !['offline', 'dormant'].includes(deviceStatus(d, ctx.now));
-          const slots = powerSupplies(d).map((p) => ({ number: p.slot, serial: p.serial, model: p.model, status: up ? 'powering' : 'not connected' }));
+          const slots = powerSupplies(d, deviceStatus(d, ctx.now)).map((p) => ({ number: p.slot, serial: p.serial, model: p.model, status: p.up ? 'powering' : 'not connected' }));
           return { mac: d.mac, name: d.name, network: { id: d.net.id }, productType: d.productType, serial: d.serial, tags: d.tags, slots };
         });
       return paginate(ctx, rows, (d) => d.serial, { def: 1000, max: 1000 });
