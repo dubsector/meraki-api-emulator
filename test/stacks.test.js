@@ -106,6 +106,44 @@ describe('switch stacks', () => {
     const id = await makeStack();
     assert.equal((await sb.post(`/networks/${hq.id}/devices/remove`, { serial: f3.serial })).status, 204);
     assert.deepEqual((await sb.get(`${S}/${id}`)).body.serials, [f2.serial]);
+    const nodes = (await sb.get(`/networks/${hq.id}/topology/linkLayer`)).body.nodes;
+    assert.deepEqual(nodes.find((n) => n.type === 'stack').stack.members.map((m) => m.serial), [f2.serial]);
+  });
+
+  test('the topology shows a stack as one node', async () => {
+    fresh();
+    const T = `/networks/${hq.id}/topology/linkLayer`;
+    const before = (await sb.get(T)).body;
+    const id = await makeStack();
+    const t = (await sb.get(T)).body;
+    const serials = [f2.serial, f3.serial];
+    const isMember = (x) => serials.includes(x.device?.serial);
+    assert.equal(t.nodes.filter(isMember).length, 0);
+    const stacks = t.nodes.filter((n) => n.type === 'stack');
+    assert.equal(stacks.length, 1);
+    const [node] = stacks;
+    assert.deepEqual(Object.keys(node), ['derivedId', 'mac', 'type', 'root', 'stack']);
+    assert.equal(node.derivedId, id);
+    assert.equal(node.mac, (await sb.get(`${S}/${id}`)).body.virtualMac);
+    assert.equal(node.root, false);
+    assert.equal(node.stack.name, 'Floors');
+    // stack.id is an integer, too big for JSON.parse to keep exactly, so check the raw text.
+    const raw = await (await fetch(sb.base + T, { headers: { 'X-Cisco-Meraki-API-Key': 'test-key' } })).text();
+    assert.ok(raw.includes(`"stack":{"id":${id},`));
+    const old = before.nodes.filter(isMember).map((n) => n.device);
+    assert.deepEqual(node.stack.members, old);
+    assert.equal(node.stack.clients.counts.total, old.reduce((n, d) => n + d.clients.counts.total, 0));
+
+    // Links to a member point at the stack and keep the member's serial.
+    const ends = (links) => links.flatMap((l) => l.ends).filter(isMember);
+    assert.equal(t.links.length, before.links.length);
+    assert.equal(ends(t.links).length, ends(before.links).length);
+    assert.ok(ends(t.links).every((e) => e.node.derivedId === id && e.node.type === 'stack'));
+    const ids = new Set(t.nodes.map((n) => n.derivedId));
+    for (const l of t.links) for (const e of l.ends) assert.ok(ids.has(e.node.derivedId));
+
+    assert.equal((await sb.del(`${S}/${id}`)).status, 204);
+    assert.deepEqual((await sb.get(T)).body, before);
   });
 
   test('layer 3 interfaces', async () => {
