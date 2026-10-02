@@ -429,7 +429,7 @@ const LIMITS = { 'leds/blink': [10, 1], throughputTest: [5, 1] };
 
 export default [
   ...Object.entries(TOOLS).flatMap(([path, tool]) => [
-    { op: `createDeviceLiveTools${tool.name}`, method: 'POST', path: `/devices/{serial}/liveTools/${path}`, perDevice: LIMITS[path] ?? [5, 5], handler: (ctx) => createJob(ctx, path, tool) },
+    { op: `createDeviceLiveTools${tool.name}`, method: 'POST', path: `/devices/{serial}/liveTools/${path}`, sample: { serial: tool.kinds?.[0] }, perDevice: LIMITS[path] ?? [5, 5], handler: (ctx) => createJob(ctx, path, tool) },
     {
       op: `getDeviceLiveTools${tool.name}`,
       path: `/devices/{serial}/liveTools/${path}/{${tool.param}}`,
