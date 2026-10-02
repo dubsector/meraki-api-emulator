@@ -17,6 +17,7 @@ Options:
       --burst <n>         Requests allowed at once before throttling (default 20)
       --now <time>        Freeze the clock (ISO 8601 or epoch seconds)
       --read-only         Refuse PUT, POST and DELETE with 405
+      --no-webhooks       Record webhook tests as delivered without sending them
   -q, --quiet             Don't log requests
   -h, --help              Show this help
   -v, --version           Show the version
@@ -40,6 +41,7 @@ try {
       burst: { type: 'string' },
       now: { type: 'string' },
       'read-only': { type: 'boolean' },
+      'no-webhooks': { type: 'boolean' },
       quiet: { type: 'boolean', short: 'q' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
@@ -75,6 +77,7 @@ try {
     burst: values.burst ?? env('BURST'),
     now: values.now ?? env('NOW'),
     readOnly: values['read-only'] || env('READ_ONLY'),
+    noWebhooks: values['no-webhooks'] || env('NO_WEBHOOKS'),
     log: quiet ? null : (line) => console.log(`${new Date().toISOString()} ${line}`),
   });
 } catch (e) {

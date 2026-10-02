@@ -20,6 +20,7 @@ import tempfile
 import time
 import traceback
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -706,7 +707,69 @@ def inventory():
         check(f"splitNetwork into {len(got)} networks with all {devices} devices", [n["productTypes"] for n in got] == [["appliance"], ["switch"], ["wireless"], ["camera"]] and devices == 17, [n["name"] for n in got])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory]
+@scenario
+def webhooks():
+    import http.server
+    import threading
+
+    got = []
+
+    class Hook(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            got.append((dict(self.headers), self.rfile.read(int(self.headers["Content-Length"])).decode()))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    rx = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Hook)
+    threading.Thread(target=rx.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{rx.server_address[1]}/hook"
+    try:
+        with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu:
+            d = dashboard(emu)
+            org = acme(d.organizations.getOrganizations())
+            net = next(n["id"] for n in d.organizations.getOrganizationNetworks(org) if n["name"] == "HQ - San Francisco")
+
+            got_list = d.networks.getNetworkWebhooksPayloadTemplates(net)
+            check(f"getNetworkWebhooksPayloadTemplates lists the included templates ({len(got_list)})", [t["payloadTemplateId"] for t in got_list][:1] == ["wpt_00001"] and all(t["type"] == "included" for t in got_list), got_list[:1])
+            t = d.networks.createNetworkWebhooksPayloadTemplate(net, "Ops", body='{"type":"{{alertTypeId}}","secret":{{sharedSecret | jsonify}}}', headers=[{"name": "X-Token", "template": "{{sharedSecret}}"}])
+            tid = t["payloadTemplateId"]
+            up = d.networks.updateNetworkWebhooksPayloadTemplate(net, tid, name="Ops v2")
+            check("createNetworkWebhooksPayloadTemplate, then get and update it", d.networks.getNetworkWebhooksPayloadTemplate(net, tid) == up and up["name"] == "Ops v2" and up["type"] == "custom", up)
+
+            job = d.networks.createNetworkWebhooksWebhookTest(net, url, sharedSecret="s3cret", payloadTemplateId=tid, alertTypeId="settings_changed")
+            for _ in range(100):
+                status = d.networks.getNetworkWebhooksWebhookTest(net, job["id"])["status"]
+                if status in ("delivered", "abandoned"):
+                    break
+                time.sleep(0.05)
+            body = json.loads(got[0][1]) if got else None
+            check("createNetworkWebhooksWebhookTest sends the rendered template", job["status"] == "enqueued" and status == "delivered" and body == {"type": "settings_changed", "secret": "s3cret"} and got[0][0].get("X-Token") == "s3cret", (status, got))
+            logs = d.organizations.getOrganizationWebhooksLogs(org, url=url)
+            check("getOrganizationWebhooksLogs has the delivery", [(l["responseCode"], l["url"], l["networkId"]) for l in logs] == [(200, url, net)] and logs == emu.raw(f"/organizations/{org}/webhooks/logs?url={urllib.parse.quote(url, safe='')}"), logs)
+            d.networks.deleteNetworkWebhooksPayloadTemplate(net, tid)
+            check("deleteNetworkWebhooksPayloadTemplate", all(x["payloadTemplateId"] != tid for x in d.networks.getNetworkWebhooksPayloadTemplates(net)))
+
+            types = d.organizations.getOrganizationWebhooksAlertTypes(org, productType="switch")
+            check(f"getOrganizationWebhooksAlertTypes productType=switch ({len(types)})", types and all(x["example"]["alertTypeId"] == x["alertTypeId"] for x in types) and "power_supply_down" in [x["alertTypeId"] for x in types], types[:1])
+            try:
+                d.organizations.getOrganizationWebhooksCallbacksStatus(org, "1284392014819")
+                check("getOrganizationWebhooksCallbacksStatus unknown ID", False, "no error")
+            except meraki.APIError as e:
+                check("getOrganizationWebhooksCallbacksStatus unknown ID answers 404", e.status == 404, e.status)
+
+            a = d.organizations.createOrganizationAlertsProfile(org, "wanLatency", {"duration": 60, "window": 600, "latency_ms": 100, "interface": "wan1"}, {"emails": ["noc@example.com"]}, ["branch"], description="WAN latency")
+            up = d.organizations.updateOrganizationAlertsProfile(org, a["id"], enabled=False)
+            check("createOrganizationAlertsProfile, then list and update it", d.organizations.getOrganizationAlertsProfiles(org) == [up] and not up["enabled"] and up["alertCondition"]["latency_ms"] == 100, up)
+            d.organizations.deleteOrganizationAlertsProfile(org, a["id"])
+            check("deleteOrganizationAlertsProfile", d.organizations.getOrganizationAlertsProfiles(org) == [])
+    finally:
+        rx.shutdown()
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

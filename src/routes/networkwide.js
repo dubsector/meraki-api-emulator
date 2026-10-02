@@ -10,6 +10,7 @@ import { deviceStatus, eachOutage, lastReportedAt } from '../sim/outages.js';
 import { isOnline } from '../sim/presence.js';
 import { DAY, MIN, iso } from '../time.js';
 import { merge } from '../validate.js';
+import { pickTemplate } from '../webhooks.js';
 import { byId, devOf, netOf, orgOf } from './common.js';
 
 const MAX_ITEMS = 100;
@@ -156,18 +157,23 @@ function createServer(ctx) {
   const id = Buffer.from(url).toString('base64');
   if (c.httpServers.some((s) => s.id === id)) throw badRequest('This URL has already been added');
   if (c.httpServers.length >= MAX_ITEMS) throw badRequest(`Networks are limited to ${MAX_ITEMS} webhook servers in the emulator`);
-  const server = { id, name, url, enabled: true, networkId: net.id, payloadTemplate: { payloadTemplateId: 'wpt_00001', name: 'Meraki (included)', ...payloadTemplate } };
+  const template = pickTemplate(net, payloadTemplate);
+  const server = { id, name, url, enabled: true, networkId: net.id, payloadTemplate: { payloadTemplateId: template.payloadTemplateId, name: template.name } };
   c.httpServers.push(server);
   (c.httpServerSecrets ??= {})[id] = sharedSecret ?? '';
   return server;
 }
 
 function updateServer(ctx) {
-  const c = configOf(netOf(ctx));
+  const net = netOf(ctx);
+  const c = configOf(net);
   const server = serverOf(c, ctx.params.httpServerId);
   const { name, sharedSecret, payloadTemplate } = ctx.body;
   if (name != null) server.name = name;
-  if (payloadTemplate) merge(server.payloadTemplate, payloadTemplate);
+  if (payloadTemplate?.payloadTemplateId != null || payloadTemplate?.name != null) {
+    const template = pickTemplate(net, payloadTemplate);
+    server.payloadTemplate = { payloadTemplateId: template.payloadTemplateId, name: template.name };
+  }
   if (sharedSecret != null) (c.httpServerSecrets ??= {})[server.id] = sharedSecret;
   return server;
 }
