@@ -54,6 +54,29 @@ describe('writes', () => {
     assert.equal((await sb.put(`/devices/${hq.switches[0].serial}/switch/ports/5`, { vlan: '20' })).body.vlan, 20);
   });
 
+  test('nulls in place of list items or required objects are refused', async () => {
+    const corp = sb.world.orgs.find((o) => o.name === 'Acme Corporation');
+    const net = corp.networks.find((n) => n.name === 'HQ - San Francisco');
+    const N = `/networks/${net.id}/appliance`;
+    for (const [method, path, body, message] of [
+      ['PUT', `${N}/trafficShaping/rules`, { rules: [null] }, /'rules\[0\]' must be an object/],
+      ['PUT', `${N}/firewall/oneToManyNatRules`, { rules: null }, /'rules' is required/],
+      ['PUT', `${N}/uplinks/nat`, { uplinks: [{ interface: 'wan1', nat: null }] }, /'uplinks\[0\]\.nat' is required/],
+      ['PUT', `/networks/${net.id}/firmwareUpgrades/staged/stages`, { _json: [{}] }, /group\.id' is required/],
+      ['POST', `/organizations/${corp.id}/admins`, { email: null, name: 'X', orgAccess: 'none' }, /email/],
+      ['POST', `/organizations/${corp.id}/actionBatches`, { confirmed: true, actions: [{ resource: null, operation: 'create' }] }, /'resource' is required/],
+    ]) {
+      const r = await sb.get(path, { method, body });
+      assert.equal(r.status, 400, `${method} ${path}: ${JSON.stringify(r.body)}`);
+      assert.match(r.body.errors.join(' '), message);
+    }
+    assert.equal((await sb.put(`/networks/${net.id}/firmwareUpgrades`, { products: { wireless: null } })).status, 200);
+    // A null leaves a settings object that other reads use in place.
+    const before = (await sb.get(`${N}/settings`)).body;
+    assert.equal((await sb.put(`${N}/settings`, { dynamicDns: null })).status, 200);
+    assert.deepEqual((await sb.get(`${N}/settings`)).body, before);
+  });
+
   test('prototype keys in a body are ignored', async () => {
     fresh();
     const r = await sb.put(`/networks/${hq.id}/settings`, '{"__proto__": {"polluted": 1}, "fips": {"constructor": {"prototype": {"polluted": 1}}}}');

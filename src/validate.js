@@ -57,7 +57,11 @@ function check(value, schema, name) {
       break;
     case 'array':
       if (!Array.isArray(v)) throw badRequest(describe(name, schema));
-      return v.map((item, i) => check(item, schema.items, `${name}[${i}]`));
+      // A null item is never a valid list entry, and handlers don't expect one.
+      return v.map((item, i) => {
+        if (item == null && schema.items?.type) throw badRequest(describe(`${name}[${i}]`, schema.items));
+        return check(item, schema.items, `${name}[${i}]`);
+      });
     case 'object':
       if (typeof v !== 'object' || Array.isArray(v)) throw badRequest(describe(name, schema));
       return object(v, schema, name);
@@ -77,7 +81,9 @@ function object(value, schema, prefix) {
   const out = {};
   const props = schema.properties;
   for (const req of schema.required || []) {
-    if (value[req] === undefined) throw badRequest(`'${prefix ? `${prefix}.${req}` : req}' is required`);
+    // A null scalar can mean "clear it" (a floor plan ID); a null list or object can't.
+    const t = props?.[req]?.type;
+    if (value[req] === undefined || (value[req] === null && (t === 'object' || t === 'array'))) throw badRequest(`'${prefix ? `${prefix}.${req}` : req}' is required`);
   }
   for (const [k, v] of Object.entries(value)) {
     if (UNSAFE.has(k) || v === undefined) continue;
@@ -99,10 +105,12 @@ export function validateBody(op, body) {
 }
 
 // Deep merge for partial updates: objects merge, everything else replaces.
+// A null doesn't wipe a settings object that other routes read.
 export function merge(target, patch) {
   for (const [k, v] of Object.entries(patch)) {
     if (UNSAFE.has(k)) continue;
     const cur = target[k];
+    if (v === null && cur && typeof cur === 'object' && !Array.isArray(cur)) continue;
     if (v && typeof v === 'object' && !Array.isArray(v) && cur && typeof cur === 'object' && !Array.isArray(cur)) merge(cur, v);
     else target[k] = structuredClone(v);
   }
@@ -128,6 +136,17 @@ export function parseCidr(cidr) {
 export function parseIp(ip) {
   const c = parseCidr(`${ip}/32`);
   return c ? c[0] : null;
+}
+
+export const isAddress = (v) => parseIp(v) != null || parseCidr(v) != null;
+
+const HOSTNAME = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/i;
+export const isHostname = (v) => HOSTNAME.test(v);
+
+// A port from 1 to 65535, or a range like 1-1024 when ranges are allowed.
+export function isPort(v, ranges = false) {
+  const m = (ranges ? /^(\d{1,5})(?:-(\d{1,5}))?$/ : /^(\d{1,5})$/).exec(v);
+  return !!m && [m[1], m[2] ?? m[1]].every((p) => p >= 1 && p <= 65535);
 }
 
 export function ipInCidr(ip, cidr) {
