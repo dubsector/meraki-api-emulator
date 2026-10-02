@@ -39,6 +39,8 @@ jobs:
       - name: Scan the image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          # The action installs Trivy 0.70.0 by default. Dependabot doesn't update this, so bump it with each Trivy release.
+          version: v0.75.0
           image-ref: meraki-api-emulator
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -46,6 +48,7 @@ jobs:
       - name: Scan the Dockerfile
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.75.0
           scan-type: config
           scan-ref: Dockerfile
           severity: HIGH,CRITICAL
