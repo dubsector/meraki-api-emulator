@@ -209,4 +209,14 @@ describe('MX firewall, NAT and warm spare', () => {
     await ok(sb.post(`/networks/${london.id}/devices/claim`, { serials: [mx.serial] }));
     assert.match(await errorOf(sb.put(`/networks/${london.id}/appliance/warmSpare`, { enabled: true, spareSerial: mx.serial })), /same model/);
   });
+
+  test('a network bound to a template keeps its own warm spare', async () => {
+    fresh();
+    const spare = await claimSpare();
+    const t = await ok(sb.post(`/organizations/${org.id}/configTemplates`, { name: 'From HQ', copyFromNetworkId: hq.id }), 201);
+    await ok(sb.post(`/networks/${hq.id}/bind`, { configTemplateId: t.id }));
+    assert.match(await errorOf(sb.put(`${N}/firewall/settings`, { spoofingProtection: { ipSourceGuard: { mode: 'log' } } })), /bound to a config template/);
+    assert.equal((await ok(sb.put(`${N}/warmSpare`, { enabled: true, spareSerial: spare }))).spareSerial, spare);
+    assert.equal((await ok(sb.post(`${N}/warmSpare/swap`))).primarySerial, spare);
+  });
 });

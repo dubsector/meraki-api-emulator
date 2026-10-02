@@ -61,7 +61,8 @@ export const CONNECT_HINT = 'The emulator speaks plain HTTP, use an http:// base
 export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...licenses, ...templates, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...clients, ...networkwide, ...firmware, ...floorplans, ...appliance, ...firewall, ...shaping, ...switches, ...switchports, ...stacks, ...wireless, ...wirelessstats, ...orgwireless, ...ssids, ...devices, ...camera, ...livetools, ...webhooks, ...actionBatches, ...identities].map((r) => ({ method: 'GET', ...r }));
 
 // Network settings that come from the config template a network is bound to.
-const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance|wireless|switch\/settings|groupPolicies|syslogServers|devices\/syslog|snmp|alerts|webhooks\/(?:httpServers|payloadTemplates)|settings)\b/;
+// Warm spare names the network's own MXes, so it stays local.
+const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance(?!\/warmSpare)|wireless|switch\/settings|groupPolicies|syslogServers|devices\/syslog|snmp|alerts|webhooks\/(?:httpServers|payloadTemplates)|settings)\b/;
 
 // One entry per path template, holding a route per method.
 function compile(routes) {
