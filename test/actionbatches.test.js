@@ -160,7 +160,12 @@ describe('action batches', () => {
       .filter((u) => u.status === 200 && !/apiRequests|actionBatches|administered/.test(u.url))
       .map((u) => u.url)
       .concat([`/networks/${hq.id}/webhooks/webhookTests/${webhookTest.id}`, `/devices/${sw.serial}/liveTools/ping/${ping.pingId}`, `/networks/${net.id}`]);
-    const read = async () => Promise.all(urls.map(async (u) => JSON.stringify((await sb.get(u)).body)));
+    // One at a time: Windows refuses connections past its accept backlog.
+    const read = async () => {
+      const out = [];
+      for (const u of urls) out.push(JSON.stringify((await sb.get(u)).body));
+      return out;
+    };
     const before = await read();
 
     const r = await sb.post(B, {
