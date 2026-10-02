@@ -651,7 +651,9 @@ export function removeDevice(world, dev) {
   }
   for (const sw of net.switches) for (const port of sw.ports) if (port.peer?.device === dev) port.peer = null;
   if (net.mx === dev) {
-    net.mx = net.devices.find((d) => d.productType === 'appliance') || null;
+    // A warm spare takes over from the primary before any other MX.
+    const ws = net.warmSpare;
+    net.mx = [ws?.primary, ws?.spare].find((d) => d && net.devices.includes(d)) || net.devices.find((d) => d.productType === 'appliance') || null;
     if (!net.mx) {
       if (org.hub === net) org.hub = null;
       net.vpn = null;

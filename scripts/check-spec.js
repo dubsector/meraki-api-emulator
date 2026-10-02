@@ -57,6 +57,8 @@ const CONDITIONAL = [
   [/^\[\]\.captureId$/, 'getNetworkWirelessClientConnectivityEvents', 'events that trigger a packet capture (the emulator triggers none)'],
   [/^\[\]\.clientId$/, 'getNetworkSwitchDhcpV4ServersSeen', 'discovered (client) servers only'],
   [/^\.rtspUrl$/, 'getDeviceCameraVideoSettings', 'external RTSP turned on (cameras start with it off)'],
+  [/^\.(spareSerial|uplinkMode)$/, 'getNetworkApplianceWarmSpare', 'warm spare enabled with a second MX'],
+  [/^\.wan[12]$/, 'getNetworkApplianceWarmSpare', 'warm spare in virtual uplink mode, wan2 only on a primary with two WANs'],
 ];
 
 function conditional(op, field) {

@@ -16,6 +16,7 @@ import captures from './routes/captures.js';
 import cellular from './routes/cellular.js';
 import appliance from './routes/appliance.js';
 import shaping from './routes/shaping.js';
+import firewall from './routes/firewall.js';
 import clients from './routes/clients.js';
 import devices from './routes/devices.js';
 import firmware from './routes/firmware.js';
@@ -57,7 +58,7 @@ const GLUED_URL = new RegExp(`^${API_PREFIX}https?://`, 'i');
 export const SDK_HINT = 'This path has a full URL appended to the base URL. The Meraki Python SDK sends that when paging from a host outside meraki.com: use base_url="http://emulator.meraki.com/api/v1" with requests_proxy set to the emulator (see the README)';
 export const CONNECT_HINT = 'The emulator speaks plain HTTP, use an http:// base URL';
 
-export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...licenses, ...templates, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...clients, ...networkwide, ...firmware, ...floorplans, ...appliance, ...shaping, ...switches, ...switchports, ...stacks, ...wireless, ...wirelessstats, ...orgwireless, ...ssids, ...devices, ...camera, ...livetools, ...webhooks, ...actionBatches, ...identities].map((r) => ({ method: 'GET', ...r }));
+export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...licenses, ...templates, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...clients, ...networkwide, ...firmware, ...floorplans, ...appliance, ...firewall, ...shaping, ...switches, ...switchports, ...stacks, ...wireless, ...wirelessstats, ...orgwireless, ...ssids, ...devices, ...camera, ...livetools, ...webhooks, ...actionBatches, ...identities].map((r) => ({ method: 'GET', ...r }));
 
 // Network settings that come from the config template a network is bound to.
 const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance|wireless|switch\/settings|groupPolicies|syslogServers|devices\/syslog|snmp|alerts|webhooks\/(?:httpServers|payloadTemplates)|settings)\b/;
