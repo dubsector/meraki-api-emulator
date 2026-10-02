@@ -1,5 +1,5 @@
 // Webhook payload templates, the alert types they render, and delivery of
-// webhook tests to the URL given, with retries and an organization-wide log.
+// webhook tests and API callbacks, with retries and an organization-wide log.
 
 import { configOf } from './config.js';
 import { deviceUrl, orgJson } from './format.js';
@@ -172,4 +172,68 @@ export async function deliver(ctx, net, job, { url, template, data }) {
     await new Promise((r) => setTimeout(r, RETRY_MS[attempt]));
   }
   job.status = 'abandoned';
+}
+
+// ── API callbacks ──
+
+const MAX_CALLBACKS = 1000;
+
+// Checks a request's `callback` and records it as running. The receiver is
+// either one of the network's HTTP servers or a URL with its shared secret.
+export function newCallback(ctx, net, given) {
+  if (given == null) return null;
+  const c = configOf(net);
+  const serverId = given.httpServer?.id;
+  let url;
+  let secret;
+  if (serverId != null) {
+    if (given.url != null || given.sharedSecret != null) throw badRequest("'callback' takes either 'httpServer.id' or 'url' and 'sharedSecret', not both");
+    const server = c.httpServers.find((s) => s.id === serverId);
+    if (!server) throw badRequest(`HTTP server ${serverId} does not exist in this network`);
+    url = server.url;
+    secret = c.httpServerSecrets?.[server.id] ?? '';
+  } else {
+    if (given.url == null || given.sharedSecret == null) throw badRequest("'callback' needs either 'httpServer.id' or both 'url' and 'sharedSecret'");
+    let parsed = null;
+    try {
+      parsed = new URL(given.url);
+    } catch {}
+    if (!parsed || !/^https?:$/.test(parsed.protocol)) throw badRequest("'callback.url' must be an http or https URL");
+    url = given.url;
+    secret = given.sharedSecret;
+  }
+  const template = pickTemplate(net, { payloadTemplateId: given.payloadTemplate?.id ?? 'wpt_00005' });
+  const cb = {
+    callbackId: newWebhookId(ctx.world, net.org, 'callback'),
+    status: 'running',
+    errors: [],
+    createdBy: { adminId: ctx.world.apiAdmin.id },
+    webhook: { url, ...(serverId != null && { httpServer: { id: serverId } }), payloadTemplate: { id: template.payloadTemplateId } },
+  };
+  const store = callbacksOf(net.org);
+  if (store.size >= MAX_CALLBACKS) store.delete(store.keys().next().value);
+  store.set(cb.callbackId, cb);
+  return { cb, secret, template };
+}
+
+// Sends a callback after `delay` seconds with what `alertData()` gives then.
+// The callback completes once the receiver answers 2xx and fails otherwise.
+export function sendCallback(ctx, net, dev, { cb, secret, template }, alertData, delay) {
+  const run = () => {
+    const sent = ctx.clock();
+    const at = isoUs(Math.round(sent * 1e6));
+    cb.webhook.sentAt = at;
+    const org = net.org;
+    const data = { version: '0.1', sharedSecret: secret, sentAt: at, organizationId: org.id, organizationName: org.name, organizationUrl: orgJson(org).url, networkId: net.id, networkName: net.name, networkUrl: net.url, networkTags: [...net.tags] };
+    Object.assign(data, { deviceSerial: dev.serial, deviceMac: dev.mac, deviceName: dev.name, deviceUrl: deviceUrl(dev), deviceTags: [...dev.tags], deviceModel: dev.model });
+    Object.assign(data, { alertId: cb.callbackId, alertType: 'API callback', alertTypeId: 'api_callback', alertLevel: 'informational', occurredAt: at, alertData: alertData() });
+    const job = { status: 'enqueued' };
+    const done = () => {
+      cb.status = job.status === 'delivered' ? 'completed' : 'failed';
+      cb.errors = cb.status === 'failed' ? ['Callback failed'] : [];
+    };
+    deliver(ctx, net, job, { url: cb.webhook.url, template, data }).catch(() => (job.status = 'abandoned')).finally(done);
+  };
+  if (delay > 0) setTimeout(run, delay * 1000).unref();
+  else run();
 }

@@ -226,7 +226,7 @@ export function portTraffic(sw, port, t0, t1) {
   return { ...load, sent, recv, up: toward ? sent : recv, down: toward ? recv : sent };
 }
 
-function portStatus(sw, port, t0, t1, now) {
+export function portStatus(sw, port, t0, t1, now) {
   if (port.config?.enabled === false) {
     const zero = { total: 0, sent: 0, recv: 0 };
     return { portId: port.portId, enabled: false, status: 'Disabled', isUplink: port.isUplink, errors: [], warnings: [], speed: '', duplex: '', spanningTree: { statuses: [] }, poe: { isAllocated: false }, usageInKb: zero, clientCount: 0, powerUsageInWh: 0, trafficInKbps: zero, securePort: { enabled: false, active: false, authenticationStatus: 'Disabled', configOverrides: {} } };
@@ -319,16 +319,20 @@ function portPackets(sw, port, t0, t1) {
 }
 
 // Takes single ports and ranges, as in "1" and "2-5".
-function cyclePorts(ctx) {
-  const dev = devOf(ctx);
-  requireModel(dev, 'switch');
-  const { ports } = ctx.body;
+export function checkCyclePorts(dev, ports) {
   if (!ports.length) throw badRequest("'ports' must not be empty");
   const ids = new Set(dev.ports.map((p) => p.portId));
   for (const p of ports) {
     const m = /^(\d+)(?:-(\d+))?$/.exec(String(p).trim());
     if (!m || !ids.has(m[1]) || (m[2] && (!ids.has(m[2]) || Number(m[2]) < Number(m[1])))) throw badRequest(`'${p}' is not a port or port range on this switch`);
   }
+}
+
+function cyclePorts(ctx) {
+  const dev = devOf(ctx);
+  requireModel(dev, 'switch');
+  const { ports } = ctx.body;
+  checkCyclePorts(dev, ports);
   return { ports };
 }
 
