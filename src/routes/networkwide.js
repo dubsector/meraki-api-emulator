@@ -46,22 +46,38 @@ function firmwareUpgrades(net) {
 }
 
 // Devices, phones found over LLDP/CDP, and the switch ports between them.
+// A switch stack's members merge into one stack node.
 function topology(net, now) {
   const derivedId = (mac) => mac.replace(/:/g, '');
-  const nodes = net.devices.map((d) => {
-    const status = deviceStatus(d, now);
-    const clients = d.productType === 'wireless' ? net.clients.filter((c) => c.ap === d && isOnline(c, now)).length : d.productType === 'switch' ? d.ports.reduce((n, p) => n + p.clients.filter((c) => isOnline(c, now)).length, 0) : 0;
-    return {
-      derivedId: derivedId(d.mac),
-      mac: d.mac,
-      type: 'device',
-      root: d === net.mx || (!net.mx && d === net.devices[0]),
-      device: { serial: d.serial, name: d.name, model: d.model, productType: d.productType, status, lastReportedAt: iso(lastReportedAt(d, now)), clients: { counts: { total: clients } } },
-      discovered: { lldp: null, cdp: null },
-    };
-  });
+  const clientsOf = (d) => (d.productType === 'wireless' ? net.clients.filter((c) => c.ap === d && isOnline(c, now)).length : d.productType === 'switch' ? d.ports.reduce((n, p) => n + p.clients.filter((c) => isOnline(c, now)).length, 0) : 0);
+  const deviceInfo = (d) => ({ serial: d.serial, name: d.name, model: d.model, productType: d.productType, status: deviceStatus(d, now), lastReportedAt: iso(lastReportedAt(d, now)), clients: { counts: { total: clientsOf(d) } } });
+  const isRoot = (d) => d === net.mx || (!net.mx && d === net.devices[0]);
+  const stackOf = new Map();
+  for (const stack of net.switchStacks?.list ?? []) {
+    const members = stack.members.filter((d) => net.switches.includes(d));
+    for (const d of members) stackOf.set(d, { stack, members });
+  }
+  const nodes = [];
+  for (const d of net.devices) {
+    const s = stackOf.get(d);
+    if (!s) {
+      nodes.push({ derivedId: derivedId(d.mac), mac: d.mac, type: 'device', root: isRoot(d), device: deviceInfo(d), discovered: { lldp: null, cdp: null } });
+      continue;
+    }
+    // The stack takes its first member's place. Its ID is a number here but a string in the stacks API.
+    if (d !== s.members[0]) continue;
+    const members = s.members.map(deviceInfo);
+    nodes.push({
+      derivedId: s.stack.id,
+      mac: s.stack.virtualMac,
+      type: 'stack',
+      root: s.members.some(isRoot),
+      stack: { id: JSON.rawJSON(s.stack.id), name: s.stack.name, members, clients: { counts: { total: members.reduce((n, m) => n + m.clients.counts.total, 0) } } },
+    });
+  }
   const links = [];
-  const end = (dev, portId) => ({ node: { derivedId: derivedId(dev.mac), type: 'device' }, device: { serial: dev.serial, name: dev.name }, discovered: { lldp: { portId: String(portId) }, cdp: null } });
+  const nodeRef = (dev) => (stackOf.has(dev) ? { derivedId: stackOf.get(dev).stack.id, type: 'stack' } : { derivedId: derivedId(dev.mac), type: 'device' });
+  const end = (dev, portId) => ({ node: nodeRef(dev), device: { serial: dev.serial, name: dev.name }, discovered: { lldp: { portId: String(portId) }, cdp: null } });
   for (const sw of net.switches) {
     for (const port of sw.ports) {
       const peer = port.peer?.device;
