@@ -14,7 +14,7 @@ import { DAY, HOUR, iso, isoMicro } from '../time.js';
 import { merge } from '../validate.js';
 import { bySerial, devOf, netOf, orgOf, requireModel, requireProduct, round } from './common.js';
 
-const BANDS = ['2.4', '5', '6'];
+export const BANDS = ['2.4', '5', '6'];
 const MB = 1024;
 const REGULATORY = { 'Europe/London': ['ETSI', 'GB'], 'America/Toronto': ['ISED', 'CA'] };
 const FIVE_GHZ = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165];
@@ -243,7 +243,7 @@ function averageUtilization(aps, bands, t0, t1) {
   return n ? { wifi: round(sum.wifi / n, 2), nonWifi: round(sum.nonWifi / n, 2), total: round(sum.total / n, 2) } : null;
 }
 
-function byBand(aps, t0, t1) {
+export function byBand(aps, t0, t1) {
   const bands = BANDS.filter((b) => aps.some((a) => a.info.bands.includes(b)));
   return bands.map((band) => {
     const u = averageUtilization(aps, [band], t0, t1);

@@ -1,8 +1,9 @@
 // Wireless connection and latency stats, derived from client sessions.
 
-import { lognoise } from '../rng.js';
+import { derive, lognoise, unit } from '../rng.js';
 import { connectFailure } from './events.js';
 import { START, eachSession, presenceIn } from './presence.js';
+import { clientUsage } from './usage.js';
 
 export function connectionStats(clients, t0, t1) {
   const out = { assoc: 0, auth: 0, dhcp: 0, dns: 0, success: 0 };
@@ -103,4 +104,19 @@ export function latencyBins(be, samples) {
     out[name] = Object.fromEntries(BUCKETS.map((b) => [b ? b.toFixed(1) : '0.5', counts[String(b)] ?? 0]));
   }
   return out;
+}
+
+// Packets each way between a client and its AP over [a, b), from its usage at
+// 1100 bytes a packet down and 600 up. Each client loses a steady share on its
+// own stream; 2.4 GHz and the flaky AP lose more.
+export function clientLoss(c, a, b) {
+  const u = clientUsage(c, a, b);
+  const k = derive(c.key, 'loss');
+  const share = (0.002 + unit(k, 0) * 0.015) * (c.band === '2.4' ? 1.6 : 1) * (c.ap.flaky ? 4 : 1);
+  const down = Math.round((u.recv * 1024) / 1100);
+  const up = Math.round((u.sent * 1024) / 600);
+  return {
+    downstream: { total: down, lost: Math.round(down * share) },
+    upstream: { total: up, lost: Math.round(up * share * (1.1 + unit(k, 1) * 0.3)) },
+  };
 }

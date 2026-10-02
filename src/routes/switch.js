@@ -73,7 +73,7 @@ export function peerConnected(port, now) {
   return c ? isOnline(c, now) : false;
 }
 
-function portSpeed(sw, port) {
+export function portSpeed(sw, port) {
   const peer = port.peer?.device;
   if (port.uplinkPort) {
     if (peer?.productType === 'appliance') return peer.model === 'MX250' ? '10 Gbps' : '1 Gbps';
