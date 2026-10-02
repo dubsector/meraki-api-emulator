@@ -309,11 +309,6 @@ export default [
     },
   },
   {
-    op: 'getOrganizationConfigTemplates',
-    path: '/organizations/{organizationId}/configTemplates',
-    handler: (ctx) => (orgOf(ctx), []),
-  },
-  {
     op: 'getOrganizationConfigurationChanges',
     path: '/organizations/{organizationId}/configurationChanges',
     sample: { query: 'timespan=604800' },
