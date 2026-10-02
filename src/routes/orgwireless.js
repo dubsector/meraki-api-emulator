@@ -12,9 +12,9 @@ import { RADIO, WIDTH, apChannel, apPower, bssid } from '../sim/rf.js';
 import { buckets, clientUsage } from '../sim/usage.js';
 import { clientLoss } from '../sim/wireless.js';
 import { DAY, HOUR, iso, isoMicro } from '../time.js';
-import { orgOf, round } from './common.js';
-import { portSpeed } from './switch.js';
-import { BANDS, byBand, orgAps } from './wireless.js';
+import { round } from './common.js';
+import { portSpeed, speedMbps } from './switch.js';
+import { BANDS, byBand, orgAps, wirelessNets } from './wireless.js';
 import { ssidId } from './wirelessstats.js';
 
 const UNITS = { KB: ['kilobytes', 1], MB: ['megabytes', 1024], GB: ['gigabytes', 1024 ** 2], TB: ['terabytes', 1024 ** 3] };
@@ -24,15 +24,6 @@ const POE = ['802.3af', '802.3at', '802.3bt'];
 const NEEDS = { CW9166I: '802.3bt', MR46: '802.3at', MR78: '802.3at', MR36: '802.3af' };
 const SUPPLIES = { 'MS390-48UX': '802.3bt' };
 const REBOOT = 900;
-
-// Wireless networks in the org, narrowed by networkIds and networkGroupIds.
-function wirelessNets(ctx) {
-  const org = orgOf(ctx);
-  const ids = arrayParam(ctx.query, 'networkIds');
-  const groupIds = arrayParam(ctx.query, 'networkGroupIds');
-  const inGroup = (net) => (org.networkGroups?.list ?? []).some((g) => groupIds.includes(g.groupId) && g.networkIds.includes(net.id));
-  return org.networks.filter((n) => n.productTypes.includes('wireless') && (!ids.length || ids.includes(n.id)) && (!groupIds.length || inGroup(n)));
-}
 
 const deviceHead = (ap) => ({
   serial: ap.serial,
@@ -253,16 +244,11 @@ function poeOf(ap) {
   return { mode: POE.indexOf(supply) >= POE.indexOf(need) ? 'full' : 'low', standard: POE[Math.min(POE.indexOf(need), POE.indexOf(supply))] };
 }
 
-const mbps = (speed) => {
-  const [n, unit] = speed.split(' ');
-  return Number(n) * (unit === 'Gbps' ? 1000 : 1);
-};
-
 // Catalyst APs report no duplex, speed or aggregation.
 function ethernetStatus(ap) {
   const poe = poeOf(ap);
   const port = ap.switchPort;
-  const speed = ap.model.startsWith('CW') ? null : mbps(port ? portSpeed(port.switch, port) : ap.info.speed);
+  const speed = ap.model.startsWith('CW') ? null : speedMbps(port ? portSpeed(port.switch, port) : ap.info.speed);
   return {
     serial: ap.serial,
     name: ap.name,

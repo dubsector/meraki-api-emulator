@@ -11,9 +11,9 @@ import { apChannel, channelUtilization, clientSignal, phyRate } from '../sim/rf.
 import { buckets } from '../sim/usage.js';
 import { ACCESS_CATEGORIES, apLatency, classLatency, clientLatency, connectionStats, latencyBins, latencyJson } from '../sim/wireless.js';
 import { DAY, HOUR, iso, isoMicro } from '../time.js';
-import { bySerial, findClient, netOf, orgOf } from './common.js';
+import { bySerial, findClient, netOf } from './common.js';
 import { statsWindow, wirelessScope } from './networks.js';
-import { bandParam, historyWindow, orgAps, wirelessNet } from './wireless.js';
+import { bandParam, historyWindow, orgAps, wirelessNet, wirelessNets } from './wireless.js';
 
 const HISTORY_RESOLUTIONS = [300, 600, 1200, 3600, 14400, 86400];
 const EVENT_TYPES = ['assoc', 'auth', 'connection', 'deauth', 'dhcp', 'disassoc', 'dns', 'roam', 'sticky'];
@@ -218,15 +218,9 @@ const STEPS = { assoc: 'association', auth: 'authentication', dhcp: 'ipAssignmen
 // Unique clients that failed a connection step on each SSID, counted at the
 // failure's time like failedConnections. DNS failures aren't a step here.
 function impactedBySsid(ctx) {
-  const org = orgOf(ctx);
-  const q = ctx.query;
-  const { t0, t1 } = timeWindow(q, ctx.now, { maxSpan: 7 * DAY, minSpan: 300, defaultSpan: 2 * HOUR, lookback: 8 * DAY });
-  const networkIds = arrayParam(q, 'networkIds');
-  const groupIds = arrayParam(q, 'networkGroupIds');
-  const inGroup = (net) => (org.networkGroups?.list ?? []).some((g) => groupIds.includes(g.groupId) && g.networkIds.includes(net.id));
+  const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 7 * DAY, minSpan: 300, defaultSpan: 2 * HOUR, lookback: 8 * DAY });
   const rows = [];
-  for (const net of org.networks) {
-    if (!net.productTypes.includes('wireless') || (networkIds.length && !networkIds.includes(net.id)) || (groupIds.length && !inGroup(net))) continue;
+  for (const net of wirelessNets(ctx)) {
     const bySsid = new Map();
     for (const c of net.clients) {
       if (c.wired || !c.ap) continue;
@@ -269,6 +263,9 @@ function overviewByDevice(ctx) {
   }));
 }
 
+// HQ's first wireless client, for sample URLs.
+const wirelessMac = (world) => world.orgs[0].networks[0].clients.find((c) => !c.wired).mac;
+
 export default [
   {
     op: 'getNetworkNetworkHealthChannelUtilization',
@@ -288,7 +285,7 @@ export default [
   {
     op: 'getNetworkWirelessClientConnectionStats',
     path: '/networks/{networkId}/wireless/clients/{clientId}/connectionStats',
-    sample: { clientId: (world) => world.orgs[0].networks[0].clients.find((c) => !c.wired).mac },
+    sample: { clientId: wirelessMac },
     handler: (ctx) => {
       const { c, inScope } = scopedClient(ctx);
       const { t0, t1 } = statsWindow(ctx);
@@ -298,19 +295,19 @@ export default [
   {
     op: 'getNetworkWirelessClientConnectivityEvents',
     path: '/networks/{networkId}/wireless/clients/{clientId}/connectivityEvents',
-    sample: { clientId: (world) => world.orgs[0].networks[0].clients.find((c) => !c.wired).mac, query: 'timespan=604800' },
+    sample: { clientId: wirelessMac, query: 'timespan=604800' },
     handler: clientConnectivityEvents,
   },
   {
     op: 'getNetworkWirelessClientLatencyHistory',
     path: '/networks/{networkId}/wireless/clients/{clientId}/latencyHistory',
-    sample: { clientId: (world) => world.orgs[0].networks[0].clients.find((c) => !c.wired).mac, query: 'timespan=604800' },
+    sample: { clientId: wirelessMac, query: 'timespan=604800' },
     handler: clientLatencyHistory,
   },
   {
     op: 'getNetworkWirelessClientLatencyStats',
     path: '/networks/{networkId}/wireless/clients/{clientId}/latencyStats',
-    sample: { clientId: (world) => world.orgs[0].networks[0].clients.find((c) => !c.wired).mac, query: 'timespan=604800' },
+    sample: { clientId: wirelessMac, query: 'timespan=604800' },
     handler: (ctx) => {
       const { c, inScope } = scopedClient(ctx);
       const { t0, t1 } = statsWindow(ctx);
