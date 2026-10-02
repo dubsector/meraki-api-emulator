@@ -1094,7 +1094,51 @@ def routing():
         check("deleteDeviceSwitchRoutingInterface", s.getDeviceSwitchRoutingInterfaces(core) == [] and s.getNetworkSwitchRoutingMulticastRendezvousPoints(hq) == [])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing]
+@scenario
+def switchpolicies():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        s = d.switch
+        org = acme(d.organizations.getOrganizations())
+        nets = {x["name"]: x["id"] for x in d.organizations.getOrganizationNetworks(org)}
+        hq = nets["HQ - San Francisco"]
+        core = next(x["serial"] for x in d.networks.getNetworkDevices(hq) if x["model"].startswith("MS390"))
+
+        acl = s.updateNetworkSwitchAccessControlLists(hq, [{"comment": "Deny SSH", "policy": "deny", "protocol": "tcp", "srcCidr": "10.1.10.0/24", "dstCidr": "any", "dstPort": "22", "vlan": "10"}])
+        check("updateNetworkSwitchAccessControlLists", s.getNetworkSwitchAccessControlLists(hq) == acl and [r["comment"] for r in acl["rules"]] == ["Deny SSH", "Default rule"], acl)
+
+        p = s.createNetworkSwitchAccessPolicy(hq, "Staff 802.1X", [{"host": "192.0.2.10", "port": 1812, "secret": "shh"}], False, hostMode="Multi-Domain")
+        num = p["accessPolicyNumber"]
+        check("createNetworkSwitchAccessPolicy", p["accessPolicyType"] == "Hybrid authentication" and "secret" not in p["radiusServers"][0], p)
+        p = s.updateNetworkSwitchAccessPolicy(hq, num, radiusServers=[{"serverId": p["radiusServers"][0]["serverId"], "port": 1645}], guestVlanId=30)
+        check("updateNetworkSwitchAccessPolicy", s.getNetworkSwitchAccessPolicy(hq, num) == p and s.getNetworkSwitchAccessPolicies(hq) == [p] and p["radiusServers"][0]["port"] == 1645, p)
+        port = s.updateDeviceSwitchPort(core, "10", accessPolicyType="Custom access policy", accessPolicyNumber=int(num))
+        check("updateDeviceSwitchPort takes an access policy", port["accessPolicyNumber"] == int(num) and s.getNetworkSwitchAccessPolicy(hq, num)["counts"]["ports"]["withThisPolicy"] == 1, port)
+        try:
+            s.deleteNetworkSwitchAccessPolicy(hq, num)
+            check("deleteNetworkSwitchAccessPolicy refuses a policy in use", False, "no error")
+        except meraki.APIError as e:
+            check("deleteNetworkSwitchAccessPolicy refuses a policy in use", e.status == 400, e.message)
+        s.updateDeviceSwitchPort(core, "10", accessPolicyType="Open")
+        s.deleteNetworkSwitchAccessPolicy(hq, num)
+        check("deleteNetworkSwitchAccessPolicy", s.getNetworkSwitchAccessPolicies(hq) == [])
+
+        a = s.createNetworkSwitchQosRule(hq, 100, protocol="TCP", srcPort=2000, dscp=46)
+        b = s.createNetworkSwitchQosRule(hq, None)
+        a = s.updateNetworkSwitchQosRule(hq, a["id"], dstPortRange="3000-3100")
+        check("updateNetworkSwitchQosRule", s.getNetworkSwitchQosRule(hq, a["id"]) == a and a["dstPortRange"] == "3000-3100", a)
+        order = s.updateNetworkSwitchQosRulesOrder(hq, [b["id"], a["id"]])
+        check("updateNetworkSwitchQosRulesOrder", s.getNetworkSwitchQosRulesOrder(hq) == order and [r["id"] for r in s.getNetworkSwitchQosRules(hq)] == [b["id"], a["id"]], order)
+        s.deleteNetworkSwitchQosRule(hq, b["id"])
+        check("deleteNetworkSwitchQosRule", s.getNetworkSwitchQosRulesOrder(hq)["ruleIds"] == [a["id"]])
+
+        m = s.updateNetworkSwitchDscpToCosMappings(hq, [{"dscp": 1, "cos": 1, "title": "Video"}])
+        check("updateNetworkSwitchDscpToCosMappings", s.getNetworkSwitchDscpToCosMappings(hq) == m and m["mappings"][0]["title"] == "Video", m)
+        reset = s.updateNetworkSwitchDscpToCosMappings(hq, [])
+        check("updateNetworkSwitchDscpToCosMappings resets", len(reset["mappings"]) == 6, reset)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

@@ -49,6 +49,8 @@ function batchJson(org, b, { list = false } = {}) {
 function createdId(body, params) {
   if (body == null || typeof body !== 'object') return null;
   if (body.id != null) return String(body.id);
+  // Switch access policies are numbered rather than given an ID.
+  if (body.accessPolicyNumber != null) return String(body.accessPolicyNumber);
   const key = Object.keys(body).find((k) => /Id$/.test(k) && !(k in params) && k !== 'organizationId' && k !== 'networkId' && typeof body[k] !== 'object');
   return key ? String(body[key]) : null;
 }
