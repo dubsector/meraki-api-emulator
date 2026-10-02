@@ -114,18 +114,19 @@ export const alertTitle = (type) => TYPES.find((t) => t[0] === type)?.[1] ?? typ
 // ── Delivery ──
 
 export const callbacksOf = (org) => (org.webhookCallbacks ??= new Map());
-const logsOf = (org) => (org.webhookLogs ??= []);
+// The counter lives with the entries so a rebuilt world shares both.
+export const logsOf = (org) => (org.webhookLogs ??= { seq: 0, items: [] });
 
 export function webhookLogs(org) {
-  return logsOf(org);
+  return logsOf(org).items;
 }
 
 function addLog(org, entry, now) {
   const logs = logsOf(org);
-  entry.seq = org.webhookLogSeq = (org.webhookLogSeq ?? 0) + 1;
-  logs.push(entry);
-  const keep = logs.filter((l) => l.at >= now - LOG_DAYS * DAY).slice(-MAX_LOGS);
-  if (keep.length !== logs.length) org.webhookLogs = keep;
+  entry.seq = ++logs.seq;
+  logs.items.push(entry);
+  const keep = logs.items.filter((l) => l.at >= now - LOG_DAYS * DAY).slice(-MAX_LOGS);
+  if (keep.length !== logs.items.length) logs.items = keep;
 }
 
 export function newWebhookId(world, org, kind) {
@@ -137,7 +138,8 @@ async function post(url, body, headers) {
   const started = performance.now();
   try {
     const res = await fetch(url, { method: 'POST', headers, body, redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS) });
-    await res.arrayBuffer().catch(() => {});
+    // Only the status matters, so a large or endless answer is never read.
+    await res.body?.cancel().catch(() => {});
     return { code: res.status, ms: Math.round(performance.now() - started) };
   } catch {
     return { code: 0, ms: Math.round(performance.now() - started) };
@@ -170,9 +172,18 @@ export async function deliver(ctx, net, job, { url, template, data, org = net.or
     }
     if (attempt === ATTEMPTS - 1) break;
     job.status = 'retrying';
-    await new Promise((r) => setTimeout(r, RETRY_MS[attempt]));
+    await new Promise((r) => setTimeout(r, RETRY_MS[attempt]).unref());
   }
   job.status = 'abandoned';
+}
+
+// A webhook receiver's URL must be http or https.
+export function checkHttpUrl(url, name) {
+  let parsed = null;
+  try {
+    parsed = new URL(url);
+  } catch {}
+  if (!parsed || !/^https?:$/.test(parsed.protocol)) throw badRequest(`'${name}' must be an http or https URL`);
 }
 
 // ── API callbacks ──
@@ -196,11 +207,7 @@ export function newCallback(ctx, net, given, org = net.org) {
     secret = c.httpServerSecrets?.[server.id] ?? '';
   } else {
     if (given.url == null || given.sharedSecret == null) throw badRequest("'callback' needs either 'httpServer.id' or both 'url' and 'sharedSecret'");
-    let parsed = null;
-    try {
-      parsed = new URL(given.url);
-    } catch {}
-    if (!parsed || !/^https?:$/.test(parsed.protocol)) throw badRequest("'callback.url' must be an http or https URL");
+    checkHttpUrl(given.url, 'callback.url');
     url = given.url;
     secret = given.sharedSecret;
   }

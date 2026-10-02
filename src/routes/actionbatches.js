@@ -19,7 +19,7 @@ const RUN_SECONDS = 2;
 const PER_ACTION = 0.1;
 const STATUSES = ['pending', 'completed', 'failed'];
 
-const storeOf = (org) => (org.actionBatches ??= { ids: 0, list: new Map() });
+export const storeOf = (org) => (org.actionBatches ??= { ids: 0, list: new Map() });
 const isRunning = (b) => b.confirmed && !b.done;
 const statusOf = (b) => (b.status.failed ? 'failed' : b.status.completed ? 'completed' : 'pending');
 
@@ -101,7 +101,8 @@ function confirm(ctx, org, batch) {
   }
   if (batch.callback) {
     const alertData = () => {
-      ctx.settle();
+      // Timers can fire a millisecond early, so settle up to the batch's end at least.
+      ctx.settle(batch.end);
       return batchJson(org, batch);
     };
     sendCallback(ctx, batch.callback.net, null, batch.callback, alertData, batch.end - now, org);

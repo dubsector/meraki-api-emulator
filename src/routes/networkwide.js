@@ -10,7 +10,7 @@ import { deviceStatus, eachOutage, lastReportedAt } from '../sim/outages.js';
 import { isOnline } from '../sim/presence.js';
 import { DAY, MIN, iso } from '../time.js';
 import { merge } from '../validate.js';
-import { pickTemplate } from '../webhooks.js';
+import { checkHttpUrl, pickTemplate } from '../webhooks.js';
 import { byId, devOf, netOf, orgOf } from './common.js';
 
 const MAX_ITEMS = 100;
@@ -148,11 +148,7 @@ function createServer(ctx) {
   const net = netOf(ctx);
   const c = configOf(net);
   const { name, url, sharedSecret, payloadTemplate } = ctx.body;
-  let parsed = null;
-  try {
-    parsed = new URL(url);
-  } catch {}
-  if (!parsed || !/^https?:$/.test(parsed.protocol)) throw badRequest("'url' must be an http or https URL");
+  checkHttpUrl(url, 'url');
   // The real API uses the base64 of the URL as the ID, so each URL can only be added once.
   const id = Buffer.from(url).toString('base64');
   if (c.httpServers.some((s) => s.id === id)) throw badRequest('This URL has already been added');
@@ -169,11 +165,9 @@ function updateServer(ctx) {
   const c = configOf(net);
   const server = serverOf(c, ctx.params.httpServerId);
   const { name, sharedSecret, payloadTemplate } = ctx.body;
+  const template = payloadTemplate?.payloadTemplateId != null || payloadTemplate?.name != null ? pickTemplate(net, payloadTemplate) : null;
   if (name != null) server.name = name;
-  if (payloadTemplate?.payloadTemplateId != null || payloadTemplate?.name != null) {
-    const template = pickTemplate(net, payloadTemplate);
-    server.payloadTemplate = { payloadTemplateId: template.payloadTemplateId, name: template.name };
-  }
+  if (template) server.payloadTemplate = { payloadTemplateId: template.payloadTemplateId, name: template.name };
   if (sharedSecret != null) (c.httpServerSecrets ??= {})[server.id] = sharedSecret;
   return server;
 }

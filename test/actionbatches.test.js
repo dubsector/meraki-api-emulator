@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { after, afterEach, before, describe, test } from 'node:test';
-import { sampleUrls, start } from './helpers.js';
+import { collect, sampleUrls, start } from './helpers.js';
 
 // A callback receiver that records each POST body.
-async function receiver() {
+async function receiver(status = 200) {
   const got = [];
   const server = createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
       got.push(JSON.parse(body));
-      res.writeHead(200);
+      res.writeHead(status);
       res.end();
     });
   });
@@ -263,6 +263,38 @@ describe('action batch callbacks', () => {
     assert.equal(status.status, 'completed');
     assert.equal((await sb.get(`/organizations/${org.id}/actionBatches/${r.body.id}`)).body.callback.status, 'completed');
     assert.match((await sb.post(`/organizations/${org.id}/actionBatches`, { callback: { httpServer: { id: 'nope' } }, actions: [{ resource: `/networks/${hq.id}`, operation: 'update' }] })).body.errors[0], /does not exist/);
+  });
+
+  test('a failed batch keeps callback IDs and webhook logs going', async () => {
+    const org = sb.world.orgs.find((o) => o.name === 'Acme Corporation');
+    const hq = org.networks.find((n) => n.name === 'HQ - San Francisco');
+    const B = `/organizations/${org.id}/actionBatches`;
+    const down = await receiver(500);
+    const sent = hook.got.length;
+    try {
+      const fail = { resource: `/networks/${hq.id}/appliance/vlans/999`, operation: 'destroy' };
+      const first = await sb.post(B, { confirmed: true, callback: { url: hook.url, sharedSecret: 's' }, actions: [fail] });
+      assert.equal(first.body.status.failed, true);
+      const second = await sb.post(B, { confirmed: true, callback: { url: hook.url, sharedSecret: 's' }, actions: [fail] });
+      assert.notEqual(second.body.callback.id, first.body.callback.id);
+
+      await until(() => hook.got.length === sent + 2);
+      // A test still retrying when a batch fails logs alongside the ones sent after it.
+      await sb.post(`/networks/${hq.id}/webhooks/webhookTests`, { url: down.url });
+      await until(() => down.got.length === 1);
+      await sb.post(B, { confirmed: true, actions: [fail] });
+      await until(() => down.got.length === 3);
+      await new Promise((r) => setTimeout(r, 50));
+      await sb.post(`/networks/${hq.id}/webhooks/webhookTests`, { url: hook.url });
+      await until(() => hook.got.length === sent + 3);
+      await new Promise((r) => setTimeout(r, 50));
+      const L = `/organizations/${org.id}/webhooks/logs`;
+      const all = (await sb.get(`${L}?perPage=1000`)).body;
+      assert.equal(all.length, hook.got.length + down.got.length);
+      assert.deepEqual(await collect(sb.get, `${L}?perPage=3`, 10), all);
+    } finally {
+      await down.close();
+    }
   });
 });
 
