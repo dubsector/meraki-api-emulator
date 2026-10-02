@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { API_PREFIX, createEmulator } from '../src/server.js';
+import { API_PREFIX, VERSION, createEmulator } from '../src/server.js';
 
 const HELP = `Usage: meraki-api-emulator [options]
 
@@ -56,7 +55,7 @@ if (values.help) {
   process.exit(0);
 }
 if (values.version) {
-  console.log(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
+  console.log(VERSION);
   process.exit(0);
 }
 
@@ -93,7 +92,7 @@ server.listen(port, host, () => {
   const shown = host === '0.0.0.0' || host === '::' ? 'localhost' : host.includes(':') ? `[${host}]` : host;
   const url = `http://${shown}:${addr.port}`;
   const lines = [
-    `Meraki API Emulator on ${url}`,
+    `Meraki API Emulator ${VERSION} on ${url}`,
     `  API base   ${url}${API_PREFIX}`,
     `  Auth       ${options.apiKey ? 'X-Cisco-Meraki-API-Key must match --api-key' : 'any non-empty X-Cisco-Meraki-API-Key'}`,
     `  Writes     ${options.readOnly ? 'off (--read-only)' : 'on, kept in memory until restart or POST /_emulator/reset'}`,

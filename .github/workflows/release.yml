@@ -73,9 +73,10 @@ jobs:
         if: github.event_name == 'push'
         run: |
           docker run -d --name emulator -p 8765:8765 "$IMAGE@$DIGEST"
-          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8765/healthz && break; sleep 1; done
+          for i in $(seq 1 30); do [ "$(docker inspect -f '{{.State.Health.Status}}' emulator)" = healthy ] && break; sleep 1; done
+          docker inspect -f '{{.State.Health.Status}}' emulator | grep -x healthy
           curl -fsS -H 'X-Cisco-Meraki-API-Key: ci' http://127.0.0.1:8765/api/v1/organizations
-          docker exec emulator node bin/meraki-api-emulator.js --version
+          test "$(docker exec emulator node bin/meraki-api-emulator.js --version)" = "${GITHUB_REF_NAME#v}"
           docker logs emulator
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
