@@ -8,6 +8,7 @@ import { WAN_RECV, WAN_SENT, clientUsage, networkTotals } from '../sim/usage.js'
 import { connectionStats, latencyStats } from '../sim/wireless.js';
 import { DAY, MIN, iso } from '../time.js';
 import { devOf, requireModel, round } from './common.js';
+import { hasFloorPlan } from './floorplans.js';
 import { lldpCdp } from './switch.js';
 
 const UPLINKS = ['wan1', 'wan2', 'wan3', 'cellular', 'wan4'];
@@ -44,6 +45,8 @@ export default [
     path: '/devices/{serial}',
     handler: (ctx) => {
       const dev = devOf(ctx);
+      const plan = ctx.body.floorPlanId;
+      if (plan != null && !hasFloorPlan(dev.net, plan)) throw badRequest(`Floor plan ${plan} does not exist in this device's network`);
       for (const k of ['name', 'tags', 'lat', 'lng', 'address', 'notes', 'floorPlanId']) if (ctx.body[k] !== undefined) dev[k] = ctx.body[k];
       return deviceJson(dev, { full: true });
     },

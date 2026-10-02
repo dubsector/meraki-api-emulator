@@ -359,7 +359,6 @@ export default [
   },
   write('updateNetworkGroupPolicy', 'PUT', 'groupPolicies/{groupPolicyId}', updatePolicy),
   write('deleteNetworkGroupPolicy', 'DELETE', 'groupPolicies/{groupPolicyId}', deletePolicy),
-  setting('getNetworkFloorPlans', 'floorPlans', () => []),
   setting('getNetworkTopologyLinkLayer', 'topology/linkLayer', (c, net, ctx) => topology(net, ctx.now)),
   {
     op: 'getDeviceManagementInterface',
