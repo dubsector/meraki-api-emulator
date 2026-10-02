@@ -769,7 +769,88 @@ def webhooks():
         rx.shutdown()
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks]
+@scenario
+def livetools():
+    import http.server
+    import threading
+
+    got = []
+
+    class Hook(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            got.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    rx = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Hook)
+    threading.Thread(target=rx.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{rx.server_address[1]}/cb"
+    try:
+        with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu:
+            d = dashboard(emu)
+            org = acme(d.organizations.getOrganizations())
+            net = next(n["id"] for n in d.organizations.getOrganizationNetworks(org) if n["name"] == "HQ - San Francisco")
+            devs = d.networks.getNetworkDevices(net)
+            sw, ap, mx = (next(x["serial"] for x in devs if x["model"].startswith(m)) for m in ("MS", "CW", "MX"))
+            lt = d.devices
+
+            def same(name, job, read, key):
+                check(f"{name} creates a job the GET returns", job["status"] == "complete" and read[key] == job[key] and read == emu.raw(job["url"]), (job, read))
+                return read
+
+            job = lt.createDeviceLiveToolsPing(sw, "8.8.8.8", count=3, callback={"url": url, "sharedSecret": "s3cret"})
+            read = same("createDeviceLiveToolsPing", job, lt.getDeviceLiveToolsPing(sw, job["pingId"]), "pingId")
+            check("getDeviceLiveToolsPing has three pings", read["results"]["sent"] == 3 and read["request"]["target"] == "8.8.8.8", read)
+            for _ in range(100):
+                cb = d.organizations.getOrganizationWebhooksCallbacksStatus(org, job["callback"]["id"])
+                if cb["status"] != "running":
+                    break
+                time.sleep(0.05)
+            check("getOrganizationWebhooksCallbacksStatus after a live tool callback", cb["status"] == "completed" and got and got[0]["alertData"] == read and got[0]["sharedSecret"] == "s3cret", (cb, got[:1]))
+            job = lt.createDeviceLiveToolsPingDevice(ap, count=2)
+            read = same("createDeviceLiveToolsPingDevice", job, lt.getDeviceLiveToolsPingDevice(ap, job["pingId"]), "pingId")
+            check("getDeviceLiveToolsPingDevice sends two", read["results"]["sent"] == 2, read)
+            job = lt.createDeviceLiveToolsArpTable(sw)
+            read = same("createDeviceLiveToolsArpTable", job, lt.getDeviceLiveToolsArpTable(sw, job["arpTableId"]), "arpTableId")
+            check(f"getDeviceLiveToolsArpTable lists entries ({len(read['entries'])})", len(read["entries"]) > 10, read["entries"][:1])
+            job = lt.createDeviceLiveToolsMacTable(sw)
+            read = same("createDeviceLiveToolsMacTable", job, lt.getDeviceLiveToolsMacTable(sw, job["macTableId"]), "macTableId")
+            mac = read["entries"][0]["mac"]
+            job = lt.createDeviceLiveToolsMacTable(sw, mac=mac.upper())
+            check("getDeviceLiveToolsMacTable filters by MAC", [e["mac"] for e in lt.getDeviceLiveToolsMacTable(sw, job["macTableId"])["entries"]] == [mac], job)
+            job = lt.createDeviceLiveToolsCableTest(sw, ["1", "2"])
+            read = same("createDeviceLiveToolsCableTest", job, lt.getDeviceLiveToolsCableTest(sw, job["cableTestId"]), "cableTestId")
+            check("getDeviceLiveToolsCableTest has a result per port", [r["port"] for r in read["results"]] == ["1", "2"] and all(len(r["pairs"]) == 4 for r in read["results"]), read)
+            job = lt.createDeviceLiveToolsLedsBlink(ap, 20)
+            same("createDeviceLiveToolsLedsBlink", job, lt.getDeviceLiveToolsLedsBlink(ap, job["ledsBlinkId"]), "ledsBlinkId")
+            job = lt.createDeviceLiveToolsWakeOnLan(mx, 10, "00:11:22:33:44:55")
+            same("createDeviceLiveToolsWakeOnLan", job, lt.getDeviceLiveToolsWakeOnLan(mx, job["wakeOnLanId"]), "wakeOnLanId")
+            job = lt.createDeviceLiveToolsPortsCycle(sw, ["3", "5-6"])
+            same("createDeviceLiveToolsPortsCycle", job, lt.getDeviceLiveToolsPortsCycle(sw, job["cyclePortId"]), "cyclePortId")
+            job = lt.createDeviceLiveToolsPortsStatus(sw)
+            read = same("createDeviceLiveToolsPortsStatus", job, lt.getDeviceLiveToolsPortsStatus(sw, job["jobId"]), "jobId")
+            statuses = d.switch.getDeviceSwitchPortsStatuses(sw, timespan=300)
+            check("getDeviceLiveToolsPortsStatus matches getDeviceSwitchPortsStatuses", [(r["portId"], r["status"]) for r in read["results"]] == [(int(s["portId"]), s["status"].lower()) for s in statuses], read["results"][:1])
+            job = lt.createDeviceLiveToolsPowerUsage(sw)
+            read = same("createDeviceLiveToolsPowerUsage", job, lt.getDeviceLiveToolsPowerUsage(sw, job["jobId"]), "jobId")
+            check("getDeviceLiveToolsPowerUsage reports watts", read["results"]["peak"] >= read["results"]["instant"] > 0, read)
+            job = lt.createDeviceLiveToolsThroughputTest(mx)
+            same("createDeviceLiveToolsThroughputTest", job, lt.getDeviceLiveToolsThroughputTest(mx, job["throughputTestId"]), "throughputTestId")
+            check("createDeviceLiveToolsThroughputTest reports a speed", job["result"]["speeds"]["downstream"] > 0, job)
+            check("rebootDevice", lt.rebootDevice(ap) == {"success": True})
+            try:
+                lt.createDeviceLiveToolsThroughputTest(ap)
+                check("createDeviceLiveToolsThroughputTest on an AP", False, "no error")
+            except meraki.APIError as e:
+                check("createDeviceLiveToolsThroughputTest on an AP answers 400", e.status == 400, e.status)
+    finally:
+        rx.shutdown()
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

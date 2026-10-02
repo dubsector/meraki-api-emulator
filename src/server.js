@@ -17,6 +17,7 @@ import devices from './routes/devices.js';
 import firmware from './routes/firmware.js';
 import floorplans from './routes/floorplans.js';
 import licenses from './routes/licenses.js';
+import livetools from './routes/livetools.js';
 import networks from './routes/networks.js';
 import orgnetworks from './routes/orgnetworks.js';
 import networkwide from './routes/networkwide.js';
@@ -50,7 +51,7 @@ const GLUED_URL = new RegExp(`^${API_PREFIX}https?://`, 'i');
 export const SDK_HINT = 'This path has a full URL appended to the base URL. The Meraki Python SDK sends that when paging from a host outside meraki.com: use base_url="http://emulator.meraki.com/api/v1" with requests_proxy set to the emulator (see the README)';
 export const CONNECT_HINT = 'The emulator speaks plain HTTP, use an http:// base URL';
 
-export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...licenses, ...templates, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...clients, ...networkwide, ...firmware, ...floorplans, ...appliance, ...switches, ...switchports, ...stacks, ...wireless, ...wirelessstats, ...orgwireless, ...ssids, ...devices, ...webhooks].map((r) => ({ method: 'GET', ...r }));
+export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...licenses, ...templates, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...clients, ...networkwide, ...firmware, ...floorplans, ...appliance, ...switches, ...switchports, ...stacks, ...wireless, ...wirelessstats, ...orgwireless, ...ssids, ...devices, ...livetools, ...webhooks].map((r) => ({ method: 'GET', ...r }));
 
 // Network settings that come from the config template a network is bound to.
 const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance|wireless|switch\/settings|groupPolicies|syslogServers|devices\/syslog|snmp|alerts|webhooks\/(?:httpServers|payloadTemplates)|settings)\b/;
@@ -137,6 +138,14 @@ export function createEmulator(options = {}) {
   let world = buildWorld({ seed: opts.seed, bootTime });
   const routes = compile(ROUTES);
   const limiter = opts.rateLimit > 0 ? new RateLimiter(opts.rateLimit, opts.burst) : null;
+  // Live tools and reboot also have per-device limits, one bucket per operation and device.
+  const deviceLimiters = new Map();
+  const deviceWait = (route, serial) => {
+    if (!limiter || !route.perDevice || !serial) return 0;
+    const [seconds, burst] = route.perDevice;
+    if (!deviceLimiters.has(route.op)) deviceLimiters.set(route.op, new RateLimiter(1 / seconds, burst));
+    return deviceLimiters.get(route.op).take(serial);
+  };
   const apiLog = new ApiLog();
   // The request log names each key by a random ID for this run, never the key itself.
   const clientIds = new Map();
@@ -227,9 +236,11 @@ export function createEmulator(options = {}) {
       return send(res, 405, { errors: [`${req.method} is not supported on this path`] }, { Allow: allowed.join(', ') });
     }
     if (!params) return send(res, 400, { errors: ['Malformed URL encoding'] });
+    const deviceBusy = deviceWait(route, params.serial);
+    if (deviceBusy > 0) return send(res, 429, { errors: ['Too many requests for this device'] }, { 'Retry-After': String(Math.max(1, Math.ceil(deviceBusy))) });
 
     const proto = req.headers['x-forwarded-proto'] || 'http';
-    const ctx = { world, params, query: url.searchParams, now: clock(), clock, webhooks: !opts.noWebhooks, url, origin: `${proto}://${req.headers.host || 'localhost'}`, headers: {}, apiLog, body: null };
+    const ctx = { world, params, query: url.searchParams, now: clock(), clock, frozen: opts.now != null, webhooks: !opts.noWebhooks, url, origin: `${proto}://${req.headers.host || 'localhost'}`, headers: {}, apiLog, body: null };
     try {
       if (write) ctx.body = validateBody(route.op, await parseBody(req));
       if (write && TEMPLATED.test(route.path) && world.networkById.get(params.networkId)?.template) {

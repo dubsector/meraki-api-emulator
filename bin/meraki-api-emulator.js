@@ -17,7 +17,7 @@ Options:
       --burst <n>         Requests allowed at once before throttling (default 20)
       --now <time>        Freeze the clock (ISO 8601 or epoch seconds)
       --read-only         Refuse PUT, POST and DELETE with 405
-      --no-webhooks       Record webhook tests as delivered without sending them
+      --no-webhooks       Record webhook tests and callbacks as delivered without sending them
   -q, --quiet             Don't log requests
   -h, --help              Show this help
   -v, --version           Show the version
