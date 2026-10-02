@@ -930,7 +930,48 @@ def camera():
         check("deleting the profile and broker takes them off the camera", c.getDeviceCameraQualityAndRetention(serial)["profileId"] is None and c.getDeviceCameraSense(serial)["mqttBrokerId"] is None and n.getNetworkMqttBrokers(net) == [])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera]
+@scenario
+def shaping():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        a, n = d.appliance, d.networks
+        org = acme(d.organizations.getOrganizations())
+        net = next(x["id"] for x in d.organizations.getOrganizationNetworks(org) if x["name"] == "HQ - San Francisco")
+
+        g = a.updateNetworkApplianceTrafficShaping(net, globalBandwidthLimits={"limitUp": 2048, "limitDown": 5120})
+        check("updateNetworkApplianceTrafficShaping", a.getNetworkApplianceTrafficShaping(net) == g and g["globalBandwidthLimits"]["limitUp"] == 2048, g)
+        cats = n.getNetworkTrafficShapingApplicationCategories(net)["applicationCategories"]
+        dscp = n.getNetworkTrafficShapingDscpTaggingOptions(net)
+        check("getNetworkTrafficShapingApplicationCategories and getNetworkTrafficShapingDscpTaggingOptions", len(cats) > 0 and any(o["dscpTagValue"] == 46 for o in dscp), dscp)
+        rules = a.updateNetworkApplianceTrafficShapingRules(net, defaultRulesEnabled=True, rules=[{"definitions": [{"type": "applicationCategory", "value": {"id": cats[0]["id"]}}, {"type": "host", "value": "video.example.com"}], "perClientBandwidthLimits": {"settings": "custom", "bandwidthLimits": {"limitUp": 1000, "limitDown": 5000}}, "dscpTagValue": dscp[-1]["dscpTagValue"], "priority": "high"}])
+        check("updateNetworkApplianceTrafficShapingRules names the category", a.getNetworkApplianceTrafficShapingRules(net) == rules and rules["rules"][0]["definitions"][0]["value"]["name"] == cats[0]["name"], rules)
+        bw = a.updateNetworkApplianceTrafficShapingUplinkBandwidth(net, bandwidthLimits={"wan2": {"limitUp": 20000, "limitDown": None}})
+        check("updateNetworkApplianceTrafficShapingUplinkBandwidth", a.getNetworkApplianceTrafficShapingUplinkBandwidth(net) == bw and bw["bandwidthLimits"]["wan2"] == {"limitUp": 20000, "limitDown": None}, bw)
+
+        cls = a.createNetworkApplianceTrafficShapingCustomPerformanceClass(net, "Video", maxLatency=150, maxJitter=40, maxLossPercentage=2)
+        cid = cls["customPerformanceClassId"]
+        upd = a.updateNetworkApplianceTrafficShapingCustomPerformanceClass(net, cid, maxJitter=30)
+        check("createNetworkApplianceTrafficShapingCustomPerformanceClass, then list, get and update it", a.getNetworkApplianceTrafficShapingCustomPerformanceClasses(net) == [upd] and a.getNetworkApplianceTrafficShapingCustomPerformanceClass(net, cid) == upd and upd["maxJitter"] == 30, upd)
+        sel = a.updateNetworkApplianceTrafficShapingUplinkSelection(net, loadBalancingEnabled=True, wanTrafficUplinkPreferences=[{"trafficFilters": [{"type": "custom", "value": {"protocol": "tcp", "source": {"cidr": "192.168.10.0/24"}, "destination": {"port": "443"}}}], "preferredUplink": "wan2"}], vpnTrafficUplinkPreferences=[{"trafficFilters": [{"type": "application", "value": {"id": cats[0]["applications"][0]["id"]}}], "preferredUplink": "bestForVoIP", "failOverCriterion": "poorPerformance", "performanceClass": {"type": "custom", "customPerformanceClassId": cid}}])
+        check("updateNetworkApplianceTrafficShapingUplinkSelection", a.getNetworkApplianceTrafficShapingUplinkSelection(net) == sel and sel["defaultUplink"] == "wan1" and sel["vpnTrafficUplinkPreferences"][0]["performanceClass"]["customPerformanceClassId"] == cid, sel)
+        sdwan = a.updateNetworkApplianceSdwanInternetPolicies(net, wanTrafficUplinkPreferences=[{"trafficFilters": [{"type": "custom", "value": {"protocol": "udp", "source": {}, "destination": {"port": "5060"}}}], "preferredUplink": "bestForVoIP", "performanceClass": {"type": "builtin", "builtinPerformanceClassName": "VoIP"}}])
+        check("updateNetworkApplianceSdwanInternetPolicies sets the WAN preference rules", a.getNetworkApplianceTrafficShapingUplinkSelection(net)["wanTrafficUplinkPreferences"][0]["preferredUplink"] == "bestForVoIP", sdwan)
+        try:
+            a.deleteNetworkApplianceTrafficShapingCustomPerformanceClass(net, cid)
+            check("deleteNetworkApplianceTrafficShapingCustomPerformanceClass while in use", False, "no error")
+        except meraki.APIError as e:
+            check("deleteNetworkApplianceTrafficShapingCustomPerformanceClass while in use answers 400", e.status == 400, e.status)
+        a.updateNetworkApplianceTrafficShapingUplinkSelection(net, vpnTrafficUplinkPreferences=[])
+        a.deleteNetworkApplianceTrafficShapingCustomPerformanceClass(net, cid)
+        check("deleteNetworkApplianceTrafficShapingCustomPerformanceClass", a.getNetworkApplianceTrafficShapingCustomPerformanceClasses(net) == [])
+
+        ex = a.updateNetworkApplianceTrafficShapingVpnExclusions(net, custom=[{"protocol": "tcp", "destination": "192.168.3.0/24", "port": "8000"}], majorApplications=[{"id": "meraki:vpnExclusion/application/2"}])
+        rows = a.getOrganizationApplianceTrafficShapingVpnExclusionsByNetwork(org, perPage=3, total_pages=-1)
+        rows = rows["items"] if isinstance(rows, dict) else rows
+        check("updateNetworkApplianceTrafficShapingVpnExclusions and getOrganizationApplianceTrafficShapingVpnExclusionsByNetwork", ex["majorApplications"][0]["name"] == "Office 365 Sharepoint" and len(rows) == 5 and next(r for r in rows if r["networkId"] == net) == ex, rows)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
