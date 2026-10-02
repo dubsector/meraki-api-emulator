@@ -140,7 +140,9 @@ def ids(rows, key="id"):
 
 @scenario
 def paging():
-    with Emulator("--rate-limit", "0") as emu:
+    # Pinned too: today's rows in a client's traffic history grow as the
+    # clock runs, so a page read later than the reference copy can differ.
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
         orgs = emu.raw("/organizations")
         org = acme(orgs)
         for iterator in (False, True):
@@ -181,6 +183,10 @@ def paging():
         check(f"networkIds[] and productTypes[] filters ({len(want)} rows)", want and ids(got, "serial") == ids(want, "serial"), (len(got), len(want)))
         got = d.organizations.getOrganizationDevicesStatuses(org, total_pages="all", statuses=["offline", "dormant"])
         check(f"statuses[] filter ({len(got)} rows)", all(x["status"] in ("offline", "dormant") for x in got))
+        # direction="prev" walks back from the last page to a short first one.
+        want = ids(emu.raw(f"/organizations/{org}/devices?perPage=1000"), "serial")
+        got = ids(d.organizations.getOrganizationDevices(org, total_pages="all", perPage=7, direction="prev", endingBefore="zzzzzzzzzz"), "serial")
+        check(f"getOrganizationDevices direction=prev, all pages ({len(want)} rows)", len(got) == len(want) and sorted(got) == sorted(want), f"got {len(got)}")
         hq = next(n["id"] for n in nets if n["name"] == "HQ - San Francisco")
         r = d.networks.getNetworkEvents(hq, productType="wireless", perPage=20, includedEventTypes=["association"])
         check("events includedEventTypes[] filter", r["events"] and all(e["type"] == "association" for e in r["events"]), {e["type"] for e in r["events"]})

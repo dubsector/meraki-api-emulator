@@ -132,6 +132,20 @@ describe('server', () => {
     assert.equal(new Set(all.map((d) => d.serial)).size, all.length);
   });
 
+  test('paging back from the last page covers every item once', async () => {
+    const org = sb.world.orgs[0];
+    const all = (await sb.get(`/organizations/${org.id}/devices?perPage=1000`)).body.map((d) => d.serial);
+    const back = [];
+    let url = `/organizations/${org.id}/devices?perPage=7&endingBefore=zzzzzzzzzz`;
+    while (url) {
+      const r = await sb.get(url);
+      back.unshift(...r.body.map((d) => d.serial));
+      url = relLink(r.link, 'prev');
+    }
+    assert.ok(all.length % 7, 'the first page is a short one');
+    assert.deepEqual(back, all);
+  });
+
   test('last page has no next link', async () => {
     const org = sb.world.orgs[0];
     const r = await sb.get(`/organizations/${org.id}/devices?perPage=1000`);
