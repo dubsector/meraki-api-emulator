@@ -332,6 +332,7 @@ export function createEmulator(options = {}) {
     const list = actions.map((a, i) => {
       const fail = (why) => errors.push(`Action ${i + 1}: ${why}`) && null;
       const method = BATCH_METHODS[a.operation] ?? 'POST';
+      if (typeof a.resource !== 'string') return fail("'resource' is required");
       let path = a.resource.startsWith(API_PREFIX + '/') ? a.resource.slice(API_PREFIX.length) : a.resource;
       path = path.replace(/\/+$/, '');
       if (!path.startsWith('/') || /[?#]/.test(path)) return fail(`'${a.resource}' is not a resource path`);

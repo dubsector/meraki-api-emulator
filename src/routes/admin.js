@@ -58,7 +58,7 @@ function checkPrivileges(org, b) {
 function createAdmin(ctx) {
   const org = orgOf(ctx);
   const b = ctx.body;
-  const email = b.email.trim().toLowerCase();
+  const email = String(b.email ?? '').trim().toLowerCase();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw badRequest("'email' must be an email address");
   if (org.admins.some((a) => a.email === email)) throw badRequest('Email has already been taken');
   if (org.admins.length >= MAX_ADMINS) throw badRequest(`Organizations are limited to ${MAX_ADMINS} admins in the emulator`);

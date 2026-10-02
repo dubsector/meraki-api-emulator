@@ -16,7 +16,7 @@ const MAX_SWAPS = 100;
 
 function checkDetails(details, at) {
   for (const [i, d] of details.entries()) {
-    if (!DETAILS.includes(d.name.toLowerCase())) throw badRequest(`'${at}[${i}].name' must be one of: ${DETAILS.join(', ')}`);
+    if (!DETAILS.includes(String(d.name ?? '').toLowerCase())) throw badRequest(`'${at}[${i}].name' must be one of: ${DETAILS.join(', ')}`);
   }
 }
 
@@ -31,9 +31,10 @@ function locate(world, org, serial) {
 
 function claim(ctx) {
   const net = netOf(ctx);
-  const { serials, detailsByDevice = [] } = ctx.body;
+  const { serials } = ctx.body;
+  const detailsByDevice = ctx.body.detailsByDevice ?? [];
   if (!serials.length) throw badRequest("'serials' must not be empty");
-  for (const [i, d] of detailsByDevice.entries()) checkDetails(d.details, `detailsByDevice[${i}].details`);
+  for (const [i, d] of detailsByDevice.entries()) checkDetails(d.details ?? [], `detailsByDevice[${i}].details`);
   const atomic = boolParam(ctx.query, 'addAtomically', true);
   const ok = [];
   const errors = [];

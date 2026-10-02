@@ -159,7 +159,7 @@ function updateFirmware(ctx) {
   if (b.upgradeWindow?.dayOfWeek) win.dayOfWeek = b.upgradeWindow.dayOfWeek.slice(0, 3);
   if (b.upgradeWindow?.hourOfDay) win.hourOfDay = b.upgradeWindow.hourOfDay;
   const tz = b.timezone ?? zoneOf(net);
-  const plans = Object.entries(b.products ?? {}).map(([p, body]) => [p, planProduct(ctx, net, p, body, win, tz, ctx.now)]);
+  const plans = Object.entries(b.products ?? {}).map(([p, body]) => [p, planProduct(ctx, net, p, body ?? {}, win, tz, ctx.now)]);
   const state = stateOf(net);
   state.window = win;
   state.timezone = tz;
@@ -237,7 +237,7 @@ function groupJson(g) {
 const groupRef = (g) => ({ id: g.id, name: g.name, description: g.description });
 
 function checkText(v, name) {
-  if (v.length < 1 || v.length > 255) throw badRequest(`'${name}' must be 1 to 255 characters`);
+  if (v == null || v.length < 1 || v.length > 255) throw badRequest(`'${name}' must be 1 to 255 characters`);
 }
 
 // Devices and stacks named in the body. A switch in a stack goes in through its stack.
@@ -305,7 +305,8 @@ function deleteGroup(ctx) {
 // Listed groups move to the front in the order given; the rest keep their order after them.
 function updateStages(ctx) {
   const { net, staged } = stagedOf(ctx);
-  const listed = (ctx.body._json ?? []).map(({ group }) => {
+  const listed = (ctx.body._json ?? []).map(({ group }, i) => {
+    if (group?.id == null) throw badRequest(`'_json[${i}].group.id' is required`);
     const g = staged.groups.find((x) => x.id === group.id);
     if (!g) throw badRequest(`Staged upgrade group '${group.id}' is not in this network`);
     return g;
