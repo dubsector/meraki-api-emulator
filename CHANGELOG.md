@@ -2,6 +2,10 @@
 
 Versions follow [semantic versioning](https://semver.org/). While the version starts with `0.`, a new minor version can change responses, IDs or defaults, and a patch version only fixes bugs.
 
+## Unreleased
+
+- The Docker image no longer includes npm and npx. They carried the image's only known vulnerabilities, and the emulator doesn't use them.
+
 ## 0.1.0
 
 First release. The emulator answers 317 operations of the Meraki Dashboard API v1 (176 reads and 141 writes), all listed in [ENDPOINTS.md](ENDPOINTS.md).

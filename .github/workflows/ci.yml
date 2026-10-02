@@ -35,6 +35,21 @@ jobs:
         with:
           persist-credentials: false
       - run: docker build -t meraki-api-emulator .
+      # Fails on high and critical vulnerabilities that have a fix. trivy.yml rescans the published image weekly.
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: meraki-api-emulator
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+      - name: Scan the Dockerfile
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: Dockerfile
+          severity: HIGH,CRITICAL
+          exit-code: 1
       - name: Smoke test
         run: |
           docker run -d --name emulator -p 8765:8765 meraki-api-emulator
