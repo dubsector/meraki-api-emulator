@@ -46,6 +46,20 @@ export function clientSignal(c, t) {
   return { rssi, snr: rssi - NOISE_FLOOR[c.band] };
 }
 
+// Top PHY rate per spatial stream in Mbps (802.11ax at each band's width).
+const PHY_MAX = { 2.4: 143.4, 5: 286.8, 6: 600.4 };
+
+// A client's link rates in kbps at time t. A better signal means a higher MCS,
+// and each 5-minute slot adds a little noise. IoT sensors are 802.11n with one
+// stream, scanners have one stream, everything else two. Upload runs lower.
+export function phyRate(c, t) {
+  const k = derive(c.key, 'phy');
+  const max = c.kindName === 'iot' ? 72.2 : PHY_MAX[c.band] * (c.kindName === 'scanner' ? 1 : 2);
+  const fit = Math.min(1, Math.max(0.1, (clientSignal(c, t).snr - 8) / 32));
+  const down = Math.min(max, max * fit * lognoise(k, Math.floor(t / 300), 0.08)) * 1000;
+  return { down, up: down * (0.75 + unit(k, 0) * 0.2) };
+}
+
 // A BSSID per SSID and band, derived from the AP's MAC like Meraki does.
 export function bssid(ap, band, ssidNumber) {
   const b = ap.mac.split(':').map((h) => parseInt(h, 16));

@@ -20,6 +20,9 @@ export function connectionStats(clients, t0, t1) {
 
 const BUCKETS = [0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
 const CLASSES = { backgroundTraffic: 1.8, bestEffortTraffic: 1, videoTraffic: 0.7, voiceTraffic: 0.45 };
+export const ACCESS_CATEGORIES = Object.keys(CLASSES);
+// Share of the sampled packets in each class.
+const SHARE = (name) => (name === 'bestEffortTraffic' ? 0.7 : 0.1);
 
 function erf(x) {
   const t = 1 / (1 + 0.3275911 * Math.abs(x));
@@ -60,16 +63,44 @@ export function latencyStats(aps, t0, t1, fields) {
     weight += Math.max(1, l.samples);
     samples += l.samples;
   }
-  const be = weight ? weighted / weight : 0;
+  return latencyJson(weight ? weighted / weight : 0, samples, fields);
+}
+
+// A client sees its AP's latency, sampled in proportion to its own airtime.
+export function clientLatency(c, t0, t1) {
+  const seconds = presenceIn(c, t0, t1)?.seconds ?? 0;
+  return { be: seconds ? apLatency(c.ap, t0, t1).be : 0, samples: Math.round(seconds / 4) };
+}
+
+// Average latency in one traffic class, or across all of them by sample share.
+export function classLatency(be, name) {
+  if (name) return be * CLASSES[name];
+  return Object.entries(CLASSES).reduce((sum, [n, f]) => sum + be * f * SHARE(n), 0);
+}
+
+export function latencyJson(be, samples, fields) {
   const want = fields ? fields.split(',').map((f) => f.trim()) : ['rawDistribution', 'avg'];
   const out = {};
   for (const [name, factor] of Object.entries(CLASSES)) {
     const avg = Math.round(be * factor * 100) / 100;
-    const n = Math.round(samples * (name === 'bestEffortTraffic' ? 0.7 : 0.1));
+    const n = Math.round(samples * SHARE(name));
     const entry = {};
     if (want.includes('rawDistribution')) entry.rawDistribution = avg > 0 ? distribution(avg, n) : {};
     if (want.includes('avg')) entry.avg = avg;
     out[name] = entry;
+  }
+  return out;
+}
+
+// Sample counts per class keyed by bucket in the latency history's format
+// ("0.5" for the first bucket, then "1.0", "2.0" and so on), from the same
+// distribution latencyStats reports.
+export function latencyBins(be, samples) {
+  const out = {};
+  for (const [name, factor] of Object.entries(CLASSES)) {
+    const avg = Math.round(be * factor * 100) / 100;
+    const counts = avg > 0 ? distribution(avg, Math.round(samples * SHARE(name))) : {};
+    out[name] = Object.fromEntries(BUCKETS.map((b) => [b ? b.toFixed(1) : '0.5', counts[String(b)] ?? 0]));
   }
   return out;
 }

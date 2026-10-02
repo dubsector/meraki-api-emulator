@@ -26,7 +26,7 @@ export function wirelessNet(ctx) {
   return net;
 }
 
-function bandParam(q) {
+export function bandParam(q) {
   const band = q.get('band');
   if (band && !BANDS.includes(band)) throw badRequest("'band' must be one of: 2.4, 5, 6");
   return band;
@@ -251,7 +251,7 @@ function byBand(aps, t0, t1) {
   });
 }
 
-function historyWindow(ctx, resolutions) {
+export function historyWindow(ctx, resolutions) {
   const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 31 * DAY, defaultSpan: 7 * DAY, lookback: 31 * DAY });
   const res = resolutionParam(ctx.query, resolutions, 86400, t1 - t0);
   const out = [];
@@ -339,7 +339,7 @@ function failedConnections(ctx) {
 
 // ── Organization-wide ──
 
-function orgAps(ctx) {
+export function orgAps(ctx) {
   const networkIds = arrayParam(ctx.query, 'networkIds');
   const serials = arrayParam(ctx.query, 'serials');
   return orgOf(ctx)

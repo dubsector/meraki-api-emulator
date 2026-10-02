@@ -54,6 +54,7 @@ const CONDITIONAL = [
   [/\.encryption\.certificate$/, 'getOrganizationDevicesSyslogServersByNetwork', 'encrypted syslog servers (the seeded ones are plain UDP)'],
   [/^\[\]\.destinations\.(push|sms)$/, 'getNetworkAlertsHistory', 'alerts sent to all admins or to SMS numbers (seeded settings use neither)'],
   [/^\[\]\.upgrade\.staged$/, 'getOrganizationFirmwareUpgradesByDevice', 'a staged upgrade event (networks start with none)'],
+  [/^\[\]\.captureId$/, 'getNetworkWirelessClientConnectivityEvents', 'events that trigger a packet capture (the emulator triggers none)'],
 ];
 
 function conditional(op, field) {

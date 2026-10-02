@@ -1,7 +1,7 @@
 """Runs the official Meraki Python SDK against the emulator.
 
     python -m pip install --require-hashes -r scripts/sdk-requirements.txt
-    python scripts/sdk-check.py [paging events writes ratelimit faults aio summaries]
+    python scripts/sdk-check.py [paging events writes ratelimit faults aio summaries wirelessstats]
 
 Each scenario starts its own emulator from this checkout (needs node on PATH)
 with the flags it tests. The SDK only follows Link URLs on meraki.com hosts, so
@@ -518,7 +518,55 @@ def summaries():
         check(f"getOrganizationFirmwareUpgradesByDevice perPage=5, all pages ({len(rows)} rows)", len(rows) == len(aps) and all(r["upgrade"]["id"] == sched[0]["upgradeId"] for r in rows), len(rows))
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries]
+@scenario
+def wirelessstats():
+    # Pinned like the events scenario, so each window holds the same sessions.
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        org = acme(d.organizations.getOrganizations())
+        nets = d.organizations.getOrganizationNetworks(org)
+        hq = next(n["id"] for n in nets if n["name"] == "HQ - San Francisco")
+        week = 7 * 86400
+        got = d.networks.getNetworkNetworkHealthChannelUtilization(hq, total_pages="all", perPage=3, timespan=3600)
+        want = emu.raw(f"/networks/{hq}/networkHealth/channelUtilization?timespan=3600&perPage=100")
+        check(f"getNetworkNetworkHealthChannelUtilization perPage=3, all pages ({len(want)} APs)", len(want) == 10 and got == want, len(got))
+
+        rows = d.wireless.getNetworkWirelessClientsConnectionStats(hq, timespan=week)
+        net = d.wireless.getNetworkWirelessConnectionStats(hq, timespan=week)
+        check(f"getNetworkWirelessClientsConnectionStats adds up to the network ({len(rows)} clients)", rows and all(sum(r["connectionStats"][k] for r in rows) == v for k, v in net.items()), net)
+        got = d.wireless.getNetworkWirelessClientsLatencyStats(hq, timespan=week, fields="avg")
+        check(f"getNetworkWirelessClientsLatencyStats ({len(got)} clients)", got and got == emu.raw(f"/networks/{hq}/wireless/clients/latencyStats?timespan={week}&fields=avg"), got[:1])
+        row = max(rows, key=lambda r: r["connectionStats"]["success"])
+        mac = row["mac"]
+        one = d.wireless.getNetworkWirelessClientConnectionStats(hq, mac, timespan=week)
+        check("getNetworkWirelessClientConnectionStats", one["mac"] == mac and one["connectionStats"]["success"] == row["connectionStats"]["success"], one)
+        got = d.wireless.getNetworkWirelessClientLatencyStats(hq, mac, timespan=week)
+        check("getNetworkWirelessClientLatencyStats", got == next(r for r in emu.raw(f"/networks/{hq}/wireless/clients/latencyStats?timespan={week}") if r["mac"] == mac), got)
+        events = d.wireless.getNetworkWirelessClientConnectivityEvents(hq, mac, total_pages="all", perPage=3, timespan=week)
+        want = emu.raw(f"/networks/{hq}/wireless/clients/{mac}/connectivityEvents?timespan={week}")
+        assoc = sum(1 for e in events if e["type"] == "assoc" and e["severity"] == "good")
+        check(f"getNetworkWirelessClientConnectivityEvents perPage=3, all pages ({len(want)} events)", want and events == want and assoc == one["connectionStats"]["success"], len(events))
+        got = d.wireless.getNetworkWirelessClientLatencyHistory(hq, mac, timespan=week)
+        check(f"getNetworkWirelessClientLatencyHistory ({len(got)} days)", len(got) == 8 and got == emu.raw(f"/networks/{hq}/wireless/clients/{mac}/latencyHistory?timespan={week}"), len(got))
+
+        got = d.wireless.getNetworkWirelessDataRateHistory(hq, timespan=86400, resolution=3600)
+        check(f"getNetworkWirelessDataRateHistory ({len(got)} hours)", len(got) == 24 and got == emu.raw(f"/networks/{hq}/wireless/dataRateHistory?timespan=86400&resolution=3600"), len(got))
+        got = d.wireless.getNetworkWirelessLatencyHistory(hq, timespan=86400, resolution=3600, accessCategory="voiceTraffic")
+        check(f"getNetworkWirelessLatencyHistory ({len(got)} hours)", len(got) == 24 and got == emu.raw(f"/networks/{hq}/wireless/latencyHistory?timespan=86400&resolution=3600&accessCategory=voiceTraffic"), len(got))
+        got = d.wireless.getNetworkWirelessMeshStatuses(hq, total_pages="all")
+        check("getNetworkWirelessMeshStatuses is empty", got == [], got)
+
+        got = d.wireless.getOrganizationWirelessClientsConnectionsImpactedByNetworkBySsid(org, total_pages="all", perPage=3, timespan=week)
+        got = got["items"] if isinstance(got, dict) else got
+        want = emu.raw(f"/organizations/{org}/wireless/clients/connections/impacted/byNetwork/bySsid?timespan={week}&perPage=1000")["items"]
+        check(f"getOrganizationWirelessClientsConnectionsImpactedByNetworkBySsid perPage=3, all pages ({len(want)} SSIDs)", len(want) > 3 and got == want, len(got))
+        got = d.wireless.getOrganizationWirelessClientsOverviewByDevice(org, total_pages="all", perPage=3)
+        got = got["items"] if isinstance(got, dict) else got
+        want = emu.raw(f"/organizations/{org}/wireless/clients/overview/byDevice")["items"]
+        check(f"getOrganizationWirelessClientsOverviewByDevice perPage=3, all pages ({len(want)} APs)", len(want) == 25 and got == want, len(got))
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
