@@ -55,6 +55,7 @@ const CONDITIONAL = [
   [/^\[\]\.destinations\.(push|sms)$/, 'getNetworkAlertsHistory', 'alerts sent to all admins or to SMS numbers (seeded settings use neither)'],
   [/^\[\]\.upgrade\.staged$/, 'getOrganizationFirmwareUpgradesByDevice', 'a staged upgrade event (networks start with none)'],
   [/^\[\]\.captureId$/, 'getNetworkWirelessClientConnectivityEvents', 'events that trigger a packet capture (the emulator triggers none)'],
+  [/^\[\]\.clientId$/, 'getNetworkSwitchDhcpV4ServersSeen', 'discovered (client) servers only'],
 ];
 
 function conditional(op, field) {

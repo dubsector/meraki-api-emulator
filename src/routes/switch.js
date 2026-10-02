@@ -16,7 +16,7 @@ import { bySerial, devOf, netOf, orgOf, requireModel, requireProduct, round } fr
 const NO_USAGE = { sent: 0, recv: 0, clients: 0, wh: 0 };
 
 // Seconds a device was up within [a, b).
-function upSeconds(dev, a, b) {
+export function upSeconds(dev, a, b) {
   if (dev.dormant && dev.dormantSince < b) return Math.max(0, dev.dormantSince - a);
   let down = 0;
   eachOutage(dev, a, b, (s, e) => (down += Math.min(e, b) - Math.max(s, a)));
@@ -189,8 +189,9 @@ function defaultPortConfig(net, sw, port) {
   return out;
 }
 
-// A port's load in kB, from the switch's point of view.
-function portTraffic(sw, port, t0, t1) {
+// A port's load in kB, from the switch's point of view. up and down are toward
+// and away from the core.
+export function portTraffic(sw, port, t0, t1) {
   const peer = port.peer?.device;
   let load;
   let dir = 1;
@@ -206,7 +207,9 @@ function portTraffic(sw, port, t0, t1) {
   }
   // Switch view: "sent" leaves the port toward the device, so it is the device's download.
   const toward = dir === 1 && port.uplinkPort;
-  return { ...load, sent: toward ? load.sent : load.recv, recv: toward ? load.recv : load.sent };
+  const sent = toward ? load.sent : load.recv;
+  const recv = toward ? load.recv : load.sent;
+  return { ...load, sent, recv, up: toward ? sent : recv, down: toward ? recv : sent };
 }
 
 function portStatus(sw, port, t0, t1, now) {
@@ -366,7 +369,7 @@ export function lldpCdp(dev, now) {
 }
 
 // Org-wide switch filters shared by the bySwitch endpoints.
-function orgSwitches(ctx) {
+export function orgSwitches(ctx) {
   const q = ctx.query;
   const networkIds = arrayParam(q, 'networkIds');
   const serials = arrayParam(q, 'serials');
@@ -388,7 +391,7 @@ function orgSwitches(ctx) {
     .sort(bySerial);
 }
 
-const switchHeader = (sw) => ({ name: sw.name, serial: sw.serial, mac: sw.mac, network: { name: sw.net.name, id: sw.net.id }, model: sw.model });
+export const switchHeader = (sw) => ({ name: sw.name, serial: sw.serial, mac: sw.mac, network: { name: sw.net.name, id: sw.net.id }, model: sw.model });
 
 // The live fields the org-wide status view carries, taken over the last five minutes.
 function liveStatus(sw, port, now) {

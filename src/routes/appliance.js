@@ -3,13 +3,13 @@
 
 import { CF_CATEGORIES, L7_CATEGORIES } from '../catalog.js';
 import { DEFAULT_RULE, configOf, uuid } from '../config.js';
-import { badRequest, notFound } from '../http.js';
+import { arrayParam, badRequest, notFound } from '../http.js';
 import { derive, hashStr, unit } from '../rng.js';
 import { isDown } from '../sim/outages.js';
 import { presenceIn } from '../sim/presence.js';
 import { DAY } from '../time.js';
 import { ipInCidr, merge, parseCidr } from '../validate.js';
-import { devOf, netOf, requireModel, requireProduct } from './common.js';
+import { bySerial, devOf, netOf, orgOf, requireModel, requireProduct } from './common.js';
 
 const MAX_ITEMS = 1000;
 const SERVICES = ['ICMP', 'SNMP', 'web'];
@@ -58,6 +58,49 @@ function portOf(net, portId) {
   const port = appliancePorts(net).find((p) => String(p.number) === portId);
   if (!port) throw notFound('Port');
   return port;
+}
+
+// The org-wide port view: one WAN port per uplink, then the LAN ports. Where
+// an uplink lands on a LAN port (the MX67's port 2), that port is flexible.
+function interfacePorts(mx) {
+  const iface = (n) => ({ name: `GigabitEthernet0/0/${n}`, slot: 0, subslot: 0, number: n });
+  const lan = appliancePorts(mx.net);
+  const wan = mx.uplinks.map((u, i) => ({
+    number: String(i + 1),
+    interface: iface(i + 1),
+    enabled: true,
+    name: u.interface,
+    personality: { mode: 'wan', isFlexible: lan.some((p) => p.number === i + 1), layer: { mode: 3, isFlexible: false } },
+    uplink: { type: 'ethernet', primary: i === 0 },
+  }));
+  const downlink = (p) => {
+    const out = { mode: p.type, sgt: { id: p.sgt?.id == null ? null : String(p.sgt.id) } };
+    if (p.type === 'access') return { ...out, access: { vlan: String(p.vlan), policy: { type: p.accessPolicy ?? 'open' } } };
+    return { ...out, trunk: { nativeVlan: String(p.vlan), allowedVlans: String(p.allowedVlans).split(','), sgt: { enabled: !!p.sgt?.enabled } } };
+  };
+  return [
+    ...wan,
+    ...lan
+      .filter((p) => p.number > wan.length)
+      .map((p) => ({
+        number: String(p.number),
+        interface: iface(p.number),
+        enabled: p.enabled,
+        name: `port${p.number}`,
+        personality: { mode: 'lan', isFlexible: false, layer: { mode: 2, isFlexible: false } },
+        downlink: downlink(p),
+      })),
+  ];
+}
+
+function interfacesByDevice(ctx) {
+  const serials = arrayParam(ctx.query, 'serials');
+  const numbers = arrayParam(ctx.query, 'numbers');
+  const items = orgOf(ctx)
+    .devices.filter((d) => d.productType === 'appliance' && (!serials.length || serials.includes(d.serial)))
+    .sort(bySerial)
+    .map((mx) => ({ serial: mx.serial, ports: interfacePorts(mx).filter((p) => !numbers.length || numbers.includes(p.number)) }));
+  return { items };
 }
 
 // ── VLANs and addressing ──
@@ -294,6 +337,7 @@ const settings = (name, path, pick, after) => [
 ];
 
 export default [
+  { op: 'getOrganizationApplianceDevicesInterfacesPortsByDevice', path: '/organizations/{organizationId}/appliance/devices/interfaces/ports/byDevice', handler: interfacesByDevice },
   {
     op: 'getNetworkAppliancePorts',
     path: '/networks/{networkId}/appliance/ports',
