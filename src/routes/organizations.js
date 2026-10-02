@@ -204,7 +204,7 @@ function vpnPeerStats(local, peer, t0, t1) {
       receivedInKilobytes: Math.round(local === spoke ? fromHub : toHub),
       sentInKilobytes: Math.round(local === spoke ? toHub : fromHub),
     },
-    latencySummaries: [{ ...pair, avgLatencyMs: round(lat, 1), minLatencyMs: round(base * 0.97, 1), maxLatencyMs: round(lat * 2.2 + 25, 1) }],
+    latencySummaries: [{ ...pair, avgLatencyMs: Math.round(lat), minLatencyMs: Math.round(base * 0.97), maxLatencyMs: Math.round(lat * 2.2 + 25) }],
     lossPercentageSummaries: [{ ...pair, avgLossPercentage: round(loss, 2), minLossPercentage: 0, maxLossPercentage: round(Math.max(0.5, loss * 6), 2) }],
     jitterSummaries: [{ ...pair, avgJitter: round(jitter, 2), minJitter: round(jitter * 0.2, 2), maxJitter: round(jitter * 4 + 2, 2) }],
     mosSummaries: [{ ...pair, avgMos: round(mos, 1), minMos: round(Math.max(1, mos - 0.6), 1), maxMos: round(Math.min(4.5, mos + 0.1), 1) }],
