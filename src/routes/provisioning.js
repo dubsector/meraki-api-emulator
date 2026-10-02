@@ -1,11 +1,12 @@
 // Device provisioning: claiming into and removing from networks, virtual MXs,
-// provisioning statuses, Catalyst device details and bulk device swaps.
+// provisioning statuses, Catalyst device details, bulk device swaps and
+// migrations to a wireless controller.
 
 import { VMX_SIZES } from '../catalog.js';
 import { deviceJson } from '../format.js';
-import { ApiError, arrayParam, badRequest, boolParam, hasTags, notFound, paginate } from '../http.js';
+import { ApiError, arrayParam, badRequest, boolParam, hasTags, notFound, paginate, paginateItems } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
-import { iso } from '../time.js';
+import { MIN, iso } from '../time.js';
 import { claimDevice, claimVmx, removeDevice, swapDevice } from '../world.js';
 import { bySerial, netOf, orgOf, requireProduct } from './common.js';
 
@@ -141,6 +142,40 @@ function swaps(ctx) {
   return { jobId, swaps: out.map(pending) };
 }
 
+// An AP starts its move to the controller a few minutes after it's asked to.
+// The migration is a record only: the AP stays in its network.
+const MIGRATION_DELAY = 5 * MIN;
+const migrationsOf = (org) => (org.controllerMigrations ??= []);
+const migrationJson = (m, now) => ({ serial: m.serial, target: m.target, createdAt: iso(m.createdAt), migratedAt: now >= m.createdAt + MIGRATION_DELAY ? iso(m.createdAt + MIGRATION_DELAY) : null });
+
+function migrate(ctx) {
+  const org = orgOf(ctx);
+  const { serials = [], target } = ctx.body;
+  const unique = [...new Set(serials ?? [])];
+  if (!unique.length) throw badRequest("'serials' must not be empty");
+  const list = migrationsOf(org);
+  for (const serial of unique) {
+    const dev = org.devices.find((d) => d.serial === serial);
+    if (!dev) throw badRequest(`Device ${serial} is not in a network in this organization`);
+    if (dev.productType !== 'wireless') throw badRequest(`Device ${serial} is not an access point; only access points can move to a wireless controller`);
+    if (list.some((m) => m.serial === serial && m.target === target)) throw badRequest(`Device ${serial} is already migrating to ${target}`);
+  }
+  const made = unique.map((serial) => ({ serial, target, createdAt: ctx.now }));
+  list.push(...made);
+  return made.map((m) => migrationJson(m, ctx.now));
+}
+
+function migrations(ctx) {
+  const org = orgOf(ctx);
+  const [serials, networkIds] = ['serials', 'networkIds'].map((n) => arrayParam(ctx.query, n));
+  const target = ctx.query.get('target');
+  const netOfSerial = (serial) => org.devices.find((d) => d.serial === serial)?.net.id;
+  const rows = migrationsOf(org)
+    .filter((m) => (!serials.length || serials.includes(m.serial)) && (!networkIds.length || networkIds.includes(netOfSerial(m.serial))) && (!target || m.target === target))
+    .sort((a, b) => (a.serial < b.serial ? -1 : a.serial > b.serial ? 1 : 0));
+  return paginateItems(ctx, rows, (m) => m.serial, { def: 100, max: 1000 }, (m) => migrationJson(m, ctx.now));
+}
+
 export default [
   {
     op: 'claimNetworkDevices',
@@ -191,5 +226,16 @@ export default [
       if (!job) throw notFound('Swap job');
       return structuredClone(job);
     },
+  },
+  {
+    op: 'createOrganizationDevicesControllerMigration',
+    method: 'POST',
+    path: '/organizations/{organizationId}/devices/controller/migrations',
+    handler: migrate,
+  },
+  {
+    op: 'getOrganizationDevicesControllerMigrations',
+    path: '/organizations/{organizationId}/devices/controller/migrations',
+    handler: migrations,
   },
 ];
