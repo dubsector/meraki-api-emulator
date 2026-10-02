@@ -25,9 +25,42 @@ curl -H 'X-Cisco-Meraki-API-Key: anything' http://localhost:8765/api/v1/organiza
 With Docker:
 
 ```sh
-docker build -t meraki-api-emulator .
-docker run --rm -p 8765:8765 meraki-api-emulator
+docker run --rm -p 8765:8765 ghcr.io/dubsector/meraki-api-emulator:0.1
 ```
+
+The image listens on all interfaces inside the container, and `-p 8765:8765` publishes it on every interface of your machine too. Use `-p 127.0.0.1:8765:8765` to keep it local. Options go after the image name or in environment variables, the same as on the command line (see [Options](#options)):
+
+```sh
+docker run --rm -p 8765:8765 -e MERAKI_EMULATOR_NOW=2026-01-15T09:00:00Z \
+  ghcr.io/dubsector/meraki-api-emulator:0.1 --fault-rate 0.05
+```
+
+Tags follow the release version: `0.1.0` for an exact release, `0.1` for the latest patch of it, and `latest`. While the version starts with `0.`, a new minor version can change responses, so pin `0.1` or an exact version in tests. To build the image yourself, run `docker build -t meraki-api-emulator .` in a clone.
+
+### Docker Compose
+
+Next to an app under test, give the emulator a `meraki.com` name as a network alias. The app can then use it as its base URL, and that also works for the [official Python SDK](#the-official-python-sdk) without a proxy:
+
+```yaml
+services:
+  meraki:
+    image: ghcr.io/dubsector/meraki-api-emulator:0.1
+    environment:
+      MERAKI_EMULATOR_NOW: 2026-01-15T09:00:00Z
+    networks:
+      default:
+        aliases: [emulator.meraki.com]
+  app:
+    build: .
+    environment:
+      MERAKI_BASE_URL: http://emulator.meraki.com:8765/api/v1
+      MERAKI_DASHBOARD_API_KEY: any-key
+    depends_on:
+      meraki:
+        condition: service_healthy
+```
+
+`MERAKI_BASE_URL` stands for whatever setting your app reads its base URL from. The emulator's `Link` headers keep the name and port the app called, so paging stays on the alias.
 
 ## Pointing a client at it
 
@@ -51,7 +84,7 @@ dashboard = meraki.DashboardAPI(
 devices = dashboard.organizations.getOrganizationDevices(org_id, total_pages="all")
 ```
 
-Every request goes to the emulator, and its `Link` headers keep the name you asked for, so paging, `429` and `5xx` retries and writes behave as they do against the real API. Keep the base URL on `http://`, since the emulator doesn't do TLS. `meraki.aio.AsyncDashboardAPI` takes the same two options.
+Every request goes to the emulator, and its `Link` headers keep the name you asked for, so paging, `429` and `5xx` retries and writes behave as they do against the real API. Keep the base URL on `http://`, since the emulator doesn't do TLS. `meraki.aio.AsyncDashboardAPI` takes the same two options. Under [Docker Compose](#docker-compose) with the network alias, `base_url="http://emulator.meraki.com:8765/api/v1"` works on its own, with no proxy.
 
 Three things the SDK does that are easy to trip over:
 
