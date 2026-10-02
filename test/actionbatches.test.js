@@ -84,7 +84,7 @@ describe('action batches', () => {
   let org;
   let hq;
   let B;
-  before(async () => (sb = await start({ noWebhooks: true })));
+  before(async () => (sb = await start()));
   after(() => sb.close());
   afterEach(() => sb.reset());
   const refresh = () => {
@@ -243,7 +243,7 @@ describe('action batch callbacks', () => {
   let sb;
   let hook;
   before(async () => {
-    sb = await start();
+    sb = await start({ webhooks: true });
     hook = await receiver();
   });
   after(async () => {
@@ -305,7 +305,7 @@ describe('action batch callbacks', () => {
 
 describe('action batches on a running clock', () => {
   let sb;
-  before(async () => (sb = await start({ now: null, noWebhooks: true })));
+  before(async () => (sb = await start({ now: null })));
   after(() => sb.close());
 
   test('an asynchronous batch runs a moment after it is confirmed', async () => {

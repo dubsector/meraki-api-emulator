@@ -37,7 +37,7 @@ describe('webhooks and alert configs', () => {
   let N;
   let O;
   before(async () => {
-    sb = await start();
+    sb = await start({ webhooks: true });
     rx = await receiver();
   });
   afterEach(async () => {
@@ -285,9 +285,10 @@ describe('webhooks and alert configs', () => {
   });
 });
 
-describe('webhooks with delivery turned off', () => {
+describe('webhooks without --webhooks', () => {
   test('webhook tests count as delivered without sending anything', async () => {
-    const sb = await start({ noWebhooks: true });
+    const lines = [];
+    const sb = await start({ log: (line) => lines.push(line) });
     const rx = await receiver();
     try {
       const [corp] = sb.world.orgs;
@@ -302,6 +303,7 @@ describe('webhooks with delivery turned off', () => {
       );
       await new Promise((r) => setTimeout(r, 50));
       assert.equal(rx.got.length, 0);
+      assert.ok(lines.includes(`Webhook to ${rx.url} not sent, start with --webhooks to send it`));
     } finally {
       await sb.close();
       await rx.close();

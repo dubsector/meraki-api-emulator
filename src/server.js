@@ -123,7 +123,7 @@ export function resolveOptions(o = {}) {
     rateLimit: num(o.rateLimit, 10, 'rate-limit'),
     burst: num(o.burst, 20, 'burst', 1),
     readOnly: o.readOnly === true || o.readOnly === 'true' || o.readOnly === '1',
-    noWebhooks: o.noWebhooks === true || o.noWebhooks === 'true' || o.noWebhooks === '1',
+    webhooks: o.webhooks === true || o.webhooks === 'true' || o.webhooks === '1',
     log: o.log ?? null,
   };
 }
@@ -285,7 +285,7 @@ export function createEmulator(options = {}) {
   }
 
   function baseCtx(now) {
-    return { world, now, clock, frozen: opts.now != null, webhooks: !opts.noWebhooks, headers: {}, apiLog, keys, body: null, actions: { check: resolveActions, run: runActions }, settle: (at = 0) => settle(Math.max(clock(), at)) };
+    return { world, now, clock, frozen: opts.now != null, webhooks: opts.webhooks, log: opts.log, headers: {}, apiLog, keys, body: null, actions: { check: resolveActions, run: runActions }, settle: (at = 0) => settle(Math.max(clock(), at)) };
   }
 
   // Runs a handler with the checks every call gets. Writes go in the change

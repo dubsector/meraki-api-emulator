@@ -29,7 +29,7 @@ describe('device live tools', () => {
   let mx;
   let cam;
   before(async () => {
-    sb = await start();
+    sb = await start({ webhooks: true });
     rx = await receiver();
   });
   afterEach(async () => {
@@ -264,7 +264,7 @@ describe('device live tools', () => {
 
 describe('device live tools on a running clock', () => {
   let sb;
-  before(async () => (sb = await start({ now: null, rateLimit: 1000, noWebhooks: true })));
+  before(async () => (sb = await start({ now: null, rateLimit: 1000 })));
   after(() => sb.close());
 
   test('a job is new, then runs, then completes', async () => {

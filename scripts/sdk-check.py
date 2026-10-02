@@ -727,7 +727,7 @@ def webhooks():
     threading.Thread(target=rx.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{rx.server_address[1]}/hook"
     try:
-        with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu:
+        with Emulator("--rate-limit", "0", "--webhooks", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu:
             d = dashboard(emu)
             org = acme(d.organizations.getOrganizations())
             net = next(n["id"] for n in d.organizations.getOrganizationNetworks(org) if n["name"] == "HQ - San Francisco")
@@ -789,7 +789,7 @@ def livetools():
     threading.Thread(target=rx.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{rx.server_address[1]}/cb"
     try:
-        with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu:
+        with Emulator("--rate-limit", "0", "--webhooks", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu:
             d = dashboard(emu)
             org = acme(d.organizations.getOrganizations())
             net = next(n["id"] for n in d.organizations.getOrganizationNetworks(org) if n["name"] == "HQ - San Francisco")
