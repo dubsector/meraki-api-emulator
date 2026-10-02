@@ -385,6 +385,6 @@ describe('read-only mode', () => {
 
 test('every PUT and POST route has its request schema', () => {
   for (const r of ROUTES) {
-    if (r.method === 'PUT' || r.method === 'POST') assert.ok(schemaOf(r.op), `${r.op} has no schema; run node scripts/schemas.js`);
+    if (r.method === 'PUT' || r.method === 'POST') assert.notEqual(schemaOf(r.op), undefined, `${r.op} has no schema; run node scripts/schemas.js`);
   }
 });

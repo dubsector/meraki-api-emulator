@@ -31,11 +31,12 @@ for (const r of ROUTES) {
   if (!op) throw new Error(`${r.method} ${r.path} is not in spec ${spec.info.version}`);
   if (op.operationId !== r.op) throw new Error(`${r.method} ${r.path} is ${op.operationId} in the spec, not ${r.op}`);
   const schema = op.requestBody?.content?.['application/json']?.schema;
-  if (schema) schemas[r.op] = trim(schema);
+  // null marks an operation that takes no body, so the schema test can tell it from a stale file.
+  schemas[r.op] = schema ? trim(schema) : null;
 }
 // The profile body takes any string, so use the list the alert filters enumerate.
 const typesParam = spec.paths['/organizations/{organizationId}/assurance/alerts']?.get.parameters.find((p) => p.name === 'types');
 const alertTypes = typesParam?.schema.items.enum;
 if (!alertTypes?.length) throw new Error(`No assurance alert types in spec ${spec.info.version}`);
 writeFileSync(new URL('../src/schemas.json', import.meta.url), JSON.stringify({ version: spec.info.version, schemas, alertTypes }) + '\n');
-console.log(`${Object.keys(schemas).length} request schemas and ${alertTypes.length} alert types from spec ${spec.info.version}`);
+console.log(`${Object.values(schemas).filter(Boolean).length} request schemas and ${alertTypes.length} alert types from spec ${spec.info.version}`);

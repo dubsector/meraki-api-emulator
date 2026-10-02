@@ -92,6 +92,8 @@ function object(value, schema, prefix) {
 export function validateBody(op, body) {
   const schema = schemaOf(op);
   if (!schema) return {};
+  // A bare array is the same as the spec's _json wrapper, which is what the Python SDK sends.
+  if (Array.isArray(body) && schema.properties?._json) body = { _json: body };
   if (body == null || typeof body !== 'object' || Array.isArray(body)) throw badRequest('The request body must be a JSON object');
   return object(body, schema, '');
 }

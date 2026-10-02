@@ -11,6 +11,7 @@ import alerts from './routes/alerts.js';
 import appliance from './routes/appliance.js';
 import clients from './routes/clients.js';
 import devices from './routes/devices.js';
+import firmware from './routes/firmware.js';
 import networks from './routes/networks.js';
 import networkwide from './routes/networkwide.js';
 import organizations from './routes/organizations.js';
@@ -36,7 +37,7 @@ const GLUED_URL = new RegExp(`^${API_PREFIX}https?://`, 'i');
 export const SDK_HINT = 'This path has a full URL appended to the base URL. The Meraki Python SDK sends that when paging from a host outside meraki.com: use base_url="http://emulator.meraki.com/api/v1" with requests_proxy set to the emulator (see the README)';
 export const CONNECT_HINT = 'The emulator speaks plain HTTP, use an http:// base URL';
 
-export const ROUTES = [...organizations, ...admin, ...alerts, ...networks, ...provisioning, ...clients, ...networkwide, ...appliance, ...switches, ...stacks, ...wireless, ...ssids, ...devices].map((r) => ({ method: 'GET', ...r }));
+export const ROUTES = [...organizations, ...admin, ...alerts, ...networks, ...provisioning, ...clients, ...networkwide, ...firmware, ...appliance, ...switches, ...stacks, ...wireless, ...ssids, ...devices].map((r) => ({ method: 'GET', ...r }));
 
 // One entry per path template, holding a route per method.
 function compile(routes) {
