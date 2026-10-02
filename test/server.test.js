@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import { after, before, describe, test } from 'node:test';
-import { AUTH_ERROR, CONNECT_HINT, SDK_HINT, apiKeyOf } from '../src/server.js';
+import { AUTH_ERROR, CONNECT_HINT, SDK_HINT, VERSION, apiKeyOf } from '../src/server.js';
 import { NOW, collect, relLink, sampleUrls, start } from './helpers.js';
 
 // Sends a request target exactly as given; fetch would normalize or reject it first.
@@ -115,7 +115,9 @@ describe('server', () => {
   test('landing page and health check', async () => {
     const page = await fetch(sb.base.replace('/api/v1', '/'));
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /Meraki API Emulator/);
+    const html = await page.text();
+    assert.match(html, /Meraki API Emulator/);
+    assert.ok(html.includes(`v${VERSION}</span>`), 'the page shows the package version');
     const health = await sb.get(sb.base.replace('/api/v1', '/healthz'), { key: null });
     assert.deepEqual(health.body, { status: 'ok' });
   });

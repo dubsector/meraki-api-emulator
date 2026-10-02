@@ -15,7 +15,7 @@ function bodyTemplate(op) {
   return JSON.stringify(body, null, 2);
 }
 
-export function landingPage(world, routes, { apiKey, readOnly, now }) {
+export function landingPage(world, routes, { apiKey, readOnly, now, version }) {
   const groups = { Organizations: [], Networks: [], Devices: [] };
   // Writes borrow the example IDs of the GET on the same path.
   const gets = new Map(routes.filter((r) => r.method === 'GET').map((r) => [r.path, r]));
@@ -77,6 +77,7 @@ export function landingPage(world, routes, { apiKey, readOnly, now }) {
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
 main { max-width: 1080px; margin: 0 auto; padding: 32px 16px 64px; }
 h1 { font-size: 28px; margin: 0 0 4px; }
+.version { color: var(--muted); font-size: 15px; font-weight: 400; }
 h2 { font-size: 19px; margin: 36px 0 12px; }
 h3 { font-size: 15px; margin: 20px 0 8px; }
 p { margin: 6px 0; }
@@ -122,7 +123,7 @@ button.send { padding: 8px 16px; border: 0; border-radius: 6px; background: var(
 </head>
 <body>
 <main>
-  <h1>Meraki API Emulator</h1>
+  <h1>Meraki API Emulator <span class="version">v${esc(version)}</span></h1>
   <p class="lede">A local stand-in for the Cisco Meraki Dashboard API v1, serving simulated organizations, networks, devices and client traffic. Not affiliated with or endorsed by Cisco.</p>
 
   <div class="panel">

@@ -2,6 +2,7 @@
 // the bookkeeping around writes.
 
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { ApiLog } from './apilog.js';
 import { ApiError } from './http.js';
@@ -32,6 +33,7 @@ import { parseTime } from './time.js';
 import { validateBody } from './validate.js';
 import { buildWorld } from './world.js';
 
+export const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 export const API_PREFIX = '/api/v1';
 export const AUTH_ERROR = 'No valid authentication method found';
 export const RESET_PATH = '/_emulator/reset';
@@ -262,7 +264,7 @@ export function createEmulator(options = {}) {
       res.end();
       status = 204;
     } else if (url.pathname === '/' || url.pathname === '/index.html') {
-      const html = landingPage(world, ROUTES, { apiKey: !!opts.apiKey, readOnly: opts.readOnly, now: clock() });
+      const html = landingPage(world, ROUTES, { apiKey: !!opts.apiKey, readOnly: opts.readOnly, now: clock(), version: VERSION });
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': Buffer.byteLength(html) });
       res.end(req.method === 'HEAD' ? undefined : html);
       status = 200;
