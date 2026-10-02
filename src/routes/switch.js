@@ -24,7 +24,7 @@ function upSeconds(dev, a, b) {
 }
 
 // Traffic through one access port, from the attached device's point of view (sent = upstream).
-function portLoad(port, t0, t1) {
+export function portLoad(port, t0, t1) {
   const peer = port.peer?.device;
   if (peer?.productType === 'wireless') {
     let sent = 0;

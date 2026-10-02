@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, afterEach, before, describe, test } from 'node:test';
-import { NOW, start } from './helpers.js';
+import { NOW, collect, start } from './helpers.js';
 
 const DAY = 86400;
 const HOUR = 3600;
@@ -264,5 +264,121 @@ describe('staged upgrades', () => {
     assert.equal((await sb.post(`${E}/defer`)).body.stages[0].milestones.scheduledFor, at(8 * DAY));
     // The old event finished, but the new one hasn't.
     assert.match(await errorOf(sb.del(`${G}/${a.groupId}`)), /hasn't finished/);
+  });
+});
+
+describe('organization firmware views', () => {
+  let sb;
+  let org;
+  let hq;
+  let O;
+  before(async () => (sb = await start()));
+  afterEach(async () => {
+    assert.equal((await sb.reset()).status, 204);
+  });
+  after(() => sb.close());
+  const fresh = () => {
+    org = sb.world.orgs[0];
+    hq = org.networks[0];
+    O = `/organizations/${org.id}/firmware/upgrades`;
+  };
+  const F = () => `/networks/${hq.id}/firmwareUpgrades`;
+  const errorOf = async (r) => {
+    const res = await r;
+    assert.equal(res.status, 400, JSON.stringify(res.body));
+    return res.body.errors[0];
+  };
+  const mine = (rows, p) => rows.filter((u) => u.network.id === hq.id && u.productTypes === p);
+
+  test('every network starts with the upgrade its firmware view reports as the last one', async () => {
+    fresh();
+    const rows = (await sb.get(O)).body;
+    const products = org.networks.flatMap((n) => n.productTypes);
+    assert.equal(rows.length, products.length);
+    assert.ok(rows.every((u) => u.status === 'Completed'));
+    const fw = (await sb.get(F())).body.products;
+    for (const [p, v] of Object.entries(fw)) {
+      const [u] = mine(rows, p);
+      assert.deepEqual([u.time, u.fromVersion, u.toVersion], [v.lastUpgrade.time, v.lastUpgrade.fromVersion, v.lastUpgrade.toVersion]);
+      assert.equal(u.completedAt, u.time.replace('T', ' ').replace('Z', ' UTC'));
+      assert.match(u.upgradeId, /^\d{18}$/);
+    }
+    const times = rows.map((u) => u.time);
+    assert.deepEqual(times, [...times].sort().reverse());
+    assert.deepEqual((await sb.get(O)).body, rows);
+    assert.ok((await sb.get(`${O}?productTypes[]=camera`)).body.every((u) => u.productTypes === 'camera'));
+    assert.equal((await sb.get(`${O}?perPage=3`)).body.length, 3);
+  });
+
+  test('scheduled, canceled and finished upgrades show up in both views', async () => {
+    fresh();
+    const { body: cur } = await sb.get(F());
+    const [beta] = cur.products.switch.availableVersions;
+    await sb.put(F(), { products: { switch: { nextUpgrade: { time: at(DAY), toVersion: { id: beta.id } } } } });
+    let rows = mine((await sb.get(O)).body, 'switch');
+    assert.deepEqual(rows.map((u) => u.status), ['Scheduled', 'Completed']);
+    assert.equal(rows[0].completedAt, null);
+    assert.deepEqual([rows[0].time, rows[0].fromVersion, rows[0].toVersion], [at(DAY), cur.products.switch.currentVersion, beta]);
+    const sw = hq.switches[0].serial;
+    let dev = (await sb.get(`${O}/byDevice?serials[]=${sw}`)).body;
+    assert.deepEqual(dev.map((d) => [d.deviceStatus, d.upgrade.status, d.upgrade.id]), [['scheduled', 'Scheduled', rows[0].upgradeId], ['completed', 'Completed', rows[1].upgradeId]]);
+    assert.equal(dev[0].checkinStartedAt, null);
+    assert.equal(dev[0].installStatus, 'pending');
+    assert.equal(dev[1].verifyStatus, 'complete');
+    assert.deepEqual(Object.keys(dev[0].upgrade.toVersion), ['id', 'shortName', 'releaseDate']);
+    assert.deepEqual((await sb.get(`${O}/byDevice?serials[]=${sw}&currentUpgradesOnly=true`)).body.map((d) => d.deviceStatus), ['scheduled']);
+
+    // Naming the current version cancels it.
+    await sb.put(F(), { products: { switch: { nextUpgrade: { toVersion: { id: cur.products.switch.currentVersion.id } } } } });
+    rows = mine((await sb.get(O)).body, 'switch');
+    assert.deepEqual(rows.map((u) => u.status), ['Cancelled', 'Completed']);
+    assert.deepEqual((await sb.get(`${O}?status[]=Cancelled`)).body.map((u) => u.upgradeId), [rows[0].upgradeId]);
+    dev = (await sb.get(`${O}/byDevice?serials[]=${sw}&upgradeStatuses[]=canceled`)).body;
+    assert.deepEqual(dev.map((d) => [d.deviceStatus, d.downloadStatus, d.checkinFinishedAt]), [['canceled', 'canceled', null]]);
+
+    // Scheduled again, and its time passes.
+    await sb.put(F(), { products: { switch: { nextUpgrade: { time: at(HOUR), toVersion: { id: beta.id } } } } });
+    hq.firmware.products.switch.next.time = T - 60;
+    rows = mine((await sb.get(O)).body, 'switch');
+    assert.deepEqual(rows.map((u) => [u.status, u.time]), [['Cancelled', at(DAY)], ['Completed', at(-60)], ['Completed', cur.products.switch.lastUpgrade.time]]);
+    assert.deepEqual((await sb.get(F())).body.products.switch.currentVersion, beta);
+    dev = (await sb.get(`${O}/byDevice?serials[]=${sw}&upgradeStatuses[]=completed&limitPerDevice=1`)).body;
+    assert.deepEqual(dev.map((d) => [d.deviceStatus, d.detailedStatus, d.verifyFinishedAt]), [['completed', 'upgrade-complete', at(-60)]]);
+    assert.deepEqual((await sb.get(`${O}/byDevice?serials[]=${sw}&firmwareUpgradeBatchIds[]=${rows[0].upgradeBatchId}`)).body.map((d) => d.upgrade.status), ['Cancelled']);
+  });
+
+  test('a rollback keeps its batch ID', async () => {
+    fresh();
+    const rb = (await sb.post(`${F()}/rollbacks`, { product: 'wireless', reasons: [{ category: 'performance', comment: 'Slow' }] })).body;
+    const [u] = mine((await sb.get(O)).body, 'wireless');
+    assert.deepEqual([u.upgradeBatchId, u.status, u.toVersion], [rb.upgradeBatchId, 'Completed', rb.toVersion]);
+    const ap = hq.aps[0].serial;
+    const [d] = (await sb.get(`${O}/byDevice?serials[]=${ap}&firmwareUpgradeBatchIds[]=${rb.upgradeBatchId}`)).body;
+    assert.equal(d.upgrade.toVersion.id, rb.toVersion.id);
+  });
+
+  test('by device lists switches and access points, with staged stages', async () => {
+    fresh();
+    const rows = await collect(sb.get, `${O}/byDevice?perPage=7`);
+    const wanted = org.devices.filter((d) => d.productType === 'switch' || d.productType === 'wireless');
+    assert.deepEqual([...new Set(rows.map((r) => r.serial))], wanted.map((d) => d.serial).sort());
+    assert.ok(rows.every((r) => !('staged' in r.upgrade)));
+    assert.equal((await sb.get(`${O}/byDevice?networkIds[]=${hq.id}`)).body.length, hq.switches.length + hq.aps.length);
+
+    const G = `/networks/${hq.id}/firmwareUpgrades/staged/groups`;
+    const sw = hq.switches[0];
+    const g = (await sb.post(G, { name: 'Core', isDefault: false, assignedDevices: { devices: [{ serial: sw.serial }] } })).body;
+    const id = (await sb.get(F())).body.products.switch.availableVersions[0].id;
+    await sb.post(`/networks/${hq.id}/firmwareUpgrades/staged/events`, { products: { switch: { nextUpgrade: { toVersion: { id } } } }, stages: [{ group: { id: g.groupId }, milestones: { scheduledFor: at(-30 * 60) } }] });
+    const [d] = (await sb.get(`${O}/byDevice?serials[]=${sw.serial}&upgradeStatuses[]=started`)).body;
+    assert.deepEqual(d.upgrade.staged, { group: { id: g.groupId } });
+    assert.equal(d.upgrade.toVersion.id, id);
+    // Halfway through an hour-long stage: check-in and download done, install starting.
+    assert.deepEqual([d.deviceStatus, d.detailedStatus, d.downloadStatus, d.installStatus, d.verifyStatus], ['started', 'install-in-progress', 'complete', 'in-progress', 'pending']);
+    assert.deepEqual([d.checkinStartedAt, d.downloadFinishedAt, d.installStartedAt, d.installFinishedAt], [at(-30 * 60), NOW, NOW, null]);
+
+    assert.match(await errorOf(sb.get(`${O}/byDevice?upgradeStatuses[]=done`)), /upgradeStatuses/);
+    assert.match(await errorOf(sb.get(`${O}/byDevice?limitPerDevice=0`)), /limitPerDevice/);
+    assert.match(await errorOf(sb.get(`${O}/byDevice?perPage=2000`)), /perPage/);
   });
 });

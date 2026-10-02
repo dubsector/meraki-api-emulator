@@ -1,11 +1,14 @@
-// Network-wide settings: status page, syslog, SNMP, alerts, webhooks, group
+// Network-wide settings: status page, syslog, SNMP, alerts and their history, webhooks, group
 // policies, floor plans and the link layer topology.
 
 import { SNMP_V3, SYSLOG_ROLES, configOf, syslogRolesFor } from '../config.js';
-import { arrayParam, badRequest, notFound, paginateItems } from '../http.js';
-import { deviceStatus, lastReportedAt } from '../sim/outages.js';
+import { arrayParam, badRequest, notFound, paginate, paginateItems } from '../http.js';
+import { LOOKBACK } from '../sim/alerts.js';
+import { changesOnDay } from '../sim/changes.js';
+import { eachFailover, eachVpnChange, securityEventsOnDay } from '../sim/events.js';
+import { deviceStatus, eachOutage, lastReportedAt } from '../sim/outages.js';
 import { isOnline } from '../sim/presence.js';
-import { iso } from '../time.js';
+import { DAY, MIN, iso } from '../time.js';
 import { merge } from '../validate.js';
 import { byId, devOf, netOf, orgOf } from './common.js';
 
@@ -278,6 +281,76 @@ function alertSettings(ctx) {
   return c.alerts;
 }
 
+// The alert setting that covers a device going down, and the title it's sent with.
+const DOWN = {
+  appliance: ['gatewayDown', 'Appliances went down'],
+  switch: ['switchDown', 'Switches went down'],
+  wireless: ['repeaterDown', 'APs went down'],
+  camera: ['cameraDown', 'Cameras went down'],
+};
+
+// Each channel the alert went out on: email and push for the default
+// recipients or all admins, SMS for the alert's own numbers, and webhooks.
+function alertDestinations(def, own, sent) {
+  const at = () => ({ sentAt: iso(sent) });
+  const out = {};
+  if (def.emails?.length || def.allAdmins || own.emails?.length || own.allAdmins) out.email = at();
+  if (def.allAdmins || own.allAdmins) out.push = at();
+  if (own.smsNumbers?.length) out.sms = at();
+  if (def.httpServerIds?.length || own.httpServerIds?.length) out.webhook = at();
+  return out;
+}
+
+// Alerts the network's alert settings would have sent over the last 31 days,
+// from what the sim records: devices down past the alert's timeout, failovers,
+// VPN peers coming and going, blocked malware and settings changes. Newest first.
+function alertHistory(ctx) {
+  const net = netOf(ctx);
+  const alerts = configOf(net).alerts;
+  const now = ctx.now;
+  const from = now - LOOKBACK;
+  const rows = [];
+  const add = (type, t, sent, alertTypeId, alertType, dev, alertData) => {
+    const a = alerts.alerts.find((x) => x.type === type && x.enabled);
+    if (!a || t < from || sent > now) return;
+    rows.push({ t, row: { occurredAt: iso(t), alertTypeId, alertType, device: dev ? { serial: dev.serial } : null, destinations: alertDestinations(alerts.defaultDestinations, a.alertDestinations ?? {}, sent), alertData } });
+  };
+  for (const dev of net.devices) {
+    const [type, title] = DOWN[dev.productType] ?? [];
+    if (!type) continue;
+    const timeout = alerts.alerts.find((x) => x.type === type)?.filters?.timeout ?? 5;
+    const down = (s, e) => {
+      if (e - s >= timeout * MIN) add(type, s, s + timeout * MIN, 'stopped_reporting', title, dev, { minutes: timeout });
+    };
+    eachOutage(dev, from, now, down);
+    if (dev.dormant) down(dev.dormantSince, Infinity);
+  }
+  if (net.mx) {
+    eachFailover(net, from, now, (t, data) => add('failoverEvent', t, t, 'failover_event', 'Failover event', net.mx, data));
+    eachVpnChange(net, from, now, (t, data) => add('vpnConnectivityChange', t, t, 'vpn_connectivity_change', 'VPN connectivity changed', net.mx, data));
+    for (let d = Math.floor(from / DAY); d <= Math.floor(now / DAY); d++) {
+      for (const e of securityEventsOnDay(net, d)) {
+        if (e.eventType === 'File Scanned') add('ampMalwareBlocked', e.t, e.t, 'amp_malware_blocked', 'Malware blocked', net.mx, { clientMac: e.clientMac, fileHash: e.fileHash, fileType: e.fileType, canonicalName: e.canonicalName });
+      }
+    }
+  }
+  const changes = [];
+  for (let d = Math.floor(from / DAY); d <= Math.floor(now / DAY); d++) changes.push(...changesOnDay(net.org, d));
+  for (const e of [...changes, ...(net.org.apiChanges ?? [])]) {
+    if (e.net === net) add('settingsChanged', e.t, e.t, 'settings_changed', 'Settings changed', null, { page: e.page, label: e.label, oldValue: e.oldValue, newValue: e.newValue });
+  }
+  rows.sort((a, b) => b.t - a.t);
+  // Cursors are the time plus a count for alerts at the same moment.
+  const keys = new Map();
+  const seen = new Map();
+  for (const { row } of rows) {
+    const n = seen.get(row.occurredAt) ?? 0;
+    seen.set(row.occurredAt, n + 1);
+    keys.set(row, `${row.occurredAt}_${n}`);
+  }
+  return paginate(ctx, rows.map((r) => r.row), (r) => keys.get(r), { def: 100, max: 1000 });
+}
+
 function createPolicy(ctx) {
   const c = configOf(netOf(ctx));
   const b = ctx.body;
@@ -339,6 +412,7 @@ export default [
   write('updateNetworkSnmp', 'PUT', 'snmp', snmp),
   setting('getNetworkAlertsSettings', 'alerts/settings', (c) => c.alerts),
   write('updateNetworkAlertsSettings', 'PUT', 'alerts/settings', alertSettings),
+  { op: 'getNetworkAlertsHistory', path: '/networks/{networkId}/alerts/history', handler: alertHistory },
   setting('getNetworkWebhooksHttpServers', 'webhooks/httpServers', (c) => c.httpServers),
   write('createNetworkWebhooksHttpServer', 'POST', 'webhooks/httpServers', createServer),
   {
