@@ -203,6 +203,37 @@ describe('network groups, moves and combining', () => {
     assert.equal((await sb.get(`/networks/${again.resultingNetwork.id}/devices`)).body.length, hq.devices.length);
   });
 
+  test('settings kept outside the config, and peers naming the network, follow split and combine', async () => {
+    fresh();
+    const hq = corp.networks[0];
+    const core = hq.switches[0];
+    const mx = sb.world.unclaimed.devices.find((d) => d.model === 'MX250');
+    await created(sb.post(`/organizations/${corp.id}/inventory/claim`, { orders: [mx.orderNumber] }), 200);
+    await created(sb.post(`/networks/${hq.id}/devices/claim`, { serials: [mx.serial] }), 200);
+    await created(sb.post(`/devices/${core.serial}/switch/routing/interfaces`, { name: 'Users', vlanId: 10, subnet: '192.0.2.0/25', interfaceIp: '192.0.2.2', defaultGateway: '192.0.2.1' }));
+    const reads = {
+      appliance: ['appliance/warmSpare', await created(sb.put(`/networks/${hq.id}/appliance/warmSpare`, { enabled: true, spareSerial: mx.serial }), 200)],
+      switch: ['switch/routing/multicast/rendezvousPoints', [await created(sb.post(`/networks/${hq.id}/switch/routing/multicast/rendezvousPoints`, { interfaceIp: '192.0.2.2', multicastGroup: 'Any' }))]],
+      camera: ['mqttBrokers', [await created(sb.post(`/networks/${hq.id}/mqttBrokers`, { name: 'Broker', host: '192.0.2.50', port: 1883 }))]],
+    };
+    const profile = await created(sb.post(`/networks/${hq.id}/camera/qualityRetentionProfiles`, { name: 'Lobby' }));
+    const P = `/organizations/${corp.id}/appliance/vpn/thirdPartyVPNPeers`;
+    await created(sb.put(P, { peers: [{ name: 'Branch', publicIp: '198.51.100.7', secret: 's', privateSubnets: ['10.9.0.0/16'], network: { ids: [hq.id] } }] }), 200);
+    const peerNet = async () => (await sb.get(P)).body.peers[0].network.ids;
+    const check = async (net, p) => assert.deepEqual((await sb.get(`/networks/${net.id}/${reads[p][0]}`)).body, reads[p][1], p);
+
+    const parts = (await created(sb.post(`/networks/${hq.id}/split`), 200)).resultingNetworks;
+    for (const part of parts) if (reads[part.productTypes[0]]) await check(part, part.productTypes[0]);
+    assert.deepEqual(await peerNet(), [parts.find((n) => n.productTypes[0] === 'appliance').id]);
+    const cam = parts.find((n) => n.productTypes[0] === 'camera');
+    assert.deepEqual((await sb.get(`/networks/${cam.id}/camera/qualityRetentionProfiles`)).body.map((p) => p.id), [profile.id]);
+
+    const net = (await created(sb.post(`/organizations/${corp.id}/networks/combine`, { name: hq.name, networkIds: parts.map((n) => n.id) }), 200)).resultingNetwork;
+    for (const p of Object.keys(reads)) await check(net, p);
+    assert.deepEqual(await peerNet(), [net.id]);
+    assert.deepEqual((await sb.get(`/networks/${net.id}/camera/qualityRetentionProfiles`)).body.map((p) => p.id), [profile.id]);
+  });
+
   test('a network bound to a template answers every read', async () => {
     fresh();
     const [hq, austin] = corp.networks;

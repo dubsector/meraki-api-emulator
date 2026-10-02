@@ -123,6 +123,20 @@ describe('switch layer 3 routing and multicast', () => {
     assert.match(await errorOf(sb.get(`/networks/${sb.world.orgs[1].networks[0].id}/switch/routing/ospf`)), /product type 'switch'/);
   });
 
+  test('a bound network takes OSPF from its template but sets its own multicast overrides', async () => {
+    fresh();
+    const org = sb.world.orgs[0];
+    const austin = org.networks[1];
+    const t = (await sb.post(`/organizations/${org.id}/configTemplates`, { name: 'Branches', copyFromNetworkId: austin.id })).body;
+    assert.equal((await sb.post(`/networks/${austin.id}/bind`, { configTemplateId: t.id })).status, 200);
+    const B = `/networks/${austin.id}/switch/routing`;
+    assert.equal((await sb.get(`${B}/ospf`)).body.enabled, false);
+    assert.match(await errorOf(sb.put(`${B}/ospf`, { enabled: true })), /bound to a config template/);
+    const [profile] = (await sb.get(`/organizations/${org.id}/configTemplates/${t.id}/switch/profiles`)).body;
+    const overrides = [{ switchProfiles: [profile.switchProfileId], igmpSnoopingEnabled: false, floodUnknownMulticastTrafficEnabled: false }];
+    assert.deepEqual((await sb.put(`${B}/multicast`, { overrides })).body.overrides, overrides);
+  });
+
   test('multicast settings and overrides', async () => {
     fresh();
     const M = `${N()}/multicast`;

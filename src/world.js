@@ -712,6 +712,7 @@ function repoint(org, fromId, toId) {
   };
   for (const a of org.admins) a.networks = swap(a.networks, (n) => n.id, (n) => ({ ...n, id: toId }));
   for (const g of org.networkGroups?.list ?? []) g.networkIds = swap(g.networkIds, (id) => id, () => toId);
+  for (const p of org.vpnPeers?.list ?? []) if (p.networkIds) p.networkIds = swap(p.networkIds, (id) => id, () => toId);
   for (const n of org.networks) {
     const s2s = n.config?.siteToSite;
     if (!s2s?.hubs.length) continue;
@@ -744,6 +745,10 @@ export function moveNetwork(world, net, dest) {
   dropCaches(org);
   dropCaches(dest);
 }
+
+// Settings kept on a network outside its config, since they name its own
+// devices or items. They go with the product they belong to.
+const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', cameraProfiles: 'camera', mqttBrokers: 'camera' };
 
 // Merges networks with different product types into one. Each product's
 // devices and settings come from the network that had it; network-wide
@@ -799,6 +804,7 @@ export function combineNetworks(world, org, nets, { name, enrollmentString }) {
   }
   const stacks = owner('switch')?.switchStacks;
   Object.assign(target, { config, productTypes, floorPlans: plans, firmware, switchStacks: stacks, stagedUpgrades: first.stagedUpgrades, name, tags: [...new Set(sources.flatMap((n) => n.tags))] });
+  for (const [k, p] of Object.entries(OWN_STORES)) target[k] = owner(p)?.[k];
   if (enrollmentString !== undefined) target.enrollmentString = enrollmentString;
 
   for (const n of sources) {
@@ -847,6 +853,7 @@ export function splitNetwork(world, net) {
   if (wl) Object.assign(wl, { aps: net.aps, ssids: net.ssids });
   const cam = partFor('camera');
   if (cam) cam.cameras = net.cameras;
+  for (const [k, p] of Object.entries(OWN_STORES)) if (partFor(p)) partFor(p)[k] = net[k];
   if (net.floorPlans) (wl ?? cam ?? main).floorPlans = net.floorPlans;
   for (const l of org.licenses ?? []) if (l.networkId === net.id) l.networkId = world.deviceBySerial.get(l.deviceSerial)?.net.id ?? null;
 

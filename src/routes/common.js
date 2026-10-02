@@ -44,13 +44,14 @@ export function limit(list, max, what) {
 }
 
 // An 18 digit ID for a new item in a { created, list } store. The counter never
-// goes down, so a deleted item's ID isn't handed out again.
-export function newId(ctx, store, kind, parentId) {
+// goes down, so a deleted item's ID isn't handed out again. `key` names the
+// items' ID field.
+export function newId(ctx, store, kind, parentId, key = 'id') {
   store.created++;
   const r = new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:${kind}:${parentId}:${store.created}`));
   let id;
   do id = r.digits(18);
-  while (store.list.some((x) => x.id === id));
+  while (store.list.some((x) => x[key] === id));
   return id;
 }
 
