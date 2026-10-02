@@ -65,7 +65,7 @@ export function alertTypes(productType) {
 export const customTemplates = (net) => (configOf(net).payloadTemplates ??= []);
 
 export function templatesOf(net) {
-  return [...INCLUDED, ...customTemplates(net)];
+  return net ? [...INCLUDED, ...customTemplates(net)] : INCLUDED;
 }
 
 export function templateOf(net, id) {
@@ -147,12 +147,13 @@ async function post(url, body, headers) {
 // Sends one webhook and keeps job.status current: processing while a POST is out,
 // retrying between attempts, then delivered on a 2xx or abandoned. Every attempt
 // is logged. With delivery turned off nothing is sent and the job counts as delivered.
-export async function deliver(ctx, net, job, { url, template, data }) {
-  const org = net.org;
+// `net` is null for organization-wide sends.
+export async function deliver(ctx, net, job, { url, template, data, org = net.org }) {
+  if (ctx.replay) return;
   const body = render(template.body, data);
   const headers = { 'Content-Type': 'application/json', 'User-Agent': 'MerakiWebhooks/1.0' };
   for (const h of template.headers) if (h.name) headers[h.name] = render(h.template ?? '', data);
-  const log = (code, ms, sent) => addLog(org, { at: sent, alertType: data.alertType, loggedAt: isoUs(Math.round(sent * 1e6) + ms * 1000), networkId: net.id, organizationId: org.id, responseCode: code, responseDuration: ms, sentAt: isoUs(Math.round(sent * 1e6)), url }, sent);
+  const log = (code, ms, sent) => addLog(org, { at: sent, alertType: data.alertType, loggedAt: isoUs(Math.round(sent * 1e6) + ms * 1000), networkId: net?.id ?? '', organizationId: org.id, responseCode: code, responseDuration: ms, sentAt: isoUs(Math.round(sent * 1e6)), url }, sent);
   if (!ctx.webhooks) {
     log(200, 0, ctx.now);
     job.status = 'delivered';
@@ -180,9 +181,10 @@ const MAX_CALLBACKS = 1000;
 
 // Checks a request's `callback` and records it as running. The receiver is
 // either one of the network's HTTP servers or a URL with its shared secret.
-export function newCallback(ctx, net, given) {
+// Organization-wide requests pass the network holding the server, or null.
+export function newCallback(ctx, net, given, org = net.org) {
   if (given == null) return null;
-  const c = configOf(net);
+  const c = net ? configOf(net) : { httpServers: [] };
   const serverId = given.httpServer?.id;
   let url;
   let secret;
@@ -204,13 +206,13 @@ export function newCallback(ctx, net, given) {
   }
   const template = pickTemplate(net, { payloadTemplateId: given.payloadTemplate?.id ?? 'wpt_00005' });
   const cb = {
-    callbackId: newWebhookId(ctx.world, net.org, 'callback'),
+    callbackId: newWebhookId(ctx.world, org, 'callback'),
     status: 'running',
     errors: [],
     createdBy: { adminId: ctx.world.apiAdmin.id },
     webhook: { url, ...(serverId != null && { httpServer: { id: serverId } }), payloadTemplate: { id: template.payloadTemplateId } },
   };
-  const store = callbacksOf(net.org);
+  const store = callbacksOf(org);
   if (store.size >= MAX_CALLBACKS) store.delete(store.keys().next().value);
   store.set(cb.callbackId, cb);
   return { cb, secret, template };
@@ -218,21 +220,23 @@ export function newCallback(ctx, net, given) {
 
 // Sends a callback after `delay` seconds with what `alertData()` gives then.
 // The callback completes once the receiver answers 2xx and fails otherwise.
-export function sendCallback(ctx, net, dev, { cb, secret, template }, alertData, delay) {
+// Organization-wide callbacks pass the organization with no network or device.
+export function sendCallback(ctx, net, dev, { cb, secret, template }, alertData, delay, org = net.org) {
+  if (ctx.replay) return;
   const run = () => {
     const sent = ctx.clock();
     const at = isoUs(Math.round(sent * 1e6));
     cb.webhook.sentAt = at;
-    const org = net.org;
-    const data = { version: '0.1', sharedSecret: secret, sentAt: at, organizationId: org.id, organizationName: org.name, organizationUrl: orgJson(org).url, networkId: net.id, networkName: net.name, networkUrl: net.url, networkTags: [...net.tags] };
-    Object.assign(data, { deviceSerial: dev.serial, deviceMac: dev.mac, deviceName: dev.name, deviceUrl: deviceUrl(dev), deviceTags: [...dev.tags], deviceModel: dev.model });
+    const data = { version: '0.1', sharedSecret: secret, sentAt: at, organizationId: org.id, organizationName: org.name, organizationUrl: orgJson(org).url };
+    if (net) Object.assign(data, { networkId: net.id, networkName: net.name, networkUrl: net.url, networkTags: [...net.tags] });
+    if (dev) Object.assign(data, { deviceSerial: dev.serial, deviceMac: dev.mac, deviceName: dev.name, deviceUrl: deviceUrl(dev), deviceTags: [...dev.tags], deviceModel: dev.model });
     Object.assign(data, { alertId: cb.callbackId, alertType: 'API callback', alertTypeId: 'api_callback', alertLevel: 'informational', occurredAt: at, alertData: alertData() });
     const job = { status: 'enqueued' };
     const done = () => {
       cb.status = job.status === 'delivered' ? 'completed' : 'failed';
       cb.errors = cb.status === 'failed' ? ['Callback failed'] : [];
     };
-    deliver(ctx, net, job, { url: cb.webhook.url, template, data }).catch(() => (job.status = 'abandoned')).finally(done);
+    deliver(ctx, net, job, { url: cb.webhook.url, template, data, org }).catch(() => (job.status = 'abandoned')).finally(done);
   };
   if (delay > 0) setTimeout(run, delay * 1000).unref();
   else run();
