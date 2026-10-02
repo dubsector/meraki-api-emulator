@@ -195,6 +195,7 @@ describe('co-term licenses and inventory claims', () => {
     assert.match(await errorOf(claim(corp, { licenses: [{ key: l.key, mode: 'renew' }, { key: 'Z2AA-BBBB-CCCC', mode: 'addDevices' }] })), /same mode/);
     assert.match(await errorOf(claim(corp, { licenses: [{ key: 'Z2AA-BBBB-CCCC' }] })), /not found/);
     await errorOf(claim(corp, { licenses: [{ key: l.key, mode: 'later' }] }));
+    assert.match(await errorOf(claim(corp, { licenses: [{ key: l.key }, { key: l.key }] })), /more than once/);
     assert.deepEqual(await ok(claim(corp, { licenses: [{ key: l.key, mode: 'renew' }] })), { orders: [], serials: [], licenses: [{ key: l.key, mode: 'renew' }] });
     const after = await overview();
     assert.equal(Date.parse(after.expirationDate.replace(' UTC', 'Z')) - Date.parse(before.expirationDate.replace(' UTC', 'Z')), 1095 * 86400e3);

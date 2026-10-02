@@ -42,6 +42,14 @@ describe('appliance config', () => {
     }
   });
 
+  test('VPN stats give latency in whole milliseconds', async () => {
+    const org = sb.world.orgs[0];
+    const stats = (await sb.get(`/organizations/${org.id}/appliance/vpn/stats`)).body;
+    const lat = stats.flatMap((s) => s.merakiVpnPeers.flatMap((p) => p.latencySummaries));
+    assert.ok(lat.length > 0);
+    for (const l of lat) for (const k of ['avgLatencyMs', 'minLatencyMs', 'maxLatencyMs']) assert.ok(Number.isInteger(l[k]), `${k} ${l[k]}`);
+  });
+
   test('firewall rules end with the default rule', async () => {
     for (const net of sb.world.orgs[0].networks) {
       const rules = (await sb.get(`/networks/${net.id}/appliance/firewall/l3FirewallRules`)).body.rules;

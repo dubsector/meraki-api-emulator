@@ -8,7 +8,7 @@ import { ApiKeys } from './apikeys.js';
 import { ApiLog } from './apilog.js';
 import { ApiError, badRequest } from './http.js';
 import { landingPage } from './landing.js';
-import actionBatches, { settleBatches } from './routes/actionbatches.js';
+import actionBatches, { settleBatches, storeOf } from './routes/actionbatches.js';
 import admin from './routes/admin.js';
 import alerts from './routes/alerts.js';
 import captures from './routes/captures.js';
@@ -35,11 +35,12 @@ import switchports from './routes/switchports.js';
 import templates from './routes/templates.js';
 import wireless from './routes/wireless.js';
 import wirelessstats from './routes/wirelessstats.js';
-import webhooks from './routes/webhooks.js';
+import webhooks, { testsOf } from './routes/webhooks.js';
 import { RateLimiter } from './ratelimit.js';
 import { recordChange } from './sim/changes.js';
 import { parseTime } from './time.js';
 import { validateBody } from './validate.js';
+import { callbacksOf, logsOf } from './webhooks.js';
 import { buildWorld } from './world.js';
 
 export const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -78,8 +79,13 @@ function compile(routes) {
 
 // Action batch operations other than these are a POST to `resource/operation`.
 const BATCH_METHODS = { create: 'POST', update: 'PUT', destroy: 'DELETE' };
-// Records of things that already happened, kept when a failed batch rebuilds the world.
-const CARRIED = { org: ['actionBatches', 'webhookLogs', 'webhookLogSeq', 'webhookCallbacks'], net: ['webhookTests'] };
+// Records of things that already happened, kept when a failed batch rebuilds
+// the world: [property, the accessor that makes it]. Each is made on the old
+// world first, so a delivery still running there writes to the shared record.
+const CARRIED = {
+  org: [['actionBatches', storeOf], ['webhookLogs', logsOf], ['webhookCallbacks', callbacksOf], ['webhookIds']],
+  net: [['webhookTests', testsOf]],
+};
 
 // The key from X-Cisco-Meraki-API-Key or "Authorization: Bearer <key>". The
 // regex classes don't overlap, so it stays linear on hostile headers.
@@ -272,7 +278,7 @@ export function createEmulator(options = {}) {
   }
 
   function baseCtx(now) {
-    return { world, now, clock, frozen: opts.now != null, webhooks: !opts.noWebhooks, headers: {}, apiLog, keys, body: null, actions: { check: resolveActions, run: runActions }, settle: () => settle(clock()) };
+    return { world, now, clock, frozen: opts.now != null, webhooks: !opts.noWebhooks, headers: {}, apiLog, keys, body: null, actions: { check: resolveActions, run: runActions }, settle: (at = 0) => settle(Math.max(clock(), at)) };
   }
 
   // Runs a handler with the checks every call gets. Writes go in the change
@@ -306,7 +312,11 @@ export function createEmulator(options = {}) {
     for (const [kind, list] of [['org', fresh.orgs], ['net', fresh.networks]]) {
       for (const x of list) {
         const was = kind === 'org' ? old.orgById.get(x.id) : old.networkById.get(x.id);
-        if (was) for (const k of CARRIED[kind]) if (k in was) x[k] = was[k];
+        if (!was) continue;
+        for (const [k, make] of CARRIED[kind]) {
+          make?.(was);
+          if (k in was) x[k] = was[k];
+        }
       }
     }
     world = fresh;

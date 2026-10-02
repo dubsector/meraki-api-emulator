@@ -118,6 +118,10 @@ describe('webhooks and alert configs', () => {
     assert.match(await errorOf(sb.put(`${N}/payloadTemplates/wpt_00003`, { name: 'Mine' })), /Included/);
     assert.match(await errorOf(sb.del(`${N}/payloadTemplates/wpt_00001`)), /Included/);
     await errorOf(sb.put(`${N}/payloadTemplates/wpt_99999`, { name: 'Nope' }), 404);
+    // A refused update changes nothing.
+    const t = await created(sb.post(`${N}/payloadTemplates`, { name: 'Kept', body: '{}' }));
+    await errorOf(sb.put(`${N}/payloadTemplates/${t.payloadTemplateId}`, { name: 'Lost', bodyFile: 'not base64!' }));
+    assert.equal((await sb.get(`${N}/payloadTemplates/${t.payloadTemplateId}`)).body.name, 'Kept');
   });
 
   test('HTTP servers point at a payload template that exists, and a template in use is kept', async () => {
@@ -133,6 +137,8 @@ describe('webhooks and alert configs', () => {
     assert.equal((await sb.get(`${N}/httpServers/${server.id}`)).body.payloadTemplate.name, 'Ops v2');
     assert.match(await errorOf(sb.del(`${N}/payloadTemplates/${t.payloadTemplateId}`)), /used by HTTP server Hook/);
 
+    await errorOf(sb.put(`${N}/httpServers/${server.id}`, { name: 'Renamed', payloadTemplate: { payloadTemplateId: 'wpt_424242' } }));
+    assert.equal((await sb.get(`${N}/httpServers/${server.id}`)).body.name, 'Hook');
     const moved = await sb.put(`${N}/httpServers/${server.id}`, { payloadTemplate: { payloadTemplateId: 'wpt_00003' } });
     assert.deepEqual(moved.body.payloadTemplate, { payloadTemplateId: 'wpt_00003', name: 'Slack (included)' });
     assert.equal((await sb.del(`${N}/payloadTemplates/${t.payloadTemplateId}`)).status, 204);

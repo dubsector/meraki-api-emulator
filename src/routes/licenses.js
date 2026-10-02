@@ -294,6 +294,7 @@ function claimInventory(ctx) {
   for (const { key } of keys) {
     const l = pool.licenses.find((x) => x.key === key);
     if (!l) throw badRequest(`License ${key} was not found or has already been claimed`);
+    if (licenses.includes(l)) throw badRequest(`License ${key} is listed more than once`);
     licenses.push(l);
   }
   const ordered = pool.licenses.filter((l) => orders.includes(l.orderNumber));

@@ -5,7 +5,7 @@ import { configOf } from '../config.js';
 import { badRequest, notFound, paginate, timeWindow } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { DAY } from '../time.js';
-import { WEBHOOK_PRODUCTS, alertTypes, callbacksOf, customTemplates, deliver, isWebhookAlertType, newWebhookId, pickTemplate, templateOf, templatesOf, testPayload, webhookLogs } from '../webhooks.js';
+import { WEBHOOK_PRODUCTS, alertTypes, callbacksOf, checkHttpUrl, customTemplates, deliver, isWebhookAlertType, newWebhookId, pickTemplate, templateOf, templatesOf, testPayload, webhookLogs } from '../webhooks.js';
 import { webhookServers } from './alerts.js';
 import { netOf, orgOf } from './common.js';
 
@@ -38,14 +38,13 @@ function headersOf(b) {
   return list.map(({ name, template }) => ({ name, template }));
 }
 
+// Checks every field before changing any, so a refused update leaves the template as it was.
 function applyTemplate(t, b) {
-  if (b.name != null) {
-    if (!b.name.trim()) throw badRequest("'name' must not be empty");
-    t.name = b.name;
-  }
+  if (b.name != null && !b.name.trim()) throw badRequest("'name' must not be empty");
   const body = b.bodyFile != null ? decode(b.bodyFile, 'bodyFile') : b.body;
-  if (body != null) t.body = body;
   const headers = headersOf(b);
+  if (b.name != null) t.name = b.name;
+  if (body != null) t.body = body;
   if (headers) t.headers = headers;
 }
 
@@ -90,17 +89,13 @@ function deleteTemplate(ctx) {
 
 // ── Webhook tests ──
 
-const testsOf = (net) => (net.webhookTests ??= new Map());
+export const testsOf = (net) => (net.webhookTests ??= new Map());
 
 function createTest(ctx) {
   const net = netOf(ctx);
   const c = configOf(net);
   const b = ctx.body;
-  let parsed = null;
-  try {
-    parsed = new URL(b.url);
-  } catch {}
-  if (!parsed || !/^https?:$/.test(parsed.protocol)) throw badRequest("'url' must be an http or https URL");
+  checkHttpUrl(b.url, 'url');
   const alertTypeId = b.alertTypeId ?? 'power_supply_down';
   if (!isWebhookAlertType(alertTypeId)) throw badRequest(`'${alertTypeId}' is not a webhook alert type`);
   // Defaults come from the HTTP server set up for this URL, if there is one.
