@@ -10,6 +10,7 @@ setup the README describes. Exits 1 if any check fails.
 """
 
 import asyncio
+import contextlib
 import json
 import os
 import socket
@@ -25,6 +26,7 @@ from pathlib import Path
 
 import meraki
 import meraki.aio
+import meraki.session.sync
 
 REPO = Path(__file__).resolve().parent.parent
 KEY = "sdk-check-key-0000"
@@ -83,6 +85,29 @@ def dashboard(emu, **kw):
     opts = dict(api_key=KEY, **emu.sdk, suppress_logging=QUIET, output_log=False, smart_flow_cache_path=CACHE, single_request_timeout=15)
     opts.update(kw)
     return meraki.DashboardAPI(**opts)
+
+
+# HQ's wireless events follow office hours, so a walk over the last day on the
+# real clock comes up short at night and at weekends. The events scenario pins
+# the emulator to a weekday afternoon, and the SDK too, since the SDK ends a
+# forward walk 5 minutes short of its own clock.
+EVENTS_NOW = datetime(2026, 9, 30, 21, 0, tzinfo=timezone.utc)
+
+
+@contextlib.contextmanager
+def sdk_clock(now):
+    real = meraki.session.sync.datetime
+
+    class Pinned(real):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz) if tz else now.replace(tzinfo=None)
+
+    meraki.session.sync.datetime = Pinned
+    try:
+        yield
+    finally:
+        meraki.session.sync.datetime = real
 
 
 def check(name, cond, detail=""):
@@ -176,7 +201,7 @@ def paging():
 
 @scenario
 def events():
-    with Emulator("--rate-limit", "0") as emu:
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
         org = acme(emu.raw("/organizations"))
         nets = emu.raw(f"/organizations/{org}/networks")
         net = next(n for n in nets if n["name"] == "HQ - San Francisco")["id"]
@@ -194,7 +219,7 @@ def events():
                 check("legacy pageStartAt and pageEndAt span the events", r["pageStartAt"] <= min(times) and r["pageEndAt"] >= max(times), (r["pageStartAt"], r["pageEndAt"]))
 
             # Forward from a day ago until the SDK stops itself 5 minutes short of now.
-            start = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            start = (EVENTS_NOW - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
             r = d.networks.getNetworkEvents(net, productType="wireless", perPage=50, total_pages="all", direction="next", startingAfter=start)
             evs = list(r) if iterator else r["events"]
             times = [e["occurredAt"] for e in evs]
@@ -210,7 +235,7 @@ def events():
                 check(f"{mode} events next covers the window ({len(evs)} events)", len(evs) >= len(want) and len(set(times)) == len(times), f"{len(evs)} vs {len(want)}")
 
             # event_log_end_time ends the walk once a page starts past it.
-            end = (datetime.now(timezone.utc) - timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            end = (EVENTS_NOW - timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%SZ")
             r = d.networks.getNetworkEvents(net, productType="wireless", perPage=20, total_pages="all", direction="next", startingAfter=start, event_log_end_time=end)
             evs = list(r) if iterator else r["events"]
             past = sum(1 for e in evs if e["occurredAt"] > end)
