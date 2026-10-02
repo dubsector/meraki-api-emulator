@@ -1,5 +1,9 @@
 # Meraki API Emulator
 
+[![CI](https://img.shields.io/github/actions/workflow/status/dubsector/meraki-api-emulator/ci.yml?branch=main&label=CI)](https://github.com/dubsector/meraki-api-emulator/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/dubsector/meraki-api-emulator)](https://github.com/dubsector/meraki-api-emulator/releases/latest)
+[![License](https://img.shields.io/github/license/dubsector/meraki-api-emulator)](LICENSE)
+
 A local stand-in for the Cisco Meraki Dashboard API v1. It serves two simulated organizations with networks, devices, clients and traffic that change through the day, so you can build, test and demo Meraki integrations without a real Meraki account.
 
 It answers 317 operations (176 reads and 141 writes) with the same paths, operation IDs, paging and error formats as the real API. Writes change the emulator's configuration in memory, so provisioning tools and scripts can create, update and delete things and read them back. It also logs every call your client makes so you can check exactly what it sent.
