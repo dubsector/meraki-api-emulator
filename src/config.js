@@ -51,6 +51,17 @@ export function stored(net, key, build) {
   return (c[key] ??= build());
 }
 
+const APPLIANCE_SETTINGS = new Set(['vlansEnabled', 'vlans', 'singleLan', 'l3', 'l7Rules', 'portForwarding', 'oneToOne', 'inbound', 'firewalledServices', 'staticRoutes', 'siteToSite', 'contentFiltering', 'intrusion', 'malware', 'applianceSettings', 'portOverrides']);
+const WIRELESS_SETTINGS = new Set(['ssids', 'rfProfiles', 'wirelessSettings', 'identityPsks', 'splash', 'splashAuthorizations']);
+
+// The product a setting belongs to, or null for a network-wide one.
+export function settingProduct(key) {
+  if (APPLIANCE_SETTINGS.has(key)) return 'appliance';
+  if (key.startsWith('switch')) return 'switch';
+  if (WIRELESS_SETTINGS.has(key) || key.startsWith('ssid')) return 'wireless';
+  return null;
+}
+
 // VLANs this network shares over AutoVPN, as the VPN status endpoint lists them.
 export function exportedSubnets(net) {
   const c = configOf(net);

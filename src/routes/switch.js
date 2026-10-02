@@ -131,10 +131,9 @@ function portConfig(net, sw, port) {
   return port.config ? merge(base, port.config) : base;
 }
 
-function defaultPortConfig(net, sw, port) {
-  const peer = port.peer?.device;
-  const c = port.clients[0];
-  const out = {
+// What a port starts with before its neighbors or writes change it.
+export function portDefaults(sw, port) {
+  return {
     portId: port.portId,
     name: null,
     tags: [],
@@ -162,6 +161,22 @@ function defaultPortConfig(net, sw, port) {
     mirror: { mode: 'Not mirroring traffic' },
     dot3az: { enabled: false },
   };
+}
+
+// VLANs and link speeds a port update has to stay within.
+export function checkPortBody(sw, port, b) {
+  for (const k of ['vlan', 'voiceVlan']) {
+    const v = b[k];
+    if (v != null && (v < 1 || v > 4094)) throw badRequest(`'${k}' must be a VLAN from 1 to 4094`);
+  }
+  const speeds = linkSpeeds(sw, port);
+  if (b.linkNegotiation != null && !speeds.includes(b.linkNegotiation)) throw badRequest(`'linkNegotiation' must be one of: ${speeds.join(', ')}`);
+}
+
+function defaultPortConfig(net, sw, port) {
+  const peer = port.peer?.device;
+  const c = port.clients[0];
+  const out = portDefaults(sw, port);
   if (peer?.productType === 'appliance') return { ...out, name: 'Uplink to MX', tags: ['uplink'], daiTrusted: true };
   if (peer?.productType === 'switch') return { ...out, name: port.isUplink ? 'Uplink' : `To ${peer.name}`, tags: ['uplink'], stpGuard: port.isUplink ? 'disabled' : 'root guard' };
   if (peer?.productType === 'wireless') {
@@ -448,12 +463,7 @@ export default [
       const dev = devOf(ctx);
       requireModel(dev, 'switch');
       const port = portOf(dev, ctx.params.portId);
-      for (const k of ['vlan', 'voiceVlan']) {
-        const v = ctx.body[k];
-        if (v != null && (v < 1 || v > 4094)) throw badRequest(`'${k}' must be a VLAN from 1 to 4094`);
-      }
-      const speeds = linkSpeeds(dev, port);
-      if (ctx.body.linkNegotiation != null && !speeds.includes(ctx.body.linkNegotiation)) throw badRequest(`'linkNegotiation' must be one of: ${speeds.join(', ')}`);
+      checkPortBody(dev, port, ctx.body);
       const { portId, ...patch } = ctx.body;
       port.config = merge(port.config || {}, patch);
       return portConfig(dev.net, dev, port);

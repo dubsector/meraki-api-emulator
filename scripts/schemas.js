@@ -33,6 +33,15 @@ for (const r of ROUTES) {
   const schema = op.requestBody?.content?.['application/json']?.schema;
   // null marks an operation that takes no body, so the schema test can tell it from a stale file.
   schemas[r.op] = schema ? trim(schema) : null;
+  // A required body field that repeats a path parameter is taken from the path,
+  // the way the Python SDK sends it (with no body at all for schedule deletes).
+  const inPath = [...r.path.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
+  const req = schemas[r.op]?.required;
+  if (req?.some((k) => inPath.includes(k))) {
+    const left = req.filter((k) => !inPath.includes(k));
+    if (left.length) schemas[r.op].required = left;
+    else delete schemas[r.op].required;
+  }
 }
 // The profile body takes any string, so use the list the alert filters enumerate.
 const typesParam = spec.paths['/organizations/{organizationId}/assurance/alerts']?.get.parameters.find((p) => p.name === 'types');

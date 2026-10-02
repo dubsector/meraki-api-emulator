@@ -1,13 +1,13 @@
-// Organization administration: admins, licensing, inventory, the change log
+// Organization administration: admins, inventory, the change log
 // and the log of API calls made to this emulator.
 
-import { ApiError, arrayParam, badRequest, hasTags, intParam, notFound, paginate, timeWindow } from '../http.js';
+import { arrayParam, badRequest, hasTags, intParam, notFound, paginate, timeWindow } from '../http.js';
 import { hashStr } from '../rng.js';
 import { changesOnDay } from '../sim/changes.js';
 import { DAY, iso, isoMicro, weekday } from '../time.js';
 import { orgOf } from './common.js';
+import { deviceLicense } from './licenses.js';
 
-const EXPIRING = 90 * DAY;
 const RESPONSE_CODES = [200, 201, 202, 203, 204, 205, 206, 207, 208, 226, 300, 301, 302, 303, 304, 305, 306, 307, 308, 400, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 421, 422, 423, 424, 425, 426, 428, 429, 431, 451, 500];
 const COUNTRY = { 'Europe/London': 'GB', 'America/Toronto': 'CA' };
 
@@ -71,71 +71,13 @@ function createAdmin(ctx) {
   return adminJson(admin, ctx);
 }
 
-function licenseState(l, now) {
-  if (!l.deviceSerial) return 'unused';
-  if (l.expirationDate <= now) return 'expired';
-  return l.expirationDate - now <= EXPIRING ? 'expiring' : 'active';
-}
-
-function licenseJson(l, now) {
-  const days = l.expirationDate ? Math.round((l.expirationDate - l.activationDate) / DAY) : l.durationInDays;
-  return {
-    id: l.id,
-    licenseType: l.licenseType,
-    licenseKey: l.licenseKey,
-    orderNumber: l.orderNumber,
-    deviceSerial: l.deviceSerial,
-    networkId: l.networkId,
-    state: licenseState(l, now),
-    seatCount: null,
-    totalDurationInDays: days,
-    durationInDays: days,
-    permanentlyQueuedLicenses: [],
-    claimDate: iso(l.claimDate),
-    activationDate: l.activationDate ? iso(l.activationDate) : null,
-    expirationDate: l.expirationDate ? iso(l.expirationDate) : null,
-    headLicenseId: null,
-  };
-}
-
-function licensesOverview(org, now) {
-  const devices = [...org.devices, ...org.spares];
-  if (org.licensing === 'co-term') {
-    const counts = {};
-    for (const d of devices) {
-      const key = d.productType === 'wireless' ? 'MR' : d.productType === 'camera' ? 'MV' : d.model;
-      counts[key] = (counts[key] || 0) + 1;
-    }
-    const date = new Date(org.cotermExpires * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
-    return { status: 'OK', expirationDate: `${date} UTC`, licensedDeviceCounts: counts };
-  }
-  const states = org.licenses.map((l) => licenseState(l, now));
-  const count = (s) => states.filter((x) => x === s).length;
-  const expiring = org.licenses.filter((l, i) => states[i] === 'expiring');
-  const within = (days) => expiring.filter((l) => l.expirationDate - now <= days * DAY).length;
-  const unused = org.licenses.filter((l, i) => states[i] === 'unused');
-  return {
-    licenseCount: org.licenses.length,
-    states: {
-      active: { count: count('active') },
-      expired: { count: count('expired') },
-      expiring: { count: expiring.length, critical: { thresholdInDays: 14, expiringCount: within(14) }, warning: { thresholdInDays: 90, expiringCount: within(90) - within(14) } },
-      recentlyQueued: { count: 0 },
-      unused: { count: unused.length, soonestActivation: { activationDate: null, toActivateCount: 0 } },
-      unusedActive: { count: 0, oldestActivation: { activationDate: null, activeCount: 0 } },
-    },
-    licenseTypes: [{ licenseType: 'ENT', counts: { unassigned: unused.length } }],
-    systemsManager: { counts: { totalSeats: 0, activeSeats: 0, unassignedSeats: 0, orgwideEnrolledDevices: 0 } },
-  };
-}
-
 function sku(model) {
   return model.startsWith('CW') ? `${model}-MR` : `${model}-HW`;
 }
 
 function inventoryJson(d, org) {
   const net = d.net;
-  const license = org.licensing === 'per-device' ? org.licenses.find((l) => l.deviceSerial === d.serial) : null;
+  const license = deviceLicense(org, d.serial);
   return {
     mac: d.mac,
     serial: d.serial,
@@ -325,26 +267,6 @@ export default [
     },
   },
   {
-    op: 'getOrganizationLicensesOverview',
-    path: '/organizations/{organizationId}/licenses/overview',
-    handler: (ctx) => licensesOverview(orgOf(ctx), ctx.now),
-  },
-  {
-    op: 'getOrganizationLicenses',
-    path: '/organizations/{organizationId}/licenses',
-    sample: { org: 1 },
-    handler: (ctx) => {
-      const org = orgOf(ctx);
-      if (org.licensing !== 'per-device') throw new ApiError(400, ['Organization does not support per-device licensing']);
-      const q = ctx.query;
-      const state = q.get('state');
-      const rows = org.licenses
-        .map((l) => licenseJson(l, ctx.now))
-        .filter((l) => (!q.get('deviceSerial') || l.deviceSerial === q.get('deviceSerial')) && (!q.get('networkId') || l.networkId === q.get('networkId')) && (!state || l.state === state));
-      return paginate(ctx, rows, (l) => l.id, { def: 1000, max: 1000 });
-    },
-  },
-  {
     op: 'getOrganizationInventoryDevices',
     path: '/organizations/{organizationId}/inventory/devices',
     handler: (ctx) => paginate(ctx, inventory(ctx), (d) => d.serial, { def: 1000, max: 1000 }),
@@ -385,11 +307,6 @@ export default [
       }
       return { counts: [...counts].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([model, total]) => ({ model, total })) };
     },
-  },
-  {
-    op: 'getOrganizationConfigTemplates',
-    path: '/organizations/{organizationId}/configTemplates',
-    handler: (ctx) => (orgOf(ctx), []),
   },
   {
     op: 'getOrganizationConfigurationChanges',

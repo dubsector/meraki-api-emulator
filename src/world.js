@@ -1,7 +1,7 @@
 // Builds the static world (orgs, networks, devices, clients, switch ports) from a seed.
 
 import { CLIENT_PROFILES, DEVICE_OUI, FIRST_NAMES, ISPS, KINDS, LAST_NAMES, MODELS, ORGS, SERIAL_PREFIX, SSIDS } from './catalog.js';
-import { configOf } from './config.js';
+import { configOf, settingProduct } from './config.js';
 import { Rand, derive, hashStr } from './rng.js';
 import { DAY, Zone } from './time.js';
 
@@ -617,4 +617,134 @@ export function swapDevice(world, dev, spare, afterAction) {
   if (dev.productType === 'wireless') for (const c of dev.net.clients) if (c.ap === dev && !dev.info.bands.includes(c.band)) c.band = '5';
   dropCaches(org);
   return old;
+}
+
+// ── Moving licenses and networks, and combining networks ──
+
+// Licenses leave with the devices they're on. A device in a network leaves it
+// first, so it lands in the other organization's inventory.
+export function moveLicenses(world, org, dest, licenses) {
+  if (dest.licensing !== 'per-device') Object.assign(dest, { licensing: 'per-device', licenses: [] });
+  for (const serial of new Set(licenses.map((l) => l.deviceSerial).filter(Boolean))) {
+    const dev = world.deviceBySerial.get(serial);
+    if (dev?.net.org === org) removeDevice(world, dev);
+    const spare = org.spares.find((s) => s.serial === serial);
+    org.spares.splice(org.spares.indexOf(spare), 1);
+    dest.spares.push(spare);
+  }
+  org.licenses = org.licenses.filter((l) => !licenses.includes(l));
+  for (const l of licenses) dest.licenses.push(Object.assign(l, { networkId: null }));
+  dropCaches(dest);
+}
+
+// Points what names a network at its new ID, or drops it when toId is null:
+// admin privileges, network groups and spokes' VPN hubs.
+function repoint(org, fromId, toId) {
+  const swap = (list, idOf, make) => {
+    const i = list.findIndex((x) => idOf(x) === fromId);
+    if (i < 0) return list;
+    const rest = list.filter((x) => idOf(x) !== fromId);
+    if (toId && !rest.some((x) => idOf(x) === toId)) rest.splice(i, 0, make(list[i]));
+    return rest;
+  };
+  for (const a of org.admins) a.networks = swap(a.networks, (n) => n.id, (n) => ({ ...n, id: toId }));
+  for (const g of org.networkGroups?.list ?? []) g.networkIds = swap(g.networkIds, (id) => id, () => toId);
+  for (const n of org.networks) {
+    const s2s = n.config?.siteToSite;
+    if (!s2s?.hubs.length) continue;
+    s2s.hubs = swap(s2s.hubs, (h) => h.hubId, (h) => ({ ...h, hubId: toId }));
+    if (!s2s.hubs.length && s2s.mode === 'spoke') s2s.mode = 'none';
+  }
+}
+
+// The network goes with its devices, clients and settings, and leaves AutoVPN:
+// its hubs stay behind. Settings are built first, as they depend on the
+// organization's hub.
+export function moveNetwork(world, net, dest) {
+  const org = net.org;
+  settle(org);
+  org.networks.splice(org.networks.indexOf(net), 1);
+  repoint(org, net.id, null);
+  const devs = new Set(net.devices);
+  org.devices = org.devices.filter((d) => !devs.has(d));
+  dest.devices.push(...net.devices);
+  if (org.licensing === 'per-device') {
+    const moving = org.licenses.filter((l) => l.networkId === net.id);
+    org.licenses = org.licenses.filter((l) => !moving.includes(l));
+    dest.licenses.push(...moving);
+  }
+  if (org.hub === net) org.hub = null;
+  net.vpn = null;
+  if (net.mx) Object.assign(configOf(net).siteToSite, { mode: 'none', hubs: [] });
+  net.org = dest;
+  dest.networks.push(net);
+  dropCaches(org);
+  dropCaches(dest);
+}
+
+// Merges networks with different product types into one. Each product's
+// devices and settings come from the network that had it; network-wide
+// settings, the time zone and the address come from the first one. A combined
+// network in the list takes the others in and keeps its ID.
+export function combineNetworks(world, org, nets, { name, enrollmentString }) {
+  settle(org);
+  const kept = nets.find((n) => n.productTypes.length > 1);
+  const sources = kept ? [kept, ...nets.filter((n) => n !== kept)] : nets;
+  const [first] = sources;
+  const productTypes = [...new Set(sources.flatMap((n) => n.productTypes))];
+  const owner = (p) => sources.find((n) => n.productTypes.includes(p));
+  const target = kept ?? addNetwork(world, org, { name, productTypes, tags: [], timeZone: first.timeZone, notes: first.notes });
+  if (!kept) {
+    for (const k of ['code', 'kind', 'zone', 'address', 'lat', 'lng', 'siteIndex', 'subnet']) target[k] = first[k];
+    Object.assign(target, { mx: null, ssids: [], vpn: null });
+  }
+
+  // Settings, with each network's own ID swapped for the combined one.
+  const configs = new Map(sources.map((n) => [n, JSON.parse(JSON.stringify(configOf(n)).replaceAll(n.id, target.id))]));
+  const config = {};
+  for (const [n, c] of configs) {
+    for (const [k, v] of Object.entries(c)) {
+      const p = settingProduct(k);
+      if (p ? owner(p) === n : n === first) config[k] = v;
+    }
+  }
+  for (const [k, v] of Object.entries(configs.get(first))) if (!(k in config)) config[k] = v;
+
+  const plans = { created: 0, list: [], jobsCreated: 0, jobs: [] };
+  const firmware = { window: first.firmware?.window ?? null, timezone: first.firmware?.timezone ?? null, products: {}, rollbacks: first.firmware?.rollbacks ?? 0 };
+  for (const n of sources) {
+    if (n !== target) {
+      for (const d of n.devices) d.net = target;
+      for (const c of n.clients) Object.assign(c, { net: target, sessionCache: null, dayCache: null, hourCache: null });
+      target.devices.push(...n.devices);
+      target.switches.push(...n.switches);
+      target.aps.push(...n.aps);
+      target.cameras.push(...n.cameras);
+      target.clients.push(...n.clients);
+      if (n.mx) Object.assign(target, { mx: n.mx, vpn: n.vpn });
+      if (n.productTypes.includes('wireless')) target.ssids = n.ssids;
+      if (org.hub === n) org.hub = target;
+      for (const l of org.licenses ?? []) if (l.networkId === n.id) l.networkId = target.id;
+    }
+    if (n.floorPlans) {
+      plans.list.push(...n.floorPlans.list);
+      plans.jobs.push(...n.floorPlans.jobs);
+      plans.created = Math.max(plans.created, n.floorPlans.created);
+      plans.jobsCreated = Math.max(plans.jobsCreated, n.floorPlans.jobsCreated);
+    }
+    for (const [p, v] of Object.entries(n.firmware?.products ?? {})) if (owner(p) === n) firmware.products[p] = v;
+  }
+  const stacks = owner('switch')?.switchStacks;
+  Object.assign(target, { config, productTypes, floorPlans: plans, firmware, switchStacks: stacks, stagedUpgrades: first.stagedUpgrades, name, tags: [...new Set(sources.flatMap((n) => n.tags))] });
+  if (enrollmentString !== undefined) target.enrollmentString = enrollmentString;
+
+  for (const n of sources) {
+    if (n === target) continue;
+    for (const list of [org.networks, world.networks]) list.splice(list.indexOf(n), 1);
+    world.networkById.delete(n.id);
+    n.deleted = true;
+    repoint(org, n.id, target.id);
+  }
+  dropCaches(org);
+  return target;
 }
