@@ -614,7 +614,38 @@ def orgwireless():
         check(f"getOrganizationAssuranceImpactedDeviceWirelessByNetwork perPage=3, all pages ({sum(r['counts']['total'] for r in got)} APs impacted)", len(got) == 5 and got == emu.raw(f"{o}/assurance/impactedDevice/wireless/byNetwork?timespan={14 * day}"), got)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless]
+@scenario
+def switchports():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu:
+        d = dashboard(emu)
+        org = acme(d.organizations.getOrganizations())
+        o = f"/organizations/{org}"
+        items = lambda got: got["items"] if isinstance(got, dict) else got
+        hq = next(n["id"] for n in d.organizations.getOrganizationNetworks(org) if n["name"] == "HQ - San Francisco")
+
+        got = d.switch.getOrganizationSwitchPortsOverview(org, timespan=86400)["counts"]
+        active = got["byStatus"]["active"]
+        check(f"getOrganizationSwitchPortsOverview ({active['total']} of {got['total']} ports active)", got["total"] == 358 and active["total"] + got["byStatus"]["inactive"]["total"] == got["total"], got)
+        got = items(d.switch.getOrganizationSwitchPortsClientsOverviewByDevice(org, total_pages="all", perPage=3))
+        sw = got[0]
+        statuses = d.switch.getDeviceSwitchPortsStatuses(sw["serial"])
+        counts = {s["portId"]: s["clientCount"] for s in statuses if s["clientCount"]}
+        check(f"getOrganizationSwitchPortsClientsOverviewByDevice perPage=3, all pages, matches the port statuses ({len(got)} switches)", len(got) == 9 and {p["portId"]: p["counts"]["byStatus"]["online"] for p in sw["ports"]} == counts, sw["ports"][:3])
+        got = items(d.switch.getOrganizationSwitchPortsTopologyDiscoveryByDevice(org, total_pages="all", perPage=3))
+        check(f"getOrganizationSwitchPortsTopologyDiscoveryByDevice perPage=3, all pages ({sum(len(r['ports']) for r in got)} ports)", len(got) == 9 and got == emu.raw(f"{o}/switch/ports/topology/discovery/byDevice?perPage=20")["items"], len(got))
+        got = items(d.switch.getOrganizationSwitchPortsUsageHistoryByDeviceByInterval(org, total_pages="all", perPage=3, interval=14400, timespan=86400))
+        port = got[0]["ports"][0]
+        check(f"getOrganizationSwitchPortsUsageHistoryByDeviceByInterval perPage=3, all pages ({len(got)} switches)", len(got) == 9 and len(port["intervals"]) in (6, 7) and got == emu.raw(f"{o}/switch/ports/usage/history/byDevice/byInterval?perPage=50&interval=14400&timespan=86400")["items"], len(got))
+
+        got = d.switch.getNetworkSwitchDhcpV4ServersSeen(hq, total_pages="all", perPage=3)
+        check(f"getNetworkSwitchDhcpV4ServersSeen perPage=3, all pages ({len(got)} VLANs)", len(got) >= 4 and got == emu.raw(f"/networks/{hq}/switch/dhcp/v4/servers/seen") and all(s["type"] == "device" for s in got), [s["vlan"] for s in got])
+
+        got = d.appliance.getOrganizationApplianceDevicesInterfacesPortsByDevice(org)["items"]
+        one = d.appliance.getOrganizationApplianceDevicesInterfacesPortsByDevice(org, serials=[got[0]["serial"]], numbers=["1", "3"])["items"]
+        check(f"getOrganizationApplianceDevicesInterfacesPortsByDevice, serials and numbers filters ({len(got)} appliances)", len(got) == 5 and [p["number"] for p in one[0]["ports"]] == ["1", "3"], one)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
