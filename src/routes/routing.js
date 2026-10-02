@@ -105,6 +105,8 @@ function checkIface(R, iface, self, gateway) {
     if (v6.assignmentMode === 'eui-64' && v6.address) throw badRequest("IPv6 'address' must not be included when 'assignmentMode' is 'eui-64'");
     if (!v6.gateway && !others.some((o) => o.ipv6?.gateway)) throw badRequest("IPv6 'gateway' is required on the first interface with IPv6");
   }
+  const stranded = self && strandedRoute(l3, [...others, iface]);
+  if (stranded) throw badRequest(`Next hop ${stranded.nextHopIp} of static route ${stranded.subnet} would no longer be in a layer 3 interface subnet`);
   // The default gateway is router-wide and has to sit in one of the interface subnets.
   if (gateway == null) {
     if (!l3.defaultGateway) throw badRequest("'defaultGateway' is required on the first IPv4 interface");
@@ -114,6 +116,9 @@ function checkIface(R, iface, self, gateway) {
     if (![...others, iface].some((o) => ipInCidr(gateway, o.subnet))) throw badRequest(`Default gateway ${gateway} must be in the subnet of a layer 3 interface`);
   }
 }
+
+// A static route whose next hop no interface subnet holds any more.
+const strandedRoute = (l3, ifaces) => l3.routes.list.find((r) => !ifaces.some((i) => ipInCidr(r.nextHopIp, i.subnet)));
 
 export function ifaceJson(R, iface) {
   const { l3 } = R;
@@ -181,6 +186,8 @@ export function deleteIface(ctx, R) {
   if (rest.length && l3.defaultGateway && !rest.some((i) => ipInCidr(l3.defaultGateway, i.subnet))) {
     throw badRequest(`Move the default gateway (${l3.defaultGateway}) to another interface's subnet before deleting this interface`);
   }
+  const stranded = strandedRoute(l3, rest);
+  if (stranded) throw badRequest(`Change or delete static route ${stranded.subnet} (next hop ${stranded.nextHopIp}) before deleting this interface`);
   list.splice(list.indexOf(iface), 1);
   if (!rest.length) l3.defaultGateway = null;
 }
