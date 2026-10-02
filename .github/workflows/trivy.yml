@@ -24,7 +24,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Scan the image
+      # Writes the report for the Security tab, then scans again from the cache to
+      # print the findings in the log and fail the run.
+      - name: Scan the image for the Security tab
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository }}:latest
@@ -33,6 +35,15 @@ jobs:
           format: sarif
           output: trivy.sarif
           limit-severities-for-sarif: true
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:latest
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
           exit-code: 1
         env:
           TRIVY_USERNAME: ${{ github.actor }}
