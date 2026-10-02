@@ -47,7 +47,7 @@ import { recordChange } from './sim/changes.js';
 import { parseTime } from './time.js';
 import { validateBody } from './validate.js';
 import { callbacksOf, logsOf } from './webhooks.js';
-import { buildWorld } from './world.js';
+import { buildWorld, copyWorld } from './world.js';
 
 export const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 export const API_PREFIX = '/api/v1';
@@ -86,9 +86,9 @@ function compile(routes) {
 
 // Action batch operations other than these are a POST to `resource/operation`.
 const BATCH_METHODS = { create: 'POST', update: 'PUT', destroy: 'DELETE' };
-// Records of things that already happened, kept when a failed batch rebuilds
-// the world: [property, the accessor that makes it]. Each is made on the old
-// world first, so a delivery still running there writes to the shared record.
+// Records of things that already happened, kept when a failed batch puts back
+// the world from before it: [property, the accessor that makes it]. Each is made
+// on the failed world first, so a delivery still running there writes to the shared record.
 const CARRIED = {
   org: [['actionBatches', storeOf], ['webhookLogs', logsOf], ['webhookCallbacks', callbacksOf], ['webhookIds']],
   net: [['webhookTests', testsOf]],
@@ -169,8 +169,6 @@ export function createEmulator(options = {}) {
   };
   const apiLog = new ApiLog();
   const keys = new ApiKeys();
-  // Every write that changed the world since the seed, so a failed action batch can rebuild it.
-  let journal = [];
   // The request log names each key by a random ID for this run, never the key itself.
   const clientIds = new Map();
   const clientIdOf = (key) => {
@@ -272,9 +270,7 @@ export function createEmulator(options = {}) {
       settle(now);
       const ctx = { ...baseCtx(now), params, query: url.searchParams, url, origin: `${proto}://${req.headers.host || 'localhost'}` };
       if (write) ctx.body = validateBody(route.op, given);
-      const journaled = write && route.journal !== false ? { route, entry, params, body: structuredClone(ctx.body), now, frozen: ctx.frozen, path: url.pathname, query: url.search, origin: ctx.origin } : null;
       const body = execute(route, entry, ctx);
-      if (journaled) journal.push(journaled);
       const status = route.status ?? (req.method === 'POST' ? 201 : req.method === 'DELETE' ? 204 : 200);
       return send(res, status, body, ctx.headers);
     } catch (e) {
@@ -295,7 +291,7 @@ export function createEmulator(options = {}) {
     if (write && TEMPLATED.test(route.path) && ctx.world.networkById.get(ctx.params.networkId)?.template) {
       throw badRequest('This network is bound to a config template, so its settings can only be changed on the template');
     }
-    const logged = write && route.journal !== false;
+    const logged = write && route.logged !== false;
     const scope = logged ? scopeOf(ctx.params, ctx.world) : null;
     const get = logged && route.method !== 'POST' ? entry.methods.GET : null;
     const before = get ? snapshot(get, ctx) : null;
@@ -304,29 +300,22 @@ export function createEmulator(options = {}) {
     return body;
   }
 
-  // Starts again from the seed and replays the journal without sending anything.
-  function rebuild() {
-    const old = world;
-    const fresh = buildWorld({ seed: opts.seed, bootTime });
-    for (const e of journal) {
-      const ctx = { world: fresh, params: e.params, query: new URLSearchParams(e.query), now: e.now, clock: () => e.now, frozen: e.frozen, webhooks: false, replay: true, url: new URL(e.path + e.query, e.origin), origin: e.origin, headers: {}, apiLog, keys, body: structuredClone(e.body) };
-      try {
-        execute(e.route, e.entry, ctx);
-      } catch (err) {
-        if (!(err instanceof ApiError)) console.error(err);
+  // A copy of the world taken before a batch runs, with each organization and
+  // network paired with its copy, since the batch may delete some of them.
+  function saveWorld() {
+    const { world: copy, copyOf } = copyWorld(world);
+    return { copy, held: [...world.orgs.map((o) => ['org', o, copyOf(o)]), ...world.networks.map((n) => ['net', n, copyOf(n)])] };
+  }
+
+  // Puts back the world from before a failed batch, keeping what already happened.
+  function restore({ copy, held }) {
+    for (const [kind, was, x] of held) {
+      for (const [k, make] of CARRIED[kind]) {
+        make?.(was);
+        if (k in was) x[k] = was[k];
       }
     }
-    for (const [kind, list] of [['org', fresh.orgs], ['net', fresh.networks]]) {
-      for (const x of list) {
-        const was = kind === 'org' ? old.orgById.get(x.id) : old.networkById.get(x.id);
-        if (!was) continue;
-        for (const [k, make] of CARRIED[kind]) {
-          make?.(was);
-          if (k in was) x[k] = was[k];
-        }
-      }
-    }
-    world = fresh;
+    world = copy;
   }
 
   // Checks a batch's actions against the routes before any of them runs and
@@ -346,7 +335,7 @@ export function createEmulator(options = {}) {
       }
       const { entry, values } = match(path);
       const route = entry?.methods[method];
-      if (!route || route.journal === false || route.batch === false || route.perDevice) return fail(`'${a.operation}' is not supported on ${a.resource}`);
+      if (!route || route.logged === false || route.batch === false || route.perDevice) return fail(`'${a.operation}' is not supported on ${a.resource}`);
       let params;
       try {
         params = Object.fromEntries(entry.names.map((n, j) => [n, decodeURIComponent(values[j])]));
@@ -377,23 +366,21 @@ export function createEmulator(options = {}) {
       if (!(e instanceof ApiError)) throw e;
       return { error: e.errors.join(' ') };
     }
+    const saved = saveWorld();
     const done = [];
     for (const [i, a] of list.entries()) {
-      const path = API_PREFIX + a.path;
-      const actx = { ...ctx, params: a.params, query: new URLSearchParams(), url: new URL(path, ctx.origin), headers: {}, body: null };
+      const actx = { ...ctx, params: a.params, query: new URLSearchParams(), url: new URL(API_PREFIX + a.path, ctx.origin), headers: {}, body: null };
       try {
         actx.body = validateBody(a.route.op, a.body ?? {});
-        const e = { route: a.route, entry: a.entry, params: a.params, body: structuredClone(actx.body), now: ctx.now, frozen: ctx.frozen, path, query: '', origin: ctx.origin };
-        done.push({ e, body: execute(a.route, a.entry, actx) });
+        done.push(execute(a.route, a.entry, actx));
       } catch (err) {
         if (!(err instanceof ApiError)) console.error(err);
-        rebuild();
+        restore(saved);
         ctx.world = world;
         return { error: `Action ${i + 1} (${a.operation} ${a.resource}) failed: ${err instanceof ApiError ? err.errors.join(', ') : 'Internal server error'}` };
       }
     }
-    for (const d of done) journal.push(d.e);
-    return { results: done.map((d, i) => ({ body: d.body, params: list[i].params })) };
+    return { results: done.map((body, i) => ({ body, params: list[i].params })) };
   }
 
   // Runs confirmed asynchronous batches whose time has come.
@@ -440,7 +427,6 @@ export function createEmulator(options = {}) {
       else if (req.method !== 'POST') status = send(res, 405, { errors: ['Use POST to reset the emulator'] }, { Allow: 'POST' });
       else {
         world = buildWorld({ seed: opts.seed, bootTime });
-        journal = [];
         status = send(res, 204);
       }
     } else if (url.pathname === API_PREFIX || url.pathname.startsWith(API_PREFIX + '/')) {

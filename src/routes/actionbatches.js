@@ -173,10 +173,10 @@ function listBatches(ctx) {
 
 const PATH = '/organizations/{organizationId}/actionBatches';
 
-// Batch routes stay out of the journal: a rebuilt world carries batches over.
+// Batch routes stay out of the change log, and a failed batch carries batches over.
 export default [
   { op: 'getOrganizationActionBatches', path: PATH, handler: listBatches },
-  { op: 'createOrganizationActionBatch', method: 'POST', path: PATH, journal: false, handler: createBatch },
+  { op: 'createOrganizationActionBatch', method: 'POST', path: PATH, logged: false, handler: createBatch },
   {
     op: 'getOrganizationActionBatch',
     path: `${PATH}/{actionBatchId}`,
@@ -186,6 +186,6 @@ export default [
       return batchJson(org, batch);
     },
   },
-  { op: 'updateOrganizationActionBatch', method: 'PUT', path: `${PATH}/{actionBatchId}`, journal: false, handler: updateBatch },
-  { op: 'deleteOrganizationActionBatch', method: 'DELETE', path: `${PATH}/{actionBatchId}`, journal: false, handler: deleteBatch },
+  { op: 'updateOrganizationActionBatch', method: 'PUT', path: `${PATH}/{actionBatchId}`, logged: false, handler: updateBatch },
+  { op: 'deleteOrganizationActionBatch', method: 'DELETE', path: `${PATH}/{actionBatchId}`, logged: false, handler: deleteBatch },
 ];
