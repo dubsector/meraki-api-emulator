@@ -2,7 +2,9 @@ name: Trivy
 
 # New vulnerabilities turn up in images that have already shipped, so this
 # rescans the published image every week and reports findings under the
-# repository's Security tab. CI scans the image built from each change.
+# repository's Security tab. Findings don't fail the run, since fixing them
+# takes a new release. CI scans the image built from each change and fails
+# on them there.
 on:
   schedule:
     - cron: '17 6 * * 1'
@@ -33,13 +35,20 @@ jobs:
           format: sarif
           output: trivy.sarif
           limit-severities-for-sarif: true
-          exit-code: 1
         env:
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-      # Uploads even when the scan fails, which is when the report matters.
       - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
-        if: always() && hashFiles('trivy.sarif') != ''
         with:
           sarif_file: trivy.sarif
           category: trivy-image
+      # Scans again from the cache to list the findings in the log too.
+      - name: List the findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:latest
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
