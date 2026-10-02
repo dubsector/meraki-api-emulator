@@ -152,6 +152,10 @@ export function isPort(v, ranges = false) {
   return !!m && [m[1], m[2] ?? m[1]].every((p) => p >= 1 && p <= 65535);
 }
 
+export function inRange(v, min, max, name) {
+  if (v != null && !(Number.isInteger(v) && v >= min && v <= max)) throw badRequest(`'${name}' must be an integer between ${min} and ${max}`);
+}
+
 export function ipInCidr(ip, cidr) {
   const n = parseIp(ip);
   const c = parseCidr(cidr);

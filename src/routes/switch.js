@@ -187,6 +187,15 @@ export function checkPortBody(sw, port, b) {
   if (b.linkNegotiation != null && !speeds.includes(b.linkNegotiation)) throw badRequest(`'linkNegotiation' must be one of: ${speeds.join(', ')}`);
 }
 
+export const CUSTOM_POLICY = 'Custom access policy';
+
+// A switch or profile port on a custom access policy has to name a policy that exists.
+export function checkPortPolicy(config, current, b) {
+  const policies = config?.switchAccessPolicies?.list ?? [];
+  if (b.accessPolicyNumber != null && !policies.some((p) => p.number === String(b.accessPolicyNumber))) throw badRequest(`Access policy '${b.accessPolicyNumber}' does not exist in this network`);
+  if (b.accessPolicyType === CUSTOM_POLICY && (b.accessPolicyNumber ?? current.accessPolicyNumber) == null) throw badRequest("'accessPolicyNumber' is required when 'accessPolicyType' is 'Custom access policy'");
+}
+
 function defaultPortConfig(net, sw, port) {
   const peer = port.peer?.device;
   const c = port.clients[0];
@@ -486,6 +495,7 @@ export default [
       const port = portOf(dev, ctx.params.portId);
       if (boundProfile(dev)) throw badRequest('This switch is bound to a switch profile; change the port on the profile instead');
       checkPortBody(dev, port, ctx.body);
+      checkPortPolicy(configOf(dev.net), portConfig(dev.net, dev, port), ctx.body);
       const { portId, ...patch } = ctx.body;
       port.config = merge(port.config || {}, patch);
       return portConfig(dev.net, dev, port);

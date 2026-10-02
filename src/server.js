@@ -34,6 +34,7 @@ import provisioning from './routes/provisioning.js';
 import ssids from './routes/ssids.js';
 import summaries from './routes/summaries.js';
 import routing from './routes/routing.js';
+import switchPolicies from './routes/switchpolicies.js';
 import stacks from './routes/stacks.js';
 import switches from './routes/switch.js';
 import switchports from './routes/switchports.js';
@@ -60,11 +61,11 @@ const GLUED_URL = new RegExp(`^${API_PREFIX}https?://`, 'i');
 export const SDK_HINT = 'This path has a full URL appended to the base URL. The Meraki Python SDK sends that when paging from a host outside meraki.com: use base_url="http://emulator.meraki.com/api/v1" with requests_proxy set to the emulator (see the README)';
 export const CONNECT_HINT = 'The emulator speaks plain HTTP, use an http:// base URL';
 
-export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...licenses, ...templates, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...clients, ...networkwide, ...firmware, ...floorplans, ...appliance, ...firewall, ...vpn, ...shaping, ...switches, ...switchports, ...stacks, ...routing, ...wireless, ...wirelessstats, ...orgwireless, ...ssids, ...devices, ...camera, ...livetools, ...webhooks, ...actionBatches, ...identities].map((r) => ({ method: 'GET', ...r }));
+export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...licenses, ...templates, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...clients, ...networkwide, ...firmware, ...floorplans, ...appliance, ...firewall, ...vpn, ...shaping, ...switches, ...switchports, ...stacks, ...routing, ...switchPolicies, ...wireless, ...wirelessstats, ...orgwireless, ...ssids, ...devices, ...camera, ...livetools, ...webhooks, ...actionBatches, ...identities].map((r) => ({ method: 'GET', ...r }));
 
 // Network settings that come from the config template a network is bound to.
 // Warm spare names the network's own MXes, so it stays local.
-const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance(?!\/warmSpare)|wireless|switch\/settings|groupPolicies|syslogServers|devices\/syslog|snmp|alerts|webhooks\/(?:httpServers|payloadTemplates)|settings)\b/;
+const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance(?!\/warmSpare)|wireless|switch\/(?:settings|accessControlLists|accessPolicies|qosRules|dscpToCosMappings)|groupPolicies|syslogServers|devices\/syslog|snmp|alerts|webhooks\/(?:httpServers|payloadTemplates)|settings)\b/;
 
 // One entry per path template, holding a route per method.
 function compile(routes) {

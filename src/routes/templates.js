@@ -10,7 +10,7 @@ import { badRequest, notFound } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { merge, validTimeZone } from '../validate.js';
 import { netOf, orgOf } from './common.js';
-import { checkPortBody, portConfig, portDefaults } from './switch.js';
+import { checkPortBody, checkPortPolicy, portConfig, portDefaults } from './switch.js';
 
 const LIST = '/organizations/{organizationId}/configTemplates';
 const TEMPLATE = `${LIST}/{configTemplateId}`;
@@ -207,8 +207,10 @@ export default [
     method: 'PUT',
     path: PORT,
     handler: (ctx) => {
+      const { template } = templateOf(ctx);
       const { profile, port } = portOf(ctx);
       checkPortBody({ model: profile.model, info: MODELS[profile.model] }, port, ctx.body);
+      checkPortPolicy(template.config, portJson(profile, port), ctx.body);
       const { portId, ...patch } = ctx.body;
       port.config = merge(port.config || {}, patch);
       return portJson(profile, port);
