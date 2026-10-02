@@ -971,7 +971,46 @@ def shaping():
         check("updateNetworkApplianceTrafficShapingVpnExclusions and getOrganizationApplianceTrafficShapingVpnExclusionsByNetwork", ex["majorApplications"][0]["name"] == "Office 365 Sharepoint" and len(rows) == 5 and next(r for r in rows if r["networkId"] == net) == ex, rows)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping]
+@scenario
+def firewall():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        a = d.appliance
+        org = acme(d.organizations.getOrganizations())
+        net = next(x["id"] for x in d.organizations.getOrganizationNetworks(org) if x["name"] == "HQ - San Francisco")
+
+        fs = a.updateNetworkApplianceFirewallSettings(net, spoofingProtection={"ipSourceGuard": {"mode": "log"}})
+        check("updateNetworkApplianceFirewallSettings", a.getNetworkApplianceFirewallSettings(net) == fs and fs["spoofingProtection"]["ipSourceGuard"]["mode"] == "log", fs)
+        rule = {"comment": "Block telnet", "policy": "deny", "protocol": "tcp", "srcCidr": "Any", "destCidr": "10.0.0.0/8", "destPort": "23"}
+        cell = a.updateNetworkApplianceFirewallCellularFirewallRules(net, rules=[rule])
+        check("updateNetworkApplianceFirewallCellularFirewallRules adds the default rule", a.getNetworkApplianceFirewallCellularFirewallRules(net) == cell and [r["comment"] for r in cell["rules"]] == ["Block telnet", "Default rule"], cell)
+        inbound = a.updateNetworkApplianceFirewallInboundCellularFirewallRules(net, rules=cell["rules"])
+        check("updateNetworkApplianceFirewallInboundCellularFirewallRules takes the default rule back", a.getNetworkApplianceFirewallInboundCellularFirewallRules(net) == inbound == cell, inbound)
+        nat = a.updateNetworkApplianceFirewallOneToManyNatRules(net, rules=[{"publicIp": "198.51.100.40", "uplink": "internet1", "portRules": [{"name": "Web", "protocol": "tcp", "publicPort": "9443", "localIp": "10.0.5.20", "localPort": "443"}]}])
+        check("updateNetworkApplianceFirewallOneToManyNatRules", a.getNetworkApplianceFirewallOneToManyNatRules(net) == nat and nat["rules"][0]["portRules"][0]["allowedIps"] == ["any"], nat)
+
+        vlan = a.getNetworkApplianceVlans(net)[0]["id"]
+        mc = a.updateNetworkApplianceFirewallMulticastForwarding(net, rules=[{"description": "Paging", "address": "239.1.1.1", "vlanIds": [vlan]}])
+        rows = a.getOrganizationApplianceFirewallMulticastForwardingByNetwork(org, perPage=3, total_pages=-1)
+        rows = rows["items"] if isinstance(rows, dict) else rows
+        check(f"updateNetworkApplianceFirewallMulticastForwarding and getOrganizationApplianceFirewallMulticastForwardingByNetwork perPage=3 ({len(rows)} networks)", len(rows) == 5 and next(r for r in rows if r["network"]["id"] == net) == mc, rows)
+        up = a.updateNetworkApplianceUplinksNat(net, uplinks=[{"interface": "wan2", "nat": {"enabled": False}}])
+        rows = a.getOrganizationApplianceUplinksNatByNetwork(org, perPage=3, total_pages=-1)
+        check(f"updateNetworkApplianceUplinksNat and getOrganizationApplianceUplinksNatByNetwork perPage=3 ({len(rows)} networks)", len(rows) == 5 and next(r for r in rows if r["networkId"] == net)["uplinks"] == up["uplinks"] and up["uplinks"][1]["nat"]["enabled"] is False, rows)
+        dest = a.updateNetworkApplianceConnectivityMonitoringDestinations(net, destinations=[{"ip": "1.1.1.1", "description": "Cloudflare", "default": True}])
+        check("updateNetworkApplianceConnectivityMonitoringDestinations", a.getNetworkApplianceConnectivityMonitoringDestinations(net) == dest and dest["destinations"][0]["ip"] == "1.1.1.1", dest)
+
+        primary = a.getNetworkApplianceWarmSpare(net)["primarySerial"]
+        d.organizations.claimIntoOrganizationInventory(org, orders=[ACME_ORDER])
+        spare = next(x["serial"] for x in d.organizations.getOrganizationInventoryDevices(org, orderNumbers=[ACME_ORDER]) if x["model"] == "MX250")
+        d.networks.claimNetworkDevices(net, serials=[spare])
+        ws = a.updateNetworkApplianceWarmSpare(net, True, spareSerial=spare, uplinkMode="virtual", virtualIp1="198.51.100.250", virtualIp2="203.0.113.250")
+        check("updateNetworkApplianceWarmSpare in virtual mode", a.getNetworkApplianceWarmSpare(net) == ws and ws["spareSerial"] == spare and ws["wan1"] == {"ip": "198.51.100.250", "subnet": "198.51.100.0/24"}, ws)
+        sw = a.swapNetworkApplianceWarmSpare(net)
+        check("swapNetworkApplianceWarmSpare flips the roles", a.getNetworkApplianceWarmSpare(net) == sw and (sw["primarySerial"], sw["spareSerial"]) == (spare, primary), sw)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

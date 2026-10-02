@@ -44,14 +44,15 @@ export function relLink(link, rel) {
   return m ? m[1] : null;
 }
 
-// Follows rel=next like a Dashboard API client and returns every item.
+// Follows rel=next like a Dashboard API client and returns every item, from
+// bare arrays or {items} pages.
 export async function collect(get, path, maxPages = 200) {
   const items = [];
   let url = path;
   for (let i = 0; url && i < maxPages; i++) {
     const r = await get(url);
     if (r.status !== 200) throw new Error(`${r.status} ${JSON.stringify(r.body)}`);
-    items.push(...r.body);
+    items.push(...(Array.isArray(r.body) ? r.body : r.body.items));
     url = relLink(r.link, 'next');
   }
   return items;
