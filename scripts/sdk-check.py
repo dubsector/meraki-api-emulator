@@ -566,7 +566,55 @@ def wirelessstats():
         check(f"getOrganizationWirelessClientsOverviewByDevice perPage=3, all pages ({len(want)} APs)", len(want) == 25 and got == want, len(got))
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats]
+@scenario
+def orgwireless():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        org = acme(d.organizations.getOrganizations())
+        o = f"/organizations/{org}"
+        items = lambda got: got["items"] if isinstance(got, dict) else got
+        day = 86400
+
+        top = d.organizations.getOrganizationSummaryTopSsidsByUsage(org, timespan=day, quantity=50)
+        got = items(d.wireless.getOrganizationWirelessClientsUsageBySsid(org, total_pages="all", perPage=3, timespan=day))
+        rows = {r["ssid"]["name"]: r for r in got}
+        check(f"getOrganizationWirelessClientsUsageBySsid perPage=3, all pages, matches the top SSIDs ({len(got)} SSIDs)", top and all(abs(rows[t["name"]]["usage"]["total"] - t["usage"]["total"]) <= 0.1 and rows[t["name"]]["clients"]["total"] == t["clients"]["counts"]["total"] for t in top), got[:1])
+        nets = items(d.wireless.getOrganizationWirelessClientsUsageByNetwork(org, total_pages="all", perPage=3, timespan=day))
+        check(f"getOrganizationWirelessClientsUsageByNetwork perPage=3, all pages ({len(nets)} networks)", len(nets) == 5 and nets == emu.raw(f"{o}/wireless/clients/usage/byNetwork?timespan={day}")["items"], len(nets))
+        got = items(d.wireless.getOrganizationWirelessClientsUsageByNetworkBySsid(org, total_pages="all", perPage=3, timespan=day, usageUnits="KB"))
+        sums = {n["network"]["id"]: sum(r["usage"]["total"] for r in got if r["network"]["id"] == n["network"]["id"]) for n in nets}
+        check(f"getOrganizationWirelessClientsUsageByNetworkBySsid in KB adds up to each network ({len(got)} SSIDs)", all(abs(sums[n["network"]["id"]] / 1024 - n["usage"]["total"]) <= 0.05 for n in nets), sums)
+
+        got = d.wireless.getOrganizationWirelessDevicesChannelUtilizationHistoryByDeviceByInterval(org, total_pages="all", perPage=3, timespan=7200, interval=3600)
+        want = emu.raw(f"{o}/wireless/devices/channelUtilization/history/byDevice/byInterval?timespan=7200&interval=3600")
+        check(f"getOrganizationWirelessDevicesChannelUtilizationHistoryByDeviceByInterval perPage=3, all pages ({len(want)} rows)", len(want) == 50 and got == want, len(got))
+        got = d.wireless.getOrganizationWirelessDevicesChannelUtilizationHistoryByNetworkByInterval(org, total_pages="all", perPage=3, timespan=7200, interval=3600)
+        check(f"getOrganizationWirelessDevicesChannelUtilizationHistoryByNetworkByInterval ({len(got)} rows)", len(got) == 10 and got == emu.raw(f"{o}/wireless/devices/channelUtilization/history/byNetwork/byInterval?timespan=7200&interval=3600"), len(got))
+
+        got = d.wireless.getOrganizationWirelessDevicesEthernetStatuses(org, total_pages="all", perPage=3)
+        low = sum(1 for r in got if r["power"]["mode"] == "low")
+        check(f"getOrganizationWirelessDevicesEthernetStatuses perPage=3, all pages ({low} APs on low power)", len(got) == 25 and low == 6 and got == emu.raw(f"{o}/wireless/devices/ethernet/statuses"), len(got))
+
+        clients = d.wireless.getOrganizationWirelessDevicesPacketLossByClient(org, total_pages="all", perPage=100, timespan=7 * day)
+        devices = d.wireless.getOrganizationWirelessDevicesPacketLossByDevice(org, total_pages="all", perPage=3, timespan=7 * day)
+        nets = d.wireless.getOrganizationWirelessDevicesPacketLossByNetwork(org, total_pages="all", perPage=3, timespan=7 * day)
+        lost = lambda rows, net: sum(r["downstream"]["lost"] for r in rows if r["network"]["id"] == net)
+        check(f"getOrganizationWirelessDevicesPacketLoss by client, device and network agree ({len(clients)} clients)", len(devices) == 25 and len(nets) == 5 and all(lost(clients, n["network"]["id"]) == lost(devices, n["network"]["id"]) == n["downstream"]["lost"] for n in nets), nets[:1])
+
+        got = items(d.wireless.getOrganizationWirelessDevicesPowerModeHistory(org, total_pages="all", perPage=3))
+        check(f"getOrganizationWirelessDevicesPowerModeHistory perPage=3, all pages ({len(got)} APs)", len(got) == 25 and got[:20] == emu.raw(f"{o}/wireless/devices/power/mode/history?perPage=20")["items"], len(got))
+        got = items(d.wireless.getOrganizationWirelessDevicesSystemCpuLoadHistory(org, total_pages="all", perPage=3, timespan=3600))
+        check(f"getOrganizationWirelessDevicesSystemCpuLoadHistory perPage=3, all pages ({len(got)} APs)", len(got) == 25 and all(len(r["series"]) == 12 for r in got), [len(r["series"]) for r in got])
+
+        got = items(d.wireless.getOrganizationWirelessSsidsStatusesByDevice(org, total_pages="all", perPage=3))
+        ap = got[0]
+        status = d.wireless.getDeviceWirelessStatus(ap["serial"])["basicServiceSets"]
+        check(f"getOrganizationWirelessSsidsStatusesByDevice perPage=3, all pages, matches the AP status ({len(got)} APs)", len(got) == 25 and [b["bssid"] for b in ap["basicServiceSets"]] == [b["bssid"] for b in status], len(got))
+        got = d.wireless.getOrganizationAssuranceImpactedDeviceWirelessByNetwork(org, total_pages="all", perPage=3, timespan=14 * day)
+        check(f"getOrganizationAssuranceImpactedDeviceWirelessByNetwork perPage=3, all pages ({sum(r['counts']['total'] for r in got)} APs impacted)", len(got) == 5 and got == emu.raw(f"{o}/assurance/impactedDevice/wireless/byNetwork?timespan={14 * day}"), got)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
