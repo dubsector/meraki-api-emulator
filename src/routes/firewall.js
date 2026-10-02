@@ -29,10 +29,10 @@ const destinationsOf = (net) => stored(net, 'applianceConnectivityDestinations',
 
 // ── Cellular firewall rules ──
 
-const isPorts = (v) => isPort(v, true);
+export const isPorts = (v) => isPort(v, true);
 const items = (v) => String(v).split(',').map((x) => x.trim());
 
-function checkList(v, at, ok, what) {
+export function checkList(v, at, ok, what) {
   if (v == null || /^any$/i.test(v)) return;
   if (!items(v).every(ok)) throw badRequest(`'${at}' must be 'any' or a comma-separated list of ${what}`);
 }

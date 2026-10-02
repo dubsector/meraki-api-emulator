@@ -1010,7 +1010,42 @@ def firewall():
         check("swapNetworkApplianceWarmSpare flips the roles", a.getNetworkApplianceWarmSpare(net) == sw and (sw["primarySerial"], sw["spareSerial"]) == (spare, primary), sw)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall]
+@scenario
+def vpn():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        a = d.appliance
+        org = acme(d.organizations.getOrganizations())
+        nets = {x["name"]: x["id"] for x in d.organizations.getOrganizationNetworks(org)}
+        hq = nets["HQ - San Francisco"]
+
+        neighbor = {"ip": "10.10.10.22", "remoteAsNumber": 64343, "ebgpHoldTimer": 180, "ebgpMultihop": 2, "sourceInterface": "wan1"}
+        bgp = a.updateNetworkApplianceVpnBgp(hq, True, asNumber=65001, ibgpHoldTimer=120, neighbors=[neighbor])
+        check("updateNetworkApplianceVpnBgp on the hub", a.getNetworkApplianceVpnBgp(hq) == bgp and bgp["enabled"] and bgp["neighbors"][0]["remoteAsNumber"] == 64343, bgp)
+        spoke = a.getNetworkApplianceVpnBgp(nets["Branch - Austin"])
+        check("getNetworkApplianceVpnBgp on a spoke shares the ASN", spoke["asNumber"] == 65001 and spoke["enabled"] is False, spoke)
+        try:
+            a.updateNetworkApplianceVpnBgp(nets["Branch - Austin"], True)
+            check("updateNetworkApplianceVpnBgp refuses a spoke", False, "no error")
+        except meraki.APIError as e:
+            check("updateNetworkApplianceVpnBgp refuses a spoke", e.status == 400, e.message)
+
+        slas = a.updateOrganizationApplianceVpnSiteToSiteIpsecPeersSlas(org, items=[{"name": "sla policy", "uri": "http://checkthisendpoint.com"}])
+        sla = slas["items"][0]["id"]
+        peer = {"name": "AWS", "publicIp": "203.0.113.10", "secret": "secret", "privateSubnets": ["172.31.0.0/16"], "ipsecPoliciesPreset": "aws", "slaPolicy": {"id": sla}}
+        peers = a.updateOrganizationApplianceVpnThirdPartyVPNPeers(org, [peer, {**peer, "name": "Routed", "isRouteBased": True, "ebgpNeighbor": {"neighborIp": "169.254.0.2", "remoteAsNumber": 64600}}])
+        check("updateOrganizationApplianceVpnThirdPartyVPNPeers", a.getOrganizationApplianceVpnThirdPartyVPNPeers(org) == peers and len(peers["peers"]) == 2 and peers["peers"][1]["ebgpNeighbor"]["ipVersion"] == 4, peers)
+        read = a.getOrganizationApplianceVpnSiteToSiteIpsecPeersSlas(org)
+        check("getOrganizationApplianceVpnSiteToSiteIpsecPeersSlas lists the peers using each policy", read["items"][0]["ipsec"]["peerIds"] == [p["peerId"] for p in peers["peers"]] and read["meta"]["counts"]["items"]["total"] == 1, read)
+
+        rule = {"comment": "Web", "policy": "deny", "protocol": "tcp", "srcCidr": "10.0.0.0/8", "destCidr": "192.168.1.0/24", "destPort": "443"}
+        fw = a.updateOrganizationApplianceVpnVpnFirewallRules(org, rules=[rule], syslogDefaultRule=True)
+        check("updateOrganizationApplianceVpnVpnFirewallRules adds the default rule", a.getOrganizationApplianceVpnVpnFirewallRules(org) == fw and [r["comment"] for r in fw["rules"]] == ["Web", "Default rule"] and fw["rules"][1]["syslogEnabled"], fw)
+        ids = a.updateOrganizationApplianceSecurityIntrusion(org, [{"ruleId": "meraki:intrusion/snort/GID/1/SID/19559"}])
+        check("updateOrganizationApplianceSecurityIntrusion", a.getOrganizationApplianceSecurityIntrusion(org) == ids and ids["allowedRules"][0]["message"].startswith("INDICATOR-SCAN"), ids)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

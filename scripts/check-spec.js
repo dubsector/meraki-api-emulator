@@ -59,6 +59,7 @@ const CONDITIONAL = [
   [/^\.rtspUrl$/, 'getDeviceCameraVideoSettings', 'external RTSP turned on (cameras start with it off)'],
   [/^\.(spareSerial|uplinkMode)$/, 'getNetworkApplianceWarmSpare', 'warm spare enabled with a second MX'],
   [/^\.wan[12]$/, 'getNetworkApplianceWarmSpare', 'warm spare in virtual uplink mode, wan2 only on a primary with two WANs'],
+  [/^\.routerId$/, 'getNetworkApplianceVpnBgp', 'a router ID set through the PUT (networks start without one)'],
 ];
 
 function conditional(op, field) {

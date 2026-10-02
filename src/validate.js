@@ -4,6 +4,7 @@
 // real API does.
 
 import { readFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { badRequest } from './http.js';
 
 const UNSAFE = new Set(['__proto__', 'constructor', 'prototype']);
@@ -137,6 +138,8 @@ export function parseIp(ip) {
   const c = parseCidr(`${ip}/32`);
   return c ? c[0] : null;
 }
+
+export const isIpv6 = (v) => isIP(String(v)) === 6;
 
 export const isAddress = (v) => parseIp(v) != null || parseCidr(v) != null;
 
