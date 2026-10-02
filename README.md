@@ -39,6 +39,8 @@ For another port, change the host side: `-p 9000:8765`. If the port inside the c
 
 Tags follow the release version: `0.1.0` for an exact release, `0.1` for the latest patch of it, and `latest`. While the version starts with `0.`, a new minor version can change responses, so pin `0.1` or an exact version in tests. To build the image yourself, run `docker build -t meraki-api-emulator .` in a clone.
 
+The image leaves out npm and npx, which the emulator doesn't need. CI scans each build with [Trivy](https://trivy.dev) and fails on high or critical vulnerabilities that have a fix, and the published image is rescanned weekly, with findings under the repository's Security tab.
+
 ### Docker Compose
 
 Next to an app under test, give the emulator a `meraki.com` name as a network alias. The app can then use it as its base URL, and that also works for the [official Python SDK](#the-official-python-sdk) without a proxy:

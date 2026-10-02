@@ -1,5 +1,8 @@
 FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80
 
+# The emulator has no dependencies, so npm only brings its own vulnerabilities.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
 WORKDIR /app
 COPY package.json LICENSE ./
 COPY bin ./bin
