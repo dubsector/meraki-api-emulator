@@ -193,7 +193,7 @@ function networkEvents(ctx) {
 
 // ── Wireless ──
 
-function wirelessScope(ctx, net) {
+export function wirelessScope(ctx, net) {
   requireProduct(net, 'wireless');
   const q = ctx.query;
   const band = q.get('band');
@@ -224,7 +224,7 @@ function wirelessScope(ctx, net) {
   return { aps, clients, latencyAps, filtered: !!(narrowed || apTag || serial) };
 }
 
-function statsWindow(ctx) {
+export function statsWindow(ctx) {
   return timeWindow(ctx.query, ctx.now, { maxSpan: 7 * DAY, lookback: 180 * DAY });
 }
 
