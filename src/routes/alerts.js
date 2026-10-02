@@ -241,7 +241,7 @@ function profileOf(org, id) {
 }
 
 // Webhook recipients are the HTTP servers set up in the organization's networks.
-function webhookServers(org) {
+export function webhookServers(org) {
   const servers = new Map();
   for (const net of org.networks) for (const s of configOf(net).httpServers) if (!servers.has(s.id)) servers.set(s.id, s);
   return servers;

@@ -31,6 +31,7 @@ import switchports from './routes/switchports.js';
 import templates from './routes/templates.js';
 import wireless from './routes/wireless.js';
 import wirelessstats from './routes/wirelessstats.js';
+import webhooks from './routes/webhooks.js';
 import { RateLimiter } from './ratelimit.js';
 import { recordChange } from './sim/changes.js';
 import { parseTime } from './time.js';
@@ -49,10 +50,10 @@ const GLUED_URL = new RegExp(`^${API_PREFIX}https?://`, 'i');
 export const SDK_HINT = 'This path has a full URL appended to the base URL. The Meraki Python SDK sends that when paging from a host outside meraki.com: use base_url="http://emulator.meraki.com/api/v1" with requests_proxy set to the emulator (see the README)';
 export const CONNECT_HINT = 'The emulator speaks plain HTTP, use an http:// base URL';
 
-export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...licenses, ...templates, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...clients, ...networkwide, ...firmware, ...floorplans, ...appliance, ...switches, ...switchports, ...stacks, ...wireless, ...wirelessstats, ...orgwireless, ...ssids, ...devices].map((r) => ({ method: 'GET', ...r }));
+export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...licenses, ...templates, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...clients, ...networkwide, ...firmware, ...floorplans, ...appliance, ...switches, ...switchports, ...stacks, ...wireless, ...wirelessstats, ...orgwireless, ...ssids, ...devices, ...webhooks].map((r) => ({ method: 'GET', ...r }));
 
 // Network settings that come from the config template a network is bound to.
-const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance|wireless|switch\/settings|groupPolicies|syslogServers|devices\/syslog|snmp|alerts|webhooks|settings)\b/;
+const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance|wireless|switch\/settings|groupPolicies|syslogServers|devices\/syslog|snmp|alerts|webhooks\/(?:httpServers|payloadTemplates)|settings)\b/;
 
 // One entry per path template, holding a route per method.
 function compile(routes) {
@@ -100,6 +101,7 @@ export function resolveOptions(o = {}) {
     rateLimit: num(o.rateLimit, 10, 'rate-limit'),
     burst: num(o.burst, 20, 'burst', 1),
     readOnly: o.readOnly === true || o.readOnly === 'true' || o.readOnly === '1',
+    noWebhooks: o.noWebhooks === true || o.noWebhooks === 'true' || o.noWebhooks === '1',
     log: o.log ?? null,
   };
 }
@@ -227,7 +229,7 @@ export function createEmulator(options = {}) {
     if (!params) return send(res, 400, { errors: ['Malformed URL encoding'] });
 
     const proto = req.headers['x-forwarded-proto'] || 'http';
-    const ctx = { world, params, query: url.searchParams, now: clock(), url, origin: `${proto}://${req.headers.host || 'localhost'}`, headers: {}, apiLog, body: null };
+    const ctx = { world, params, query: url.searchParams, now: clock(), clock, webhooks: !opts.noWebhooks, url, origin: `${proto}://${req.headers.host || 'localhost'}`, headers: {}, apiLog, body: null };
     try {
       if (write) ctx.body = validateBody(route.op, await parseBody(req));
       if (write && TEMPLATED.test(route.path) && world.networkById.get(params.networkId)?.template) {
