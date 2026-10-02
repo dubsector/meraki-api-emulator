@@ -11,7 +11,7 @@ import { linkSample, pathLatency, vpnReachable } from '../sim/links.js';
 import { activeUplink, isDown } from '../sim/outages.js';
 import { isOnline } from '../sim/presence.js';
 import { isoMicro } from '../time.js';
-import { newCallback, sendCallback } from '../webhooks.js';
+import { callbacksOf, newCallback, sendCallback } from '../webhooks.js';
 import { devOf, round } from './common.js';
 import { checkCyclePorts, peerConnected, portConfig, portLoad, portSpeed, portStatus, speedMbps } from './switch.js';
 
@@ -407,7 +407,11 @@ function jobOf(ctx, path, tool) {
   const job = jobsOf(dev).get(ctx.params[tool.param]);
   if (!job || job.path !== path) throw notFound('Live tool job');
   const out = jobJson(dev, tool, job, ctx.now);
-  if (path === 'pingDevice' && job.callback) out.callback = { id: job.callback.callbackId, url: job.callback.webhook.url, status: job.callback.status };
+  if (path === 'pingDevice' && job.callback) {
+    // The organization's record, which outlives a rebuilt world.
+    const cb = callbacksOf(dev.net.org).get(job.callback.callbackId) ?? job.callback;
+    out.callback = { id: cb.callbackId, url: cb.webhook.url, status: cb.status };
+  }
   return out;
 }
 

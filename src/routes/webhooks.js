@@ -235,7 +235,7 @@ export default [
   },
   { op: 'updateNetworkWebhooksPayloadTemplate', method: 'PUT', path: `${NET}/payloadTemplates/{payloadTemplateId}`, handler: updateTemplate },
   { op: 'deleteNetworkWebhooksPayloadTemplate', method: 'DELETE', path: `${NET}/payloadTemplates/{payloadTemplateId}`, handler: deleteTemplate },
-  { op: 'createNetworkWebhooksWebhookTest', method: 'POST', path: `${NET}/webhookTests`, handler: createTest },
+  { op: 'createNetworkWebhooksWebhookTest', method: 'POST', path: `${NET}/webhookTests`, batch: false, handler: createTest },
   {
     op: 'getNetworkWebhooksWebhookTest',
     path: `${NET}/webhookTests/{webhookTestId}`,

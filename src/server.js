@@ -4,9 +4,11 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { ApiKeys } from './apikeys.js';
 import { ApiLog } from './apilog.js';
 import { ApiError, badRequest } from './http.js';
 import { landingPage } from './landing.js';
+import actionBatches, { settleBatches } from './routes/actionbatches.js';
 import admin from './routes/admin.js';
 import alerts from './routes/alerts.js';
 import captures from './routes/captures.js';
@@ -16,6 +18,7 @@ import clients from './routes/clients.js';
 import devices from './routes/devices.js';
 import firmware from './routes/firmware.js';
 import floorplans from './routes/floorplans.js';
+import identities from './routes/identities.js';
 import licenses from './routes/licenses.js';
 import livetools from './routes/livetools.js';
 import networks from './routes/networks.js';
@@ -51,7 +54,7 @@ const GLUED_URL = new RegExp(`^${API_PREFIX}https?://`, 'i');
 export const SDK_HINT = 'This path has a full URL appended to the base URL. The Meraki Python SDK sends that when paging from a host outside meraki.com: use base_url="http://emulator.meraki.com/api/v1" with requests_proxy set to the emulator (see the README)';
 export const CONNECT_HINT = 'The emulator speaks plain HTTP, use an http:// base URL';
 
-export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...licenses, ...templates, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...clients, ...networkwide, ...firmware, ...floorplans, ...appliance, ...switches, ...switchports, ...stacks, ...wireless, ...wirelessstats, ...orgwireless, ...ssids, ...devices, ...livetools, ...webhooks].map((r) => ({ method: 'GET', ...r }));
+export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...licenses, ...templates, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...clients, ...networkwide, ...firmware, ...floorplans, ...appliance, ...switches, ...switchports, ...stacks, ...wireless, ...wirelessstats, ...orgwireless, ...ssids, ...devices, ...livetools, ...webhooks, ...actionBatches, ...identities].map((r) => ({ method: 'GET', ...r }));
 
 // Network settings that come from the config template a network is bound to.
 const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance|wireless|switch\/settings|groupPolicies|syslogServers|devices\/syslog|snmp|alerts|webhooks\/(?:httpServers|payloadTemplates)|settings)\b/;
@@ -72,6 +75,11 @@ function compile(routes) {
   }
   return [...byPath.values()].sort((a, b) => a.names.length - b.names.length); // literal segments win over {params}
 }
+
+// Action batch operations other than these are a POST to `resource/operation`.
+const BATCH_METHODS = { create: 'POST', update: 'PUT', destroy: 'DELETE' };
+// Records of things that already happened, kept when a failed batch rebuilds the world.
+const CARRIED = { org: ['actionBatches', 'webhookLogs', 'webhookLogSeq', 'webhookCallbacks'], net: ['webhookTests'] };
 
 // The key from X-Cisco-Meraki-API-Key or "Authorization: Bearer <key>". The
 // regex classes don't overlap, so it stays linear on hostile headers.
@@ -147,6 +155,9 @@ export function createEmulator(options = {}) {
     return deviceLimiters.get(route.op).take(serial);
   };
   const apiLog = new ApiLog();
+  const keys = new ApiKeys();
+  // Every write that changed the world since the seed, so a failed action batch can rebuild it.
+  let journal = [];
   // The request log names each key by a random ID for this run, never the key itself.
   const clientIds = new Map();
   const clientIdOf = (key) => {
@@ -174,21 +185,23 @@ export function createEmulator(options = {}) {
   }
 
   // The organization and network a call belongs to, for the logs.
-  function scopeOf(params) {
-    if (params.organizationId) return { org: world.orgById.get(params.organizationId) ?? null, net: null };
-    const net = params.networkId ? world.networkById.get(params.networkId) : params.serial ? world.deviceBySerial.get(params.serial)?.net : null;
+  function scopeOf(params, w = world) {
+    if (params.organizationId) return { org: w.orgById.get(params.organizationId) ?? null, net: null };
+    const net = params.networkId ? w.networkById.get(params.networkId) : params.serial ? w.deviceBySerial.get(params.serial)?.net : null;
     return { org: net?.org ?? null, net: net ?? null };
   }
 
   function authorized(req) {
     const key = apiKeyOf(req.headers);
-    return key && (!opts.apiKey || key === opts.apiKey) ? key : null;
+    if (!key || keys.isRevoked(key)) return null;
+    return !opts.apiKey || key === opts.apiKey || keys.isGenerated(key) ? key : null;
   }
 
   // Authenticated calls are answered, then recorded for the apiRequests endpoints.
   async function api(req, res, url) {
     const key = authorized(req);
     if (!key) return send(res, 401, { errors: [AUTH_ERROR] });
+    keys.seen(key, clock());
 
     const { entry, values } = match(url.pathname.slice(API_PREFIX.length) || '/');
     let params = null;
@@ -197,7 +210,7 @@ export function createEmulator(options = {}) {
     } catch {}
     const route = entry?.methods[req.method === 'HEAD' ? 'GET' : req.method] ?? null;
     const scope = params ? scopeOf(params) : { org: null, net: null };
-    const status = await dispatch(req, res, url, key, entry, route, params, scope);
+    const status = await dispatch(req, res, url, key, entry, route, params);
     apiLog.add({
       ts: clock(),
       orgId: scope.org?.id ?? null,
@@ -216,7 +229,7 @@ export function createEmulator(options = {}) {
     return status;
   }
 
-  async function dispatch(req, res, url, key, entry, route, params, scope) {
+  async function dispatch(req, res, url, key, entry, route, params) {
     const wait = limiter ? limiter.take(key) : 0;
     if (wait > 0) return send(res, 429, { errors: ['Too many requests'] }, { 'Retry-After': String(Math.max(1, Math.ceil(wait))) });
 
@@ -240,24 +253,134 @@ export function createEmulator(options = {}) {
     if (deviceBusy > 0) return send(res, 429, { errors: ['Too many requests for this device'] }, { 'Retry-After': String(Math.max(1, Math.ceil(deviceBusy))) });
 
     const proto = req.headers['x-forwarded-proto'] || 'http';
-    const ctx = { world, params, query: url.searchParams, now: clock(), clock, frozen: opts.now != null, webhooks: !opts.noWebhooks, url, origin: `${proto}://${req.headers.host || 'localhost'}`, headers: {}, apiLog, body: null };
     try {
-      if (write) ctx.body = validateBody(route.op, await parseBody(req));
-      if (write && TEMPLATED.test(route.path) && world.networkById.get(params.networkId)?.template) {
-        throw badRequest('This network is bound to a config template, so its settings can only be changed on the template');
-      }
-      // Updates and deletes log what the resource looked like before.
-      const get = write && req.method !== 'POST' ? entry.methods.GET : null;
-      const before = get ? snapshot(get, ctx) : null;
-      const body = route.handler(ctx);
+      const given = write ? await parseBody(req) : null;
+      const now = clock();
+      settle(now);
+      const ctx = { ...baseCtx(now), params, query: url.searchParams, url, origin: `${proto}://${req.headers.host || 'localhost'}` };
+      if (write) ctx.body = validateBody(route.op, given);
+      const journaled = write && route.journal !== false ? { route, entry, params, body: structuredClone(ctx.body), now, frozen: ctx.frozen, path: url.pathname, query: url.search, origin: ctx.origin } : null;
+      const body = execute(route, entry, ctx);
+      if (journaled) journal.push(journaled);
       const status = route.status ?? (req.method === 'POST' ? 201 : req.method === 'DELETE' ? 204 : 200);
-      if (write) recordChange(scope, { t: ctx.now, admin: world.apiAdmin, label: `${req.method} ${url.pathname}`, before, after: req.method === 'DELETE' ? null : body, ssidNumber: params.number });
       return send(res, status, body, ctx.headers);
     } catch (e) {
       if (e instanceof ApiError) return send(res, e.status, { errors: e.errors }, e.headers);
       console.error(e);
       return send(res, 500, { errors: ['Internal server error'] });
     }
+  }
+
+  function baseCtx(now) {
+    return { world, now, clock, frozen: opts.now != null, webhooks: !opts.noWebhooks, headers: {}, apiLog, keys, body: null, actions: { check: resolveActions, run: runActions }, settle: () => settle(clock()) };
+  }
+
+  // Runs a handler with the checks every call gets. Writes go in the change
+  // log, and updates and deletes log what the resource looked like before.
+  function execute(route, entry, ctx) {
+    const write = route.method !== 'GET';
+    if (write && TEMPLATED.test(route.path) && ctx.world.networkById.get(ctx.params.networkId)?.template) {
+      throw badRequest('This network is bound to a config template, so its settings can only be changed on the template');
+    }
+    const logged = write && route.journal !== false;
+    const scope = logged ? scopeOf(ctx.params, ctx.world) : null;
+    const get = logged && route.method !== 'POST' ? entry.methods.GET : null;
+    const before = get ? snapshot(get, ctx) : null;
+    const body = route.handler(ctx);
+    if (logged) recordChange(scope, { t: ctx.now, admin: ctx.world.apiAdmin, label: `${route.method} ${ctx.url.pathname}`, before, after: route.method === 'DELETE' ? null : body, ssidNumber: ctx.params.number });
+    return body;
+  }
+
+  // Starts again from the seed and replays the journal without sending anything.
+  function rebuild() {
+    const old = world;
+    const fresh = buildWorld({ seed: opts.seed, bootTime });
+    for (const e of journal) {
+      const ctx = { world: fresh, params: e.params, query: new URLSearchParams(e.query), now: e.now, clock: () => e.now, frozen: e.frozen, webhooks: false, replay: true, url: new URL(e.path + e.query, e.origin), origin: e.origin, headers: {}, apiLog, keys, body: structuredClone(e.body) };
+      try {
+        execute(e.route, e.entry, ctx);
+      } catch (err) {
+        if (!(err instanceof ApiError)) console.error(err);
+      }
+    }
+    for (const [kind, list] of [['org', fresh.orgs], ['net', fresh.networks]]) {
+      for (const x of list) {
+        const was = kind === 'org' ? old.orgById.get(x.id) : old.networkById.get(x.id);
+        if (was) for (const k of CARRIED[kind]) if (k in was) x[k] = was[k];
+      }
+    }
+    world = fresh;
+  }
+
+  // Checks a batch's actions against the routes before any of them runs and
+  // throws a 400 listing every bad one.
+  function resolveActions(org, actions) {
+    const errors = [];
+    const list = actions.map((a, i) => {
+      const fail = (why) => errors.push(`Action ${i + 1}: ${why}`) && null;
+      const method = BATCH_METHODS[a.operation] ?? 'POST';
+      let path = a.resource.startsWith(API_PREFIX + '/') ? a.resource.slice(API_PREFIX.length) : a.resource;
+      path = path.replace(/\/+$/, '');
+      if (!path.startsWith('/') || /[?#]/.test(path)) return fail(`'${a.resource}' is not a resource path`);
+      if (!BATCH_METHODS[a.operation]) {
+        if (!/^[A-Za-z]+$/.test(a.operation)) return fail(`'${a.operation}' is not an operation`);
+        path += `/${a.operation}`;
+      }
+      const { entry, values } = match(path);
+      const route = entry?.methods[method];
+      if (!route || route.journal === false || route.batch === false || route.perDevice) return fail(`'${a.operation}' is not supported on ${a.resource}`);
+      let params;
+      try {
+        params = Object.fromEntries(entry.names.map((n, j) => [n, decodeURIComponent(values[j])]));
+      } catch {
+        return fail(`'${a.resource}' has malformed URL encoding`);
+      }
+      const scope = scopeOf(params);
+      if ((params.organizationId != null && params.organizationId !== org.id) || (scope.org && scope.org !== org)) return fail(`${a.resource} is not in this organization`);
+      try {
+        validateBody(route.op, a.body ?? {});
+      } catch (e) {
+        if (!(e instanceof ApiError)) throw e;
+        return fail(e.errors.join(', '));
+      }
+      return { ...a, method, path, route, entry, params };
+    });
+    if (errors.length) throw new ApiError(400, errors);
+    return list;
+  }
+
+  // Runs a batch's actions in order. The first failure puts the world back as
+  // it was before the batch, so a batch applies all of its actions or none.
+  function runActions(ctx, org, actions) {
+    let list;
+    try {
+      list = resolveActions(org, actions);
+    } catch (e) {
+      if (!(e instanceof ApiError)) throw e;
+      return { error: e.errors.join(' ') };
+    }
+    const done = [];
+    for (const [i, a] of list.entries()) {
+      const path = API_PREFIX + a.path;
+      const actx = { ...ctx, params: a.params, query: new URLSearchParams(), url: new URL(path, ctx.origin), headers: {}, body: null };
+      try {
+        actx.body = validateBody(a.route.op, a.body ?? {});
+        const e = { route: a.route, entry: a.entry, params: a.params, body: structuredClone(actx.body), now: ctx.now, frozen: ctx.frozen, path, query: '', origin: ctx.origin };
+        done.push({ e, body: execute(a.route, a.entry, actx) });
+      } catch (err) {
+        if (!(err instanceof ApiError)) console.error(err);
+        rebuild();
+        ctx.world = world;
+        return { error: `Action ${i + 1} (${a.operation} ${a.resource}) failed: ${err instanceof ApiError ? err.errors.join(', ') : 'Internal server error'}` };
+      }
+    }
+    for (const d of done) journal.push(d.e);
+    return { results: done.map((d, i) => ({ body: d.body, params: list[i].params })) };
+  }
+
+  // Runs confirmed asynchronous batches whose time has come.
+  function settle(now) {
+    settleBatches({ ...baseCtx(now) });
   }
 
   function snapshot(get, ctx) {
@@ -299,6 +422,7 @@ export function createEmulator(options = {}) {
       else if (req.method !== 'POST') status = send(res, 405, { errors: ['Use POST to reset the emulator'] }, { Allow: 'POST' });
       else {
         world = buildWorld({ seed: opts.seed, bootTime });
+        journal = [];
         status = send(res, 204);
       }
     } else if (url.pathname === API_PREFIX || url.pathname.startsWith(API_PREFIX + '/')) {

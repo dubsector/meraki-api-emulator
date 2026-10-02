@@ -850,7 +850,43 @@ def livetools():
         rx.shutdown()
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools]
+@scenario
+def actionbatches():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu:
+        d = dashboard(emu)
+        me = d.administered.getAdministeredIdentitiesMe()
+        check("getAdministeredIdentitiesMe", me["name"] == "API Integration" and me["authentication"]["api"]["key"]["created"] is True, me)
+        key = d.administered.generateAdministeredIdentitiesMeApiKeys()["key"]
+        check("generateAdministeredIdentitiesMeApiKeys", len(key) == 40, key)
+        suffixes = [k["suffix"] for k in d.administered.getAdministeredIdentitiesMeApiKeys()]
+        check("getAdministeredIdentitiesMeApiKeys lists the SDK's key and the new one", suffixes == [KEY[-4:], key[-4:]], suffixes)
+        check("a generated key works", dashboard(emu, api_key=key).organizations.getOrganizations() != [])
+        d.administered.revokeAdministeredIdentitiesMeApiKeys(key[-4:])
+        try:
+            dashboard(emu, api_key=key).organizations.getOrganizations()
+            check("revokeAdministeredIdentitiesMeApiKeys", False, "the key still works")
+        except meraki.APIError as e:
+            check("revokeAdministeredIdentitiesMeApiKeys makes the key answer 401", e.status == 401, e.status)
+
+        org = acme(d.organizations.getOrganizations())
+        net = next(n["id"] for n in d.organizations.getOrganizationNetworks(org) if n["name"] == "HQ - San Francisco")
+        o = d.organizations
+        vlan = {"id": "300", "name": "Batch", "subnet": "10.250.0.0/24", "applianceIp": "10.250.0.1"}
+        batch = o.createOrganizationActionBatch(org, [{"resource": f"/networks/{net}/appliance/vlans", "operation": "create", "body": vlan}], confirmed=True, synchronous=True)
+        check("createOrganizationActionBatch creates the VLAN", batch["status"]["completed"] and batch["status"]["createdResources"] == [{"id": "300", "uri": f"/networks/{net}/appliance/vlans/300"}] and d.appliance.getNetworkApplianceVlan(net, "300")["name"] == "Batch", batch)
+        check("getOrganizationActionBatch", o.getOrganizationActionBatch(org, batch["id"]) == batch)
+        preview = o.createOrganizationActionBatch(org, [{"resource": f"/networks/{net}/appliance/vlans/300", "operation": "update", "body": {"name": "Renamed"}}])
+        check("an unconfirmed batch changes nothing", not preview["confirmed"] and d.appliance.getNetworkApplianceVlan(net, "300")["name"] == "Batch", preview)
+        check("getOrganizationActionBatches filters by status", ids(o.getOrganizationActionBatches(org, status="pending")) == [preview["id"]])
+        done = o.updateOrganizationActionBatch(org, preview["id"], confirmed=True)
+        check("updateOrganizationActionBatch confirms it", done["status"]["completed"] and d.appliance.getNetworkApplianceVlan(net, "300")["name"] == "Renamed", done)
+        failed = o.createOrganizationActionBatch(org, [{"resource": f"/networks/{net}/appliance/vlans/300", "operation": "destroy"}, {"resource": f"/networks/{net}/appliance/vlans/999", "operation": "destroy"}], confirmed=True)
+        check("a failed batch rolls back", failed["status"]["failed"] and d.appliance.getNetworkApplianceVlan(net, "300")["name"] == "Renamed", failed)
+        o.deleteOrganizationActionBatch(org, failed["id"])
+        check("deleteOrganizationActionBatch", ids(o.getOrganizationActionBatches(org)) == [batch["id"], preview["id"]])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
