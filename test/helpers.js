@@ -59,5 +59,5 @@ export async function collect(get, path, maxPages = 200) {
 
 // A concrete URL for each route, using IDs from HQ.
 export function sampleUrls(world) {
-  return ROUTES.filter((r) => r.method === 'GET').map((r) => ({ url: sampleUrl(r, world, Date.parse(NOW) / 1000), status: r.sample?.status ?? 200 }));
+  return ROUTES.filter((r) => r.method === 'GET').map((r) => ({ url: sampleUrl(r, world, Date.parse(NOW) / 1000), status: r.sample?.status ?? r.status ?? 200 }));
 }
