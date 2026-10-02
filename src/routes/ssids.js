@@ -8,6 +8,7 @@ import { badRequest, notFound } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { isoMicro, parseTime } from '../time.js';
 import { merge } from '../validate.js';
+import { shapingDefinition } from './shaping.js';
 import { ssidOf, wirelessNet } from './wireless.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -262,16 +263,14 @@ const shaping = setting('ssidTrafficShaping', () => ({ trafficShapingEnabled: fa
 
 function shapingRule(r, i) {
   if (!r.definitions.length) throw badRequest(`'rules[${i}].definitions' needs at least one definition`);
-  r.definitions.forEach((d, j) => {
-    if (d.type === 'port' && !(/^\d+$/.test(d.value) && d.value >= 1 && d.value <= 65535)) throw badRequest(`'rules[${i}].definitions[${j}].value' must be a port from 1 to 65535`);
-  });
+  const definitions = r.definitions.map((d, j) => shapingDefinition(d, `rules[${i}].definitions[${j}]`));
   const limits = r.perClientBandwidthLimits ?? {};
   const settings = limits.settings ?? 'network default';
   if (!['network default', 'ignore', 'custom'].includes(settings)) throw badRequest(`'rules[${i}].perClientBandwidthLimits.settings' must be one of: network default, ignore, custom`);
   inRange(r.dscpTagValue, `rules[${i}].dscpTagValue`, 0, 63);
   inRange(r.pcpTagValue, `rules[${i}].pcpTagValue`, 0, 7);
   return {
-    definitions: r.definitions.map((d) => ({ type: d.type, value: d.value })),
+    definitions,
     perClientBandwidthLimits: settings === 'custom' ? { settings, bandwidthLimits: { limitUp: limits.bandwidthLimits?.limitUp ?? null, limitDown: limits.bandwidthLimits?.limitDown ?? null } } : { settings },
     dscpTagValue: r.dscpTagValue ?? null,
     pcpTagValue: r.pcpTagValue ?? null,

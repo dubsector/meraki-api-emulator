@@ -62,7 +62,7 @@ const WIRELESS_SETTINGS = new Set(['ssids', 'rfProfiles', 'wirelessSettings', 'i
 
 // The product a setting belongs to, or null for a network-wide one.
 export function settingProduct(key) {
-  if (APPLIANCE_SETTINGS.has(key)) return 'appliance';
+  if (APPLIANCE_SETTINGS.has(key) || key.startsWith('appliance')) return 'appliance';
   if (key.startsWith('switch')) return 'switch';
   if (WIRELESS_SETTINGS.has(key) || key.startsWith('ssid')) return 'wireless';
   return null;
