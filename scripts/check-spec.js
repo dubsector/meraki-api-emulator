@@ -60,6 +60,7 @@ const CONDITIONAL = [
   [/^\.(spareSerial|uplinkMode)$/, 'getNetworkApplianceWarmSpare', 'warm spare enabled with a second MX'],
   [/^\.wan[12]$/, 'getNetworkApplianceWarmSpare', 'warm spare in virtual uplink mode, wan2 only on a primary with two WANs'],
   [/^\.routerId$/, 'getNetworkApplianceVpnBgp', 'a router ID set through the PUT (networks start without one)'],
+  [/^\.md5AuthenticationKey$/, 'getNetworkSwitchRoutingOspf', 'MD5 authentication turned on (OSPF starts with it off)'],
 ];
 
 function conditional(op, field) {

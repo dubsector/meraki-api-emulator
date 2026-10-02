@@ -1045,7 +1045,56 @@ def vpn():
         check("updateOrganizationApplianceSecurityIntrusion", a.getOrganizationApplianceSecurityIntrusion(org) == ids and ids["allowedRules"][0]["message"].startswith("INDICATOR-SCAN"), ids)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn]
+@scenario
+def routing():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        s = d.switch
+        org = acme(d.organizations.getOrganizations())
+        nets = {x["name"]: x["id"] for x in d.organizations.getOrganizationNetworks(org)}
+        hq = nets["HQ - San Francisco"]
+        switches = sorted((x for x in d.networks.getNetworkDevices(hq) if x["model"].startswith("MS")), key=lambda x: x["model"], reverse=True)
+        core, floor = switches[0]["serial"], switches[1]["serial"]
+
+        check("getDeviceSwitchRoutingInterfaces starts empty", s.getDeviceSwitchRoutingInterfaces(core) == [])
+        ospf = s.updateNetworkSwitchRoutingOspf(hq, enabled=True, areas=[{"areaId": "0", "areaName": "Backbone", "areaType": "normal"}, {"areaId": "10", "areaName": "Floors", "areaType": "stub"}])
+        check("updateNetworkSwitchRoutingOspf", s.getNetworkSwitchRoutingOspf(hq) == ospf and ospf["enabled"] and len(ospf["areas"]) == 2, ospf)
+        iface = s.createDeviceSwitchRoutingInterface(core, "Users", vlanId=10, subnet="192.0.2.0/25", interfaceIp="192.0.2.2", defaultGateway="192.0.2.1", multicastRouting="enabled", ospfSettings={"area": "10"})
+        check("createDeviceSwitchRoutingInterface", iface["serial"] == core and iface["uplinkV4"] and iface["ospfSettings"]["area"] == "10", iface)
+        iid = iface["interfaceId"]
+        put = s.updateDeviceSwitchRoutingInterface(core, iid, name="Staff")
+        check("updateDeviceSwitchRoutingInterface", s.getDeviceSwitchRoutingInterface(core, iid) == put and put["name"] == "Staff", put)
+        dhcp = s.updateDeviceSwitchRoutingInterfaceDhcp(core, iid, dhcpMode="dhcpServer", dnsNameserversOption="openDns")
+        check("updateDeviceSwitchRoutingInterfaceDhcp", s.getDeviceSwitchRoutingInterfaceDhcp(core, iid) == dhcp and dhcp["dnsNameserversOption"] == "openDns", dhcp)
+        route = s.createDeviceSwitchRoutingStaticRoute(core, "198.51.100.0/24", "192.0.2.10", name="Lab")
+        rid = route["staticRouteId"]
+        moved = s.updateDeviceSwitchRoutingStaticRoute(core, rid, advertiseViaOspfEnabled=True)
+        check("updateDeviceSwitchRoutingStaticRoute", s.getDeviceSwitchRoutingStaticRoute(core, rid) == moved and s.getDeviceSwitchRoutingStaticRoutes(core) == [moved] and moved["advertiseViaOspfEnabled"], moved)
+        try:
+            s.getDeviceSwitchRoutingInterfaces(next(x["serial"] for x in d.networks.getNetworkDevices(nets["Branch - Austin"]) if x["model"].startswith("MS130")))
+            check("getDeviceSwitchRoutingInterfaces refuses a switch that can't route", False, "no error")
+        except meraki.APIError as e:
+            check("getDeviceSwitchRoutingInterfaces refuses a switch that can't route", e.status == 400, e.message)
+
+        flags = {"igmpSnoopingEnabled": False, "floodUnknownMulticastTrafficEnabled": True}
+        m = s.updateNetworkSwitchRoutingMulticast(hq, overrides=[{"switches": [core], **flags}])
+        check("updateNetworkSwitchRoutingMulticast", s.getNetworkSwitchRoutingMulticast(hq) == m and m["overrides"][0]["switches"] == [core], m)
+        s.createDeviceSwitchRoutingInterface(floor, "Peer", vlanId=10, subnet="192.0.2.0/25", interfaceIp="192.0.2.3", defaultGateway="192.0.2.1", multicastRouting="enabled")
+        rp = s.createNetworkSwitchRoutingMulticastRendezvousPoint(hq, "192.0.2.3", "Any")
+        rp = s.updateNetworkSwitchRoutingMulticastRendezvousPoint(hq, rp["rendezvousPointId"], "192.0.2.3", "239.1.1.1")
+        check("updateNetworkSwitchRoutingMulticastRendezvousPoint", s.getNetworkSwitchRoutingMulticastRendezvousPoint(hq, rp["rendezvousPointId"]) == rp and s.getNetworkSwitchRoutingMulticastRendezvousPoints(hq) == [rp] and rp["serial"] == floor, rp)
+
+        job = d.devices.createDeviceLiveToolsMulticastRouting(core)
+        res = d.devices.getDeviceLiveToolsMulticastRouting(core, job["multicastRoutingId"])
+        check("getDeviceLiveToolsMulticastRouting", res["status"] == "complete" and res["interfaces"][0]["neighbors"] == ["192.0.2.3"] and res["routes"][0]["group"] == "239.1.1.1", res)
+
+        s.deleteNetworkSwitchRoutingMulticastRendezvousPoint(hq, rp["rendezvousPointId"])
+        s.deleteDeviceSwitchRoutingStaticRoute(core, rid)
+        s.deleteDeviceSwitchRoutingInterface(core, iid)
+        check("deleteDeviceSwitchRoutingInterface", s.getDeviceSwitchRoutingInterfaces(core) == [] and s.getNetworkSwitchRoutingMulticastRendezvousPoints(hq) == [])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
