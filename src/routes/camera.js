@@ -388,7 +388,7 @@ export default [
     },
   },
   { op: 'getDeviceCameraVideoLink', path: `${DEV}/videoLink`, handler: videoLink },
-  { op: 'generateDeviceCameraSnapshot', method: 'POST', path: `${DEV}/generateSnapshot`, status: 202, journal: false, handler: snapshot },
+  { op: 'generateDeviceCameraSnapshot', method: 'POST', path: `${DEV}/generateSnapshot`, status: 202, logged: false, handler: snapshot },
   { op: 'clipDeviceCamera', path: `${DEV}/clip`, status: 202, sample: { query: clipSample }, handler: clip },
   {
     op: 'getNetworkCameraQualityRetentionProfiles',

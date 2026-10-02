@@ -864,3 +864,37 @@ export function splitNetwork(world, net) {
   dropCaches(org);
   return parts;
 }
+
+// A deep copy of the world, for putting it back after a failed action batch.
+// Plain objects, arrays, maps, sets and typed arrays are copied. Class instances
+// (time zones, which hold an Intl formatter) and functions are shared, and the
+// per-day `...Cache` properties are left out, since reads rebuild them.
+export function copyWorld(world) {
+  const copies = new Map();
+  const copy = (v) => {
+    if (v === null || typeof v !== 'object') return v;
+    let out = copies.get(v);
+    if (out) return out;
+    if (v instanceof Map) {
+      copies.set(v, (out = new Map()));
+      for (const [k, x] of v) out.set(copy(k), copy(x));
+    } else if (v instanceof Set) {
+      copies.set(v, (out = new Set()));
+      for (const x of v) out.add(copy(x));
+    } else if (ArrayBuffer.isView(v)) {
+      copies.set(v, (out = v.slice()));
+    } else {
+      const proto = Object.getPrototypeOf(v);
+      if (!Array.isArray(v) && proto !== Object.prototype && proto !== null) return v;
+      copies.set(v, (out = Array.isArray(v) ? [] : Object.create(proto)));
+      for (const k of Reflect.ownKeys(v)) {
+        if (typeof k === 'string' && k.endsWith('Cache')) continue;
+        const d = Object.getOwnPropertyDescriptor(v, k);
+        if ('value' in d) d.value = copy(d.value);
+        Object.defineProperty(out, k, d);
+      }
+    }
+    return out;
+  };
+  return { world: copy(world), copyOf: (v) => copies.get(v) };
+}

@@ -148,7 +148,7 @@ describe('action batches', () => {
 
   test('a failed action rolls back the ones before it', async () => {
     refresh();
-    // Writes of many kinds first, so the rebuild has something to replay.
+    // Writes of many kinds first, so the rollback has state of every kind to put back.
     const net = (await sb.post(`/organizations/${org.id}/networks`, { name: 'Branch - Boise', productTypes: ['appliance', 'switch', 'wireless'], timeZone: 'America/Boise' })).body;
     await sb.post(`/networks/${hq.id}/webhooks/httpServers`, { name: 'Hook', url: 'https://hooks.example.net/in', sharedSecret: 'x' });
     const webhookTest = (await sb.post(`/networks/${hq.id}/webhooks/webhookTests`, { url: 'https://hooks.example.net/in' })).body;
@@ -185,6 +185,22 @@ describe('action batches', () => {
     // Earlier batches are still there.
     assert.equal((await sb.get(B)).body.length, 2);
     assert.equal((await sb.get(`${B}?status=failed`)).body[0].id, r.body.id);
+  });
+
+  test('a failed batch keeps the webhook tests of a network it deleted', async () => {
+    refresh();
+    const london = org.networks.find((n) => n.name.includes('London'));
+    const job = (await sb.post(`/networks/${london.id}/webhooks/webhookTests`, { url: 'https://hooks.example.net/in' })).body;
+    const r = await sb.post(B, {
+      confirmed: true,
+      actions: [
+        { resource: `/networks/${london.id}`, operation: 'destroy' },
+        { resource: `/networks/${hq.id}/appliance/vlans/999`, operation: 'destroy' },
+      ],
+    });
+    assert.equal(r.body.status.failed, true);
+    assert.equal((await sb.get(`/networks/${london.id}`)).status, 200);
+    assert.equal((await sb.get(`/networks/${london.id}/webhooks/webhookTests/${job.id}`)).body.status, 'delivered');
   });
 
   test('bad actions are refused before any of them runs', async () => {

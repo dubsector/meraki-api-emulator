@@ -151,7 +151,6 @@ async function post(url, body, headers) {
 // is logged. Unless --webhooks is on, nothing is sent and the job counts as delivered.
 // `net` is null for organization-wide sends.
 export async function deliver(ctx, net, job, { url, template, data, org = net.org }) {
-  if (ctx.replay) return;
   const body = render(template.body, data);
   const headers = { 'Content-Type': 'application/json', 'User-Agent': 'MerakiWebhooks/1.0' };
   for (const h of template.headers) if (h.name) headers[h.name] = render(h.template ?? '', data);
@@ -230,7 +229,6 @@ export function newCallback(ctx, net, given, org = net.org) {
 // The callback completes once the receiver answers 2xx and fails otherwise.
 // Organization-wide callbacks pass the organization with no network or device.
 export function sendCallback(ctx, net, dev, { cb, secret, template }, alertData, delay, org = net.org) {
-  if (ctx.replay) return;
   const run = () => {
     const sent = ctx.clock();
     const at = isoUs(Math.round(sent * 1e6));

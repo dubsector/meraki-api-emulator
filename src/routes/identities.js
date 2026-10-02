@@ -28,6 +28,6 @@ function revoke(ctx) {
 export default [
   { op: 'getAdministeredIdentitiesMe', path: ME, handler: identity },
   { op: 'getAdministeredIdentitiesMeApiKeys', path: `${ME}/api/keys`, handler: (ctx) => ctx.keys.list().map((k) => ({ suffix: k.suffix, createdAt: isoMicro(k.createdAt) })) },
-  { op: 'generateAdministeredIdentitiesMeApiKeys', method: 'POST', status: 202, path: `${ME}/api/keys/generate`, journal: false, handler: (ctx) => ({ key: ctx.keys.generate(ctx.now) }) },
-  { op: 'revokeAdministeredIdentitiesMeApiKeys', method: 'POST', status: 202, path: `${ME}/api/keys/{suffix}/revoke`, journal: false, handler: revoke },
+  { op: 'generateAdministeredIdentitiesMeApiKeys', method: 'POST', status: 202, path: `${ME}/api/keys/generate`, logged: false, handler: (ctx) => ({ key: ctx.keys.generate(ctx.now) }) },
+  { op: 'revokeAdministeredIdentitiesMeApiKeys', method: 'POST', status: 202, path: `${ME}/api/keys/{suffix}/revoke`, logged: false, handler: revoke },
 ];
