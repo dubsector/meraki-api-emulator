@@ -56,6 +56,7 @@ const CONDITIONAL = [
   [/^\[\]\.upgrade\.staged$/, 'getOrganizationFirmwareUpgradesByDevice', 'a staged upgrade event (networks start with none)'],
   [/^\[\]\.captureId$/, 'getNetworkWirelessClientConnectivityEvents', 'events that trigger a packet capture (the emulator triggers none)'],
   [/^\[\]\.clientId$/, 'getNetworkSwitchDhcpV4ServersSeen', 'discovered (client) servers only'],
+  [/^\.rtspUrl$/, 'getDeviceCameraVideoSettings', 'external RTSP turned on (cameras start with it off)'],
 ];
 
 function conditional(op, field) {
@@ -118,7 +119,7 @@ for (const route of ROUTES) {
   }
   // Writes change state, so only reads get their responses compared.
   if (route.method !== 'GET') continue;
-  const expected = route.sample?.status ?? 200;
+  const expected = route.sample?.status ?? route.status ?? 200;
   const url = sampleUrl(route, emulator.world, Date.now() / 1000);
   const res = await fetch(base + url, { headers: { 'X-Cisco-Meraki-API-Key': 'spec-check' } });
   if (res.status !== expected) {
@@ -126,8 +127,8 @@ for (const route of ROUTES) {
     problems++;
     continue;
   }
-  if (res.status !== 200) continue;
-  const content = (op.responses['200'] || op.responses['201'])?.content?.['application/json'];
+  if (res.status !== (route.status ?? 200)) continue;
+  const content = (op.responses[res.status] || op.responses['200'] || op.responses['201'])?.content?.['application/json'];
   const out = { missing: [], extra: [] };
   compare(await res.json(), content?.example, content?.schema, '', out);
   const skip = out.missing.filter((f) => conditional(route.op, f));

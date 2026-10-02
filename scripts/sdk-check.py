@@ -886,7 +886,51 @@ def actionbatches():
         check("deleteOrganizationActionBatch", ids(o.getOrganizationActionBatches(org)) == [batch["id"], preview["id"]])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches]
+@scenario
+def camera():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        c, n = d.camera, d.networks
+        org = acme(d.organizations.getOrganizations())
+        net = next(x["id"] for x in d.organizations.getOrganizationNetworks(org) if x["name"] == "HQ - San Francisco")
+        up = [x["serial"] for x in d.organizations.getOrganizationDevicesStatuses(org, productTypes=["camera"], total_pages=-1) if x["status"] == "online" and x["networkId"] == net]
+        serial = up[0]
+        at = lambda minutes: (EVENTS_NOW - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        broker = n.createNetworkMqttBroker(net, "Sense", "mqtt.example.com", 8883, security={"mode": "tls", "tls": {"caCertificate": "LS0tLS1CRUdJTg==", "verifyHostnames": True}}, authentication={"username": "cams", "password": "hunter2"})
+        upd = n.updateNetworkMqttBroker(net, broker["id"], port=1883)
+        check("createNetworkMqttBroker hides its secrets, then get and update it", n.getNetworkMqttBroker(net, broker["id"]) == upd and upd["port"] == 1883 and upd["security"]["tls"]["hasCaCertificate"] and "hunter2" not in json.dumps(n.getNetworkMqttBrokers(net)), upd)
+        models = c.getDeviceCameraSenseObjectDetectionModels(serial)
+        sense = c.updateDeviceCameraSense(serial, senseEnabled=True, mqttBrokerId=broker["id"], detectionModelId=models[-1]["id"], audioDetection={"enabled": False})
+        check("updateDeviceCameraSense publishes to the broker", c.getDeviceCameraSense(serial) == sense and sense["mqttBrokerId"] == broker["id"] and f"/merakimv/{serial}/raw_detections" in sense["mqttTopics"], sense)
+
+        schedules = c.getNetworkCameraSchedules(net)
+        p = c.createNetworkCameraQualityRetentionProfile(net, "Lobby", maxRetentionDays=7, scheduleId=schedules[0]["id"], videoSettings={"MV12/MV22/MV72": {"quality": "Enhanced", "resolution": "1920x1080"}})
+        p2 = c.updateNetworkCameraQualityRetentionProfile(net, p["id"], audioRecordingEnabled=True)
+        check("createNetworkCameraQualityRetentionProfile, then list, get and update it", c.getNetworkCameraQualityRetentionProfiles(net) == [p2] and c.getNetworkCameraQualityRetentionProfile(net, p["id"]) == p2 and p2["audioRecordingEnabled"], p2)
+        q = c.updateDeviceCameraQualityAndRetention(serial, profileId=p["id"])
+        check("updateDeviceCameraQualityAndRetention takes the profile's settings", c.getDeviceCameraQualityAndRetention(serial) == q and (q["quality"], q["resolution"], q["audioRecordingEnabled"]) == ("Enhanced", "1920x1080", True), q)
+        v = c.updateDeviceCameraVideoSettings(serial, externalRtspEnabled=True)
+        check("updateDeviceCameraVideoSettings adds the RTSP URL", c.getDeviceCameraVideoSettings(serial) == v and v["rtspUrl"].startswith("rtsp://"), v)
+
+        link = c.getDeviceCameraVideoLink(serial, timestamp=at(60))
+        check("getDeviceCameraVideoLink", link["url"].endswith(f"?timestamp={int((EVENTS_NOW - timedelta(minutes=60)).timestamp() * 1000)}") and "visionUrl" in link, link)
+        snap = c.generateDeviceCameraSnapshot(serial, timestamp=at(30))
+        check("generateDeviceCameraSnapshot", snap["url"].startswith("https://camera.example.com/") and snap["expiry"].startswith("Access to the image will expire at"), snap)
+        clip = c.clipDeviceCamera(serial, at(10), at(7))
+        check("clipDeviceCamera", clip["url"].endswith(".mp4"), clip)
+        try:
+            c.generateDeviceCameraSnapshot(serial, timestamp=at(8 * 24 * 60))
+            check("generateDeviceCameraSnapshot outside retention", False, "no error")
+        except meraki.APIError as e:
+            check("generateDeviceCameraSnapshot outside the profile's retention answers 400", e.status == 400, e.status)
+
+        c.deleteNetworkCameraQualityRetentionProfile(net, p["id"])
+        n.deleteNetworkMqttBroker(net, broker["id"])
+        check("deleting the profile and broker takes them off the camera", c.getDeviceCameraQualityAndRetention(serial)["profileId"] is None and c.getDeviceCameraSense(serial)["mqttBrokerId"] is None and n.getNetworkMqttBrokers(net) == [])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
