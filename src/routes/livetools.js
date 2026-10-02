@@ -13,6 +13,7 @@ import { isOnline } from '../sim/presence.js';
 import { isoMicro } from '../time.js';
 import { callbacksOf, newCallback, sendCallback } from '../webhooks.js';
 import { devOf, round } from './common.js';
+import { multicastState } from './routing.js';
 import { checkCyclePorts, peerConnected, portConfig, portLoad, portSpeed, portStatus, speedMbps } from './switch.js';
 
 const QUEUED = 1;
@@ -279,6 +280,14 @@ const TOOLS = {
       return { mac: b.mac };
     },
     result: (dev, job, t, ok) => (ok ? { entries: macEntries(dev, t, job.request.mac) } : { error: UNREACHABLE }),
+  },
+  multicastRouting: {
+    name: 'MulticastRouting',
+    id: 'multicastRoutingId',
+    param: 'multicastRoutingId',
+    kinds: ['switch'],
+    seconds: 3,
+    result: (dev, job, t, ok) => (ok ? multicastState(dev) : { error: UNREACHABLE }),
   },
   ping: {
     name: 'Ping',
