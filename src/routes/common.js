@@ -1,4 +1,5 @@
 import { ApiError, arrayParam, badRequest, hasTags, notFound } from '../http.js';
+import { Rand, hashStr } from '../rng.js';
 
 export function orgOf(ctx) {
   const org = ctx.world.orgById.get(ctx.params.organizationId);
@@ -26,6 +27,31 @@ export function findClient(net, id) {
 
 export function requireProduct(net, productType) {
   if (!net.productTypes.includes(productType)) throw badRequest(`This endpoint requires a network with product type '${productType}'`);
+}
+
+export function mxNet(ctx) {
+  const net = netOf(ctx);
+  requireProduct(net, 'appliance');
+  return net;
+}
+
+// The organization's networks with an MX, by ID, for the org byNetwork reads.
+export const mxNets = (org, ids) => org.networks.filter((n) => n.productTypes.includes('appliance') && (!ids.length || ids.includes(n.id))).sort(byId);
+
+export function limit(list, max, what) {
+  if (list.length > max) throw badRequest(`${what} are limited to ${max} in the emulator`);
+  return list;
+}
+
+// An 18 digit ID for a new item in a { created, list } store. The counter never
+// goes down, so a deleted item's ID isn't handed out again.
+export function newId(ctx, store, kind, parentId) {
+  store.created++;
+  const r = new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:${kind}:${parentId}:${store.created}`));
+  let id;
+  do id = r.digits(18);
+  while (store.list.some((x) => x.id === id));
+  return id;
 }
 
 export function requireModel(dev, productType) {

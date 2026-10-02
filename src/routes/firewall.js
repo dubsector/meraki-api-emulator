@@ -5,8 +5,8 @@
 
 import { DEFAULT_RULE, configOf, stored } from '../config.js';
 import { arrayParam, badRequest, paginate, paginateItems } from '../http.js';
-import { ipInCidr, parseCidr, parseIp } from '../validate.js';
-import { netOf, orgOf, requireProduct } from './common.js';
+import { ipInCidr, isAddress, isHostname, isPort, parseIp } from '../validate.js';
+import { limit, mxNet, mxNets, orgOf } from './common.js';
 
 const BASE = '/networks/{networkId}/appliance';
 const MAX_RULES = 1000;
@@ -14,23 +14,8 @@ const MAX_DESTINATIONS = 100;
 const WAN_UPLINKS = ['wan1', 'wan2'];
 const NAT_UPLINKS = ['internet1', 'internet2'];
 const UPLINK_MODES = ['virtual', 'public'];
-const HOST = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/i;
-const PORT = /^(\d{1,5})(-(\d{1,5}))?$/;
 // The target linkSample() measures uplink loss and latency against.
 const DEFAULT_DESTINATION = { ip: '8.8.8.8', description: 'Google', default: true };
-
-function mxNet(ctx) {
-  const net = netOf(ctx);
-  requireProduct(net, 'appliance');
-  return net;
-}
-
-function limit(list, max, what) {
-  if (list.length > max) throw badRequest(`${what} are limited to ${max} in the emulator`);
-  return list;
-}
-
-const mxNets = (org, ids) => org.networks.filter((n) => n.productTypes.includes('appliance') && (!ids.length || ids.includes(n.id))).sort((a, b) => (a.id < b.id ? -1 : 1));
 
 // ── Settings, built on first read ──
 
@@ -44,11 +29,7 @@ const destinationsOf = (net) => stored(net, 'applianceConnectivityDestinations',
 
 // ── Cellular firewall rules ──
 
-const isPort = (v) => {
-  const m = PORT.exec(v);
-  return !!m && [m[1], m[3] ?? m[1]].every((p) => p >= 1 && p <= 65535);
-};
-const isAddress = (v) => parseIp(v) != null || parseCidr(v) != null;
+const isPorts = (v) => isPort(v, true);
 const items = (v) => String(v).split(',').map((x) => x.trim());
 
 function checkList(v, at, ok, what) {
@@ -61,10 +42,10 @@ function cellularRules(rules) {
   limit(rules, MAX_RULES, 'Rules');
   const kept = rules.filter((r) => r.comment !== DEFAULT_RULE.comment);
   kept.forEach((r, i) => {
-    checkList(r.srcPort, `rules[${i}].srcPort`, isPort, 'ports');
-    checkList(r.destPort, `rules[${i}].destPort`, isPort, 'ports');
+    checkList(r.srcPort, `rules[${i}].srcPort`, isPorts, 'ports');
+    checkList(r.destPort, `rules[${i}].destPort`, isPorts, 'ports');
     checkList(r.srcCidr, `rules[${i}].srcCidr`, isAddress, 'IP addresses or CIDRs');
-    checkList(r.destCidr, `rules[${i}].destCidr`, (x) => isAddress(x) || HOST.test(x), 'IP addresses, CIDRs or domain names');
+    checkList(r.destCidr, `rules[${i}].destCidr`, (x) => isAddress(x) || isHostname(x), 'IP addresses, CIDRs or domain names');
   });
   return kept.map((r) => ({ comment: r.comment ?? '', policy: r.policy, protocol: r.protocol, srcPort: r.srcPort ?? 'Any', srcCidr: r.srcCidr, destPort: r.destPort ?? 'Any', destCidr: r.destCidr, syslogEnabled: r.syslogEnabled ?? false }));
 }
@@ -93,7 +74,7 @@ function oneToManyRule(r, i) {
   if (!NAT_UPLINKS.includes(r.uplink)) throw badRequest(`'${at}.uplink' must be one of ${NAT_UPLINKS.join(', ')}`);
   const portRules = r.portRules.map((p, j) => {
     const pat = `${at}.portRules[${j}]`;
-    for (const k of ['publicPort', 'localPort']) if (p[k] != null && !isPort(p[k])) throw badRequest(`'${pat}.${k}' must be a port or port range between 1 and 65535`);
+    for (const k of ['publicPort', 'localPort']) if (p[k] != null && !isPorts(p[k])) throw badRequest(`'${pat}.${k}' must be a port or port range between 1 and 65535`);
     if (p.localIp != null && parseIp(p.localIp) == null) throw badRequest(`'${pat}.localIp' must be an IPv4 address`);
     const allowedIps = p.allowedIps ?? ['any'];
     if (!allowedIps.every((x) => /^any$/i.test(x) || isAddress(x))) throw badRequest(`'${pat}.allowedIps' must hold 'any' or IP addresses and CIDRs`);

@@ -6,9 +6,8 @@
 import { L7_CATEGORIES } from '../catalog.js';
 import { stored } from '../config.js';
 import { arrayParam, badRequest, notFound, paginate } from '../http.js';
-import { Rand, hashStr } from '../rng.js';
-import { parseCidr, parseIp } from '../validate.js';
-import { netOf, orgOf, requireProduct } from './common.js';
+import { isAddress, isHostname, isPort } from '../validate.js';
+import { limit, mxNet, mxNets, netOf, newId, orgOf } from './common.js';
 
 const BASE = '/networks/{networkId}/appliance/trafficShaping';
 const CLASSES = `${BASE}/customPerformanceClasses`;
@@ -21,7 +20,6 @@ const RULE_SETTINGS = ['network default', 'ignore', 'custom'];
 const PRIORITIES = ['low', 'normal', 'high'];
 const WAN_UPLINKS = ['wan1', 'wan2'];
 const UPLINKS = ['wan1', 'wan2', 'bestForVoIP', 'loadBalancing', 'defaultUplink', 'cellular'];
-const HOST = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/i;
 const PORTS = /^(any|\d{1,5}(-\d{1,5})?)$/;
 // Default uplink limits in Kbps, [up, down], by kind of WAN link.
 const ISP_LIMITS = { fiber: [1000000, 1000000], cable: [50000, 500000], dsl: [20000, 100000] };
@@ -59,17 +57,6 @@ const DSCP = [
 const MAJOR_APPS = ['Office 365 Suite', 'Office 365 Sharepoint', 'AWS', 'Box', 'Oracle', 'SAP', 'Salesforce', 'Skype & Teams', 'Slack', 'Webex', 'Webex Calling', 'Webex Meetings', 'Zoom'].map((name, i) => ({ id: `meraki:vpnExclusion/application/${i + 1}`, name }));
 const L7_APPS = new Map(L7_CATEGORIES.flatMap((c) => c.applications.map((a) => [a.id, a])));
 
-function mxNet(ctx) {
-  const net = netOf(ctx);
-  requireProduct(net, 'appliance');
-  return net;
-}
-
-function limit(list, max, what) {
-  if (list.length > max) throw badRequest(`${what} are limited to ${max} in the emulator`);
-  return list;
-}
-
 // ── Settings, built on first read ──
 
 const globalOf = (net) => stored(net, 'applianceShaping', () => ({ globalBandwidthLimits: { limitUp: 0, limitDown: 0 } }));
@@ -105,9 +92,6 @@ function checkLimits(limits, at, min) {
 
 // ── Shaping rules ──
 
-const isPort = (v) => /^\d{1,5}$/.test(v) && v >= 1 && v <= 65535;
-const isAddress = (v) => parseIp(v) != null || parseCidr(v) != null;
-
 function ipRange(v) {
   const [addr, port, ...rest] = v.split(':');
   return !rest.length && isAddress(addr) && (port === undefined || isPort(port));
@@ -124,7 +108,7 @@ export function shapingDefinition(d, at) {
   }
   if (typeof value !== 'string') throw badRequest(`'${at}.value' must be a string`);
   const checks = {
-    host: [HOST.test(value), 'a hostname'],
+    host: [isHostname(value), 'a hostname'],
     port: [isPort(value), 'a port from 1 to 65535'],
     ipRange: [ipRange(value), 'an IP address or CIDR, with an optional port'],
     localNet: [isAddress(value), 'an IP address or CIDR'],
@@ -164,15 +148,6 @@ function updateRules(ctx) {
 
 // ── Custom performance classes ──
 
-function newClassId(ctx, net, store) {
-  store.created++;
-  const r = new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:performanceClass:${net.id}:${store.created}`));
-  let id;
-  do id = r.digits(18);
-  while (store.list.some((c) => c.id === id));
-  return id;
-}
-
 function classOf(ctx) {
   const net = mxNet(ctx);
   const cls = classesOf(net).list.find((c) => c.id === ctx.params.customPerformanceClassId);
@@ -203,7 +178,7 @@ function createClass(ctx) {
   checkClass(store.list, ctx.body, null);
   const c = { id: null, name: ctx.body.name, ...CLASS_DEFAULTS };
   applyClass(c, ctx.body);
-  c.id = newClassId(ctx, net, store);
+  c.id = newId(ctx, store, 'performanceClass', net.id);
   store.list.push(c);
   return classJson(c);
 }
@@ -238,7 +213,7 @@ function endpoint(e, at, protocol, fqdn) {
   const out = { port };
   if (fqdn && e.fqdn != null) {
     if (e.cidr != null) throw badRequest(`'${at}.fqdn' cannot be used with 'cidr'`);
-    if (!HOST.test(e.fqdn)) throw badRequest(`'${at}.fqdn' must be a hostname`);
+    if (!isHostname(e.fqdn)) throw badRequest(`'${at}.fqdn' must be a hostname`);
     out.fqdn = e.fqdn;
   } else {
     const cidr = e.cidr ?? 'any';
@@ -332,7 +307,7 @@ const exclusionsJson = (net) => ({ networkId: net.id, networkName: net.name, ...
 
 function exclusion(r, at) {
   if (r.protocol === 'dns') {
-    if (!r.destination || !HOST.test(r.destination)) throw badRequest(`'${at}.destination' must be a hostname for protocol dns`);
+    if (!r.destination || !isHostname(r.destination)) throw badRequest(`'${at}.destination' must be a hostname for protocol dns`);
   } else if (r.destination != null && r.destination !== 'any' && !isAddress(r.destination)) {
     throw badRequest(`'${at}.destination' must be an IPv4 address or CIDR`);
   }
@@ -360,9 +335,7 @@ function updateExclusions(ctx) {
 }
 
 function exclusionsByNetwork(ctx) {
-  const org = orgOf(ctx);
-  const ids = arrayParam(ctx.query, 'networkIds');
-  const nets = org.networks.filter((n) => n.productTypes.includes('appliance') && (!ids.length || ids.includes(n.id))).sort((a, b) => (a.id < b.id ? -1 : 1));
+  const nets = mxNets(orgOf(ctx), arrayParam(ctx.query, 'networkIds'));
   return { items: paginate(ctx, nets, (n) => n.id, { def: 50, max: 1000 }).map(exclusionsJson) };
 }
 

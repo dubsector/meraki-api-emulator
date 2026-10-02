@@ -7,7 +7,7 @@ import { badRequest, intParam, notFound } from '../http.js';
 import { Rand, derive, hashStr } from '../rng.js';
 import { DAY, MIN, iso, parseTime } from '../time.js';
 import { isDown } from '../sim/outages.js';
-import { devOf, netOf, requireModel, requireProduct } from './common.js';
+import { devOf, netOf, newId, requireModel, requireProduct } from './common.js';
 
 const DEV = '/devices/{serial}/camera';
 const PROFILES = '/networks/{networkId}/camera/qualityRetentionProfiles';
@@ -197,15 +197,6 @@ function clip(ctx) {
 const profilesOf = (net) => (net.cameraProfiles ??= { created: 0, list: [] });
 const brokersOf = (net) => (net.mqttBrokers ??= { created: 0, list: [] });
 
-function newId(ctx, net, store, kind) {
-  store.created++;
-  const r = new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:${kind}:${net.id}:${store.created}`));
-  let id;
-  do id = r.digits(18);
-  while (store.list.some((x) => x.id === id));
-  return id;
-}
-
 function cameraNet(ctx) {
   const net = netOf(ctx);
   requireProduct(net, 'camera');
@@ -276,7 +267,7 @@ function createProfile(ctx) {
   checkProfile(ctx, net, store, b, null);
   const p = { id: null, name: b.name, motionBasedRetentionEnabled: false, restrictedBandwidthModeEnabled: false, audioRecordingEnabled: false, cloudArchiveEnabled: false, maxRetentionDays: null, scheduleId: null, motionDetectorVersion: 2, smartRetention: false, videoSettings: {} };
   applyProfile(p, b);
-  p.id = newId(ctx, net, store, 'cameraProfile');
+  p.id = newId(ctx, store, 'cameraProfile', net.id);
   store.list.push(p);
   return profileJson(net, p);
 }
@@ -351,7 +342,7 @@ function createBroker(ctx) {
   checkBroker(store, b, null);
   const x = { id: null, name: null, host: null, port: null, mode: 'none', caCertificate: null, verifyHostnames: true, username: null, password: null };
   applyBroker(x, b);
-  x.id = newId(ctx, net, store, 'mqttBroker');
+  x.id = newId(ctx, store, 'mqttBroker', net.id);
   store.list.push(x);
   return brokerJson(x);
 }
