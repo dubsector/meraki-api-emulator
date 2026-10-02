@@ -272,8 +272,10 @@ export default [
       const productTypes = arrayParam(q, 'productTypes');
       const mode = q.get('tagsFilterType') || 'withAnyTags';
       const bound = q.get('isBoundToConfigTemplate');
+      const templateId = q.get('configTemplateId');
+      if (templateId && bound === 'false') throw badRequest("'isBoundToConfigTemplate' cannot be false when 'configTemplateId' is set");
       const rows = org.networks
-        .filter((n) => bound !== 'true' && !q.get('configTemplateId'))
+        .filter((n) => (bound == null || (bound === 'true') === !!n.template) && (!templateId || n.template?.id === templateId))
         .filter((n) => hasTags(n.tags, tags, mode) && (!productTypes.length || productTypes.some((p) => n.productTypes.includes(p))))
         .sort(byId)
         .map(networkJson);

@@ -1,7 +1,7 @@
 // Builds the static world (orgs, networks, devices, clients, switch ports) from a seed.
 
 import { CLIENT_PROFILES, DEVICE_OUI, FIRST_NAMES, ISPS, KINDS, LAST_NAMES, MODELS, ORGS, SERIAL_PREFIX, SSIDS } from './catalog.js';
-import { configOf, settingProduct } from './config.js';
+import { configOf, rebase, settingProduct } from './config.js';
 import { Rand, derive, hashStr } from './rng.js';
 import { DAY, Zone } from './time.js';
 
@@ -74,6 +74,7 @@ export function buildWorld({ seed = 1, bootTime = Date.now() / 1000 } = {}) {
     org.hub = org.networks.find((n) => n.vpn === 'hub') || null;
   }
   buildAdminData(world, seed, bootTime);
+  buildInventory(world, seed);
   return world;
 }
 
@@ -146,6 +147,65 @@ function buildAdminData(world, seed, bootTime) {
     return { id: r.digits(6), licenseType: 'ENT', licenseKey: licenseKey(), orderNumber: order, deviceSerial: d.serial, networkId: d.net.id, claimDate: d.claimedAt, activationDate: activation, expirationDate: expires };
   });
   lab.licenses.push({ id: r.digits(6), licenseType: 'ENT', licenseKey: licenseKey(), orderNumber: order, deviceSerial: null, networkId: null, claimDate: bootDay - 40 * DAY, activationDate: null, expirationDate: null, durationInDays: 1095 });
+}
+
+// Co-term license model names, as license counts list them. Stripping the
+// edition gives the key the licenses overview counts devices under.
+const licenseModel = (d) => (d.productType === 'wireless' ? 'MR Enterprise' : d.productType === 'camera' ? 'MV' : d.productType === 'appliance' ? `${d.model} Enterprise` : d.model);
+
+function licenseCounts(devices) {
+  const counts = new Map();
+  for (const d of devices) counts.set(licenseModel(d), (counts.get(licenseModel(d)) || 0) + 1);
+  return [...counts].map(([model, count]) => ({ model, count }));
+}
+
+const editionsOf = (devices) => [...new Set(devices.map((d) => d.productType))].map((productType) => ({ edition: 'Enterprise', productType }));
+
+function newLicenseKey(world, r) {
+  let key;
+  do key = `Z2${r.chars(2, SERIAL_CHARS)}-${r.chars(4, SERIAL_CHARS)}-${r.chars(4, SERIAL_CHARS)}`;
+  while (world.orgs.some((o) => o.cotermLicenses?.some((l) => l.key === key)) || world.unclaimed?.licenses.some((l) => l.key === key));
+  return key;
+}
+
+// Acme Corporation's co-term licenses (one per order, matching the devices it
+// holds) and one unclaimed order per organization that inventory claim can
+// take. Their own stream keeps every other ID where it was.
+function buildInventory(world, seed) {
+  const r = new Rand(hashStr(`meraki-api-emulator:${seed}:inventory`));
+  const [corp, lab] = world.orgs;
+  const license = (devices, duration, startedAt) => ({ key: newLicenseKey(world, r), duration, mode: 'addDevices', startedAt, claimedAt: startedAt, invalidatedAt: null, counts: licenseCounts(devices), editions: editionsOf(devices) });
+  corp.cotermLicenses = [];
+  for (const net of corp.networks) corp.cotermLicenses.push(license(net.devices, 1825, Math.min(...net.devices.map((d) => d.claimedAt))));
+  corp.cotermLicenses.push(license(corp.spares, 1095, Math.min(...corp.spares.map((d) => d.claimedAt))));
+  lab.cotermLicenses = [];
+
+  world.unclaimed = { devices: [], licenses: [] };
+  const orders = [
+    [corp, ['MX250', 'MS130-24P', 'MR46', 'MR46']],
+    [lab, ['MR36', 'MR36']],
+  ];
+  for (const [org, models] of orders) {
+    const orderNumber = `4C${r.digits(7)}`;
+    const devices = models.map((model) => {
+      const info = MODELS[model];
+      let serial;
+      do serial = `${SERIAL_PREFIX[info.productType]}-${r.chars(4, SERIAL_CHARS)}-${r.chars(4, SERIAL_CHARS)}`;
+      while (serialTaken(world, serial));
+      return { serial, model, productType: info.productType, mac: macFrom(r, DEVICE_OUI[info.productType]), orderNumber, claimedAt: null, net: null, tags: [], name: null };
+    });
+    world.unclaimed.devices.push(...devices);
+    if (org.licensing === 'co-term') world.unclaimed.licenses.push({ ...license(devices, 1095, world.bootDay - 3 * DAY), orderNumber, claimedAt: null });
+  }
+}
+
+// A new co-term license made from part of another's counts.
+export function splitLicense(world, l, counts) {
+  world.licenseKeys = (world.licenseKeys ?? 0) + 1;
+  const r = new Rand(hashStr(`meraki-api-emulator:${world.seed}:cotermLicense:${world.licenseKeys}`));
+  const types = (m) => (m.startsWith('MR') ? 'wireless' : m === 'MV' ? 'camera' : m.startsWith('MX') ? 'appliance' : 'switch');
+  const editions = [...new Set(counts.map((c) => types(c.model)))].map((productType) => l.editions.find((e) => e.productType === productType) ?? { edition: 'Enterprise', productType });
+  return { key: newLicenseKey(world, r), duration: l.duration, mode: l.mode, startedAt: l.startedAt, claimedAt: l.claimedAt, invalidatedAt: null, counts, editions };
 }
 
 function macFrom(r, oui) {
@@ -390,6 +450,7 @@ export function addOrganization(world, name) {
     admins: [world.apiAdmin],
     licensing: 'co-term',
     cotermExpires: world.bootDay + 365 * DAY,
+    cotermLicenses: [],
     hub: null,
     index: world.orgs.length,
     created: true,
@@ -491,7 +552,7 @@ function dropCaches(org) {
 }
 
 export function serialTaken(world, serial) {
-  return world.deviceBySerial.has(serial) || world.orgs.some((o) => o.spares.some((s) => s.serial === serial));
+  return world.deviceBySerial.has(serial) || world.orgs.some((o) => o.spares.some((s) => s.serial === serial)) || !!world.unclaimed?.devices.some((s) => s.serial === serial);
 }
 
 function nextLanIp(net) {
@@ -747,4 +808,50 @@ export function combineNetworks(world, org, nets, { name, enrollmentString }) {
   }
   dropCaches(org);
   return target;
+}
+
+// Splits a combined network into one network per product type. Each takes its
+// product's devices and a copy of every setting; wireless clients go with the
+// APs and wired ones with their switch, or the MX. The appliance network keeps
+// AutoVPN and takes the old network's place in admin privileges and groups.
+export function splitNetwork(world, net) {
+  const org = net.org;
+  settle(org);
+  const config = configOf(net);
+  const parts = net.productTypes.map((p) => {
+    const part = addNetwork(world, org, { name: `${net.name} - ${p}`, productTypes: [p], tags: [...net.tags], timeZone: net.timeZone, notes: net.notes ?? '' });
+    for (const k of ['code', 'kind', 'zone', 'address', 'lat', 'lng', 'siteIndex', 'subnet']) part[k] = net[k];
+    part.config = rebase(config, net.id, part.id);
+    if (net.firmware) part.firmware = { ...net.firmware, products: net.firmware.products[p] ? { [p]: net.firmware.products[p] } : {} };
+    return part;
+  });
+  const partFor = (p) => parts[net.productTypes.indexOf(p)];
+  const main = partFor('appliance') ?? parts[0];
+  for (const d of net.devices) {
+    const part = partFor(d.productType);
+    d.net = part;
+    part.devices.push(d);
+  }
+  for (const c of net.clients) {
+    const part = (!c.wired && partFor('wireless')) || (c.switchPort && partFor('switch')) || main;
+    Object.assign(c, { net: part, sessionCache: null, dayCache: null, hourCache: null });
+    part.clients.push(c);
+  }
+  if (net.mx) Object.assign(main, { mx: net.mx, vpn: net.vpn });
+  if (org.hub === net) org.hub = main;
+  const sw = partFor('switch');
+  if (sw) Object.assign(sw, { switches: net.switches, switchStacks: net.switchStacks, stagedUpgrades: net.stagedUpgrades });
+  const wl = partFor('wireless');
+  if (wl) Object.assign(wl, { aps: net.aps, ssids: net.ssids });
+  const cam = partFor('camera');
+  if (cam) cam.cameras = net.cameras;
+  if (net.floorPlans) (wl ?? cam ?? main).floorPlans = net.floorPlans;
+  for (const l of org.licenses ?? []) if (l.networkId === net.id) l.networkId = world.deviceBySerial.get(l.deviceSerial)?.net.id ?? null;
+
+  for (const list of [org.networks, world.networks]) list.splice(list.indexOf(net), 1);
+  world.networkById.delete(net.id);
+  net.deleted = true;
+  repoint(org, net.id, main.id);
+  dropCaches(org);
+  return parts;
 }

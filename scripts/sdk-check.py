@@ -654,7 +654,59 @@ def switchports():
         check(f"getOrganizationApplianceDevicesInterfacesPortsByDevice, serials and numbers filters ({len(got)} appliances)", len(got) == 5 and [p["number"] for p in one[0]["ports"]] == ["1", "3"], one)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports]
+# The unclaimed order the default seed gives Acme Corporation: an MX250, an
+# MS130-24P, two MR46s and a co-term license for them.
+ACME_ORDER = "4C9557446"
+
+
+@scenario
+def inventory():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu:
+        d = dashboard(emu)
+        org = acme(d.organizations.getOrganizations())
+        o = f"/organizations/{org}"
+        counted = lambda: sum(d.organizations.getOrganizationLicensesOverview(org)["licensedDeviceCounts"].values())
+
+        got = d.licensing.getOrganizationLicensingCotermLicenses(org, total_pages="all", perPage=3)
+        check(f"getOrganizationLicensingCotermLicenses perPage=3, all pages ({len(got)} licenses)", len(got) == 6 and got == emu.raw(f"{o}/licensing/coterm/licenses") and sum(c["count"] for l in got for c in l["counts"]) == counted(), len(got))
+
+        before = counted()
+        got = d.organizations.claimIntoOrganizationInventory(org, orders=[ACME_ORDER])
+        rows = d.organizations.getOrganizationInventoryDevices(org, orderNumbers=[ACME_ORDER])
+        check(f"claimIntoOrganizationInventory by order ({len(rows)} devices)", got["orders"] == [ACME_ORDER] and sorted(r["model"] for r in rows) == ["MR46", "MR46", "MS130-24P", "MX250"] and counted() == before + 4, got)
+        spare = next(r["serial"] for r in rows if r["model"] == "MR46")
+        got = d.organizations.releaseFromOrganizationInventory(org, serials=[spare])
+        gone = not d.organizations.getOrganizationInventoryDevices(org, serials=[spare])
+        back = d.organizations.claimIntoOrganizationInventory(org, serials=[spare])
+        check("releaseFromOrganizationInventory, then claimed back by serial", got["serials"] == [spare] and gone and back["serials"] == [spare], got)
+
+        other = d.organizations.createOrganization("Acme Spinoff")["id"]
+        lic = next(l for l in d.licensing.getOrganizationLicensingCotermLicenses(org) if any(c["model"] == "MR Enterprise" for c in l["counts"]))
+        got = d.licensing.moveOrganizationLicensingCotermLicenses(org, {"organizationId": other, "mode": "addDevices"}, [{"key": lic["key"], "counts": [{"model": "MR Enterprise", "count": 1}]}])
+        moved = d.licensing.getOrganizationLicensingCotermLicenses(other)
+        check("moveOrganizationLicensingCotermLicenses leaves a remainder and invalidates the license", len(got["remainderLicenses"]) == 1 and [m["key"] for m in moved] == [got["movedLicenses"][0]["key"]] and d.licensing.getOrganizationLicensingCotermLicenses(org, invalidated=True)[0]["key"] == lic["key"], got)
+
+        nets = {n["name"]: n["id"] for n in d.organizations.getOrganizationNetworks(org)}
+        austin, london = nets["Branch - Austin"], nets["Remote - London"]
+        template = d.organizations.createOrganizationConfigTemplate(org, "Branch", copyFromNetworkId=austin)["id"]
+        got = d.networks.bindNetwork(london, template, autoBind=True)
+        ssid = d.wireless.getNetworkWirelessSsid(austin, 1)["name"]
+        bound = d.organizations.getOrganizationNetworks(org, configTemplateId=template)
+        check("bindNetwork with autoBind, settings read through the template", got["isBoundToConfigTemplate"] and got["configTemplateId"] == template and [n["id"] for n in bound] == [london] and d.wireless.getNetworkWirelessSsid(london, 1)["name"] == ssid, got)
+        try:
+            d.wireless.updateNetworkWirelessSsid(london, 1, name="Local")
+            check("a bound network refuses settings writes", False, "no error")
+        except meraki.APIError as e:
+            check("a bound network refuses settings writes with 400", e.status == 400, e.status)
+        got = d.networks.unbindNetwork(london, retainConfigs=True)
+        check("unbindNetwork with retainConfigs keeps the template's settings", not got["isBoundToConfigTemplate"] and d.wireless.getNetworkWirelessSsid(london, 1)["name"] == ssid, got)
+
+        got = d.networks.splitNetwork(nets["HQ - San Francisco"])["resultingNetworks"]
+        devices = sum(len(d.networks.getNetworkDevices(n["id"])) for n in got)
+        check(f"splitNetwork into {len(got)} networks with all {devices} devices", [n["productTypes"] for n in got] == [["appliance"], ["switch"], ["wireless"], ["camera"]] and devices == 17, [n["name"] for n in got])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

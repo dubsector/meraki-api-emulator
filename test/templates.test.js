@@ -96,4 +96,77 @@ describe('config templates', () => {
     assert.deepEqual((await sb.get(`/organizations/${lab.id}/configTemplates/${r.body.id}/switch/profiles`)).body, []);
     await errorOf(sb.post(T, { name: 'Wrong org', copyFromNetworkId: lab.networks[0].id }), 404);
   });
+
+  test('a bound network reads its settings from the template', async () => {
+    fresh();
+    const [hq, austin, reno] = corp.networks;
+    const t = await make({ name: 'From HQ', copyFromNetworkId: hq.id });
+    const bind = (net, body) => sb.post(`/networks/${net.id}/bind`, body);
+    assert.match(await errorOf(bind(austin, { configTemplateId: 'L_1' })), /not found/);
+    const blank = await make({ name: 'Blank' });
+    assert.match(await errorOf(bind(reno, { configTemplateId: blank.id })), /no camera settings/);
+    assert.match(await errorOf(bind(austin, { configTemplateId: blank.id, autoBind: true })), /Auto-bind/);
+
+    const r = await sb.post(`/networks/${austin.id}/bind`, { configTemplateId: t.id });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual([r.body.id, r.body.isBoundToConfigTemplate, r.body.configTemplateId], [austin.id, true, t.id]);
+    assert.match(await errorOf(bind(austin, { configTemplateId: t.id })), /already bound/);
+    assert.equal((await sb.get(`/networks/${austin.id}`)).body.isBoundToConfigTemplate, true);
+    const N = `/organizations/${corp.id}/networks`;
+    assert.deepEqual((await sb.get(`${N}?isBoundToConfigTemplate=true`)).body.map((n) => n.id), [austin.id]);
+    assert.deepEqual((await sb.get(`${N}?configTemplateId=${t.id}`)).body.map((n) => n.id), [austin.id]);
+    assert.equal((await sb.get(`${N}?isBoundToConfigTemplate=false`)).body.length, corp.networks.length - 1);
+    assert.match(await errorOf(sb.get(`${N}?configTemplateId=${t.id}&isBoundToConfigTemplate=false`)), /cannot be false/);
+
+    // HQ's third SSID comes with the template; settings writes go to the template.
+    const hqSsid = (await sb.get(`/networks/${hq.id}/wireless/ssids/2`)).body;
+    assert.equal((await sb.get(`/networks/${austin.id}/wireless/ssids/2`)).body.name, hqSsid.name);
+    assert.match(await errorOf(sb.put(`/networks/${austin.id}/wireless/ssids/2`, { name: 'Local' })), /bound to a config template/);
+    assert.match(await errorOf(sb.put(`/networks/${austin.id}/appliance/vlans/settings`, { vlansEnabled: false })), /bound to a config template/);
+    assert.equal((await sb.put(`/networks/${austin.id}`, { notes: 'still mine' })).status, 200);
+    assert.equal((await sb.put(`/devices/${austin.aps[0].serial}`, { name: 'AP 1' })).status, 200);
+    assert.match(await errorOf(sb.del(`${T}/${t.id}`)), /unbind them first/);
+    assert.match(await errorOf(sb.post(`${N}/combine`, { name: 'Both', networkIds: [austin.id, corp.networks[4].id] })), /bound to a config template/);
+    const move = await sb.post(`${N}/moves`, { network: { id: austin.id }, organizations: { target: { id: (await sb.post('/organizations', { name: 'Elsewhere' })).body.id } } });
+    assert.match(move.body.result.reason, /bound to a configuration template/);
+
+    // Unbinding without retaining the settings starts over from Austin's own defaults.
+    const u = await sb.post(`/networks/${austin.id}/unbind`, {});
+    assert.equal(u.status, 200, JSON.stringify(u.body));
+    assert.equal(u.body.isBoundToConfigTemplate, false);
+    assert.equal('configTemplateId' in u.body, false);
+    assert.match(await errorOf(sb.post(`/networks/${austin.id}/unbind`, {})), /not bound/);
+    assert.equal((await sb.get(`/networks/${austin.id}/wireless/ssids/2`)).body.enabled, false);
+    assert.equal((await sb.del(`${T}/${t.id}`)).status, 204);
+  });
+
+  test('retaining configs keeps a copy, and auto-bind uses switch profiles', async () => {
+    fresh();
+    const [, austin, , , london] = corp.networks;
+    const t = await make({ name: 'Branch', copyFromNetworkId: austin.id });
+    const [profile] = (await sb.get(`${T}/${t.id}/switch/profiles`)).body;
+    assert.equal(profile.model, 'MS130-24P');
+    const sw = london.switches[0];
+    const P = `/devices/${sw.serial}/switch/ports/5`;
+    const before = (await sb.get(P)).body;
+
+    const r = await sb.post(`/networks/${london.id}/bind`, { configTemplateId: t.id, autoBind: true });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal((await sb.put(`${T}/${t.id}/switch/profiles/${profile.switchProfileId}/ports/5`, { name: 'From profile', vlan: 77 })).status, 200);
+    const bound = (await sb.get(P)).body;
+    assert.deepEqual([bound.name, bound.vlan], ['From profile', 77]);
+    assert.match(await errorOf(sb.put(P, { vlan: 5 })), /switch profile/);
+    const ssid = (await sb.get(`/networks/${austin.id}/wireless/ssids/1`)).body.name;
+    assert.equal((await sb.get(`/networks/${london.id}/wireless/ssids/1`)).body.name, ssid);
+
+    const u = await sb.post(`/networks/${london.id}/unbind`, { retainConfigs: true });
+    assert.equal(u.status, 200, JSON.stringify(u.body));
+    assert.equal((await sb.get(`/networks/${london.id}/wireless/ssids/1`)).body.name, ssid);
+    assert.equal((await sb.put(`/networks/${london.id}/wireless/ssids/1`, { name: 'London Guest' })).status, 200);
+    assert.equal((await sb.get(`/networks/${austin.id}/wireless/ssids/1`)).body.name, ssid);
+    const kept = (await sb.get(P)).body;
+    assert.deepEqual([kept.name, kept.vlan], ['From profile', 77]);
+    assert.equal((await sb.put(P, { vlan: 5 })).status, 200);
+    assert.notDeepEqual(before, kept);
+  });
 });

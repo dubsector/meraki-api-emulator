@@ -1,13 +1,16 @@
-// Configuration templates and their switch profiles. Organizations start with
-// none. A template copied from a network gets a switch profile for each switch
-// model in it, and one copied from a template gets that template's profiles.
+// Configuration templates, their switch profiles, and binding networks to
+// them. Organizations start with none. A template copied from a network gets
+// its settings and a switch profile for each switch model in it, and one copied
+// from a template gets that template's.
 
 import { MODELS } from '../catalog.js';
+import { configOf, rebase } from '../config.js';
+import { networkJson } from '../format.js';
 import { badRequest, notFound } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { merge, validTimeZone } from '../validate.js';
-import { orgOf } from './common.js';
-import { checkPortBody, portDefaults } from './switch.js';
+import { netOf, orgOf } from './common.js';
+import { checkPortBody, portConfig, portDefaults } from './switch.js';
 
 const LIST = '/organizations/{organizationId}/configTemplates';
 const TEMPLATE = `${LIST}/{configTemplateId}`;
@@ -92,8 +95,50 @@ function createTemplate(ctx) {
     }
   }
   for (const p of source?.profiles ?? []) newProfile(ctx, template, p.model, structuredClone(p.ports));
+  if (net) template.config = rebase(configOf(net), net.id, id);
+  else if (source?.config) template.config = rebase(source.config, source.id, id);
   store.list.push(template);
   return templateJson(template);
+}
+
+// A bound network reads its settings from the template, and with autoBind its
+// switches take their ports from the profile for their model.
+function bind(ctx) {
+  const net = netOf(ctx);
+  const b = ctx.body;
+  if (net.template) throw badRequest(`This network is already bound to config template ${net.template.id}`);
+  const template = storeOf(net.org).list.find((t) => t.id === b.configTemplateId);
+  if (!template) throw badRequest(`Config template ${b.configTemplateId} was not found in this organization`);
+  const missing = net.productTypes.filter((p) => !template.productTypes.includes(p));
+  if (missing.length) throw badRequest(`The config template has no ${missing.join(', ')} settings for this network`);
+  const autoBind = b.autoBind && net.productTypes.includes('switch') && template.productTypes.includes('switch');
+  const models = template.profiles.map((p) => p.model);
+  if (autoBind && (!models.length || new Set(models).size < models.length)) throw badRequest('Auto-bind needs a switch template with at least one profile and at most one profile per switch model');
+  net.template = template;
+  configOf(net);
+  if (autoBind) for (const sw of net.switches) sw.switchProfileId = template.profiles.find((p) => p.model === sw.model)?.switchProfileId;
+  return { ...networkJson(net), configTemplateId: template.id };
+}
+
+// Unbinding keeps a copy of the template's settings and switch ports when
+// asked to, and otherwise starts the network over from its defaults.
+function unbind(ctx) {
+  const net = netOf(ctx);
+  const template = net.template;
+  if (!template) throw badRequest('This network is not bound to a config template');
+  const retain = !!ctx.body?.retainConfigs;
+  for (const sw of net.switches) {
+    if (!sw.switchProfileId) continue;
+    for (const port of sw.ports) {
+      const { portId, linkNegotiationCapabilities, ...config } = portConfig(net, sw, port);
+      port.config = retain ? config : null;
+    }
+    delete sw.switchProfileId;
+  }
+  if (retain) net.config = rebase(configOf(net), template.id, net.id);
+  else delete net.config;
+  delete net.template;
+  return networkJson(net);
 }
 
 export default [
@@ -128,6 +173,7 @@ export default [
     path: TEMPLATE,
     handler: (ctx) => {
       const { org, template } = templateOf(ctx);
+      if (org.networks.some((n) => n.template === template)) throw badRequest('Networks are still bound to this config template; unbind them first');
       const list = storeOf(org).list;
       list.splice(list.indexOf(template), 1);
     },
@@ -168,4 +214,6 @@ export default [
       return portJson(profile, port);
     },
   },
+  { op: 'bindNetwork', method: 'POST', path: '/networks/{networkId}/bind', status: 200, handler: bind },
+  { op: 'unbindNetwork', method: 'POST', path: '/networks/{networkId}/unbind', status: 200, handler: unbind },
 ];

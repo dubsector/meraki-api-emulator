@@ -191,11 +191,12 @@ export function securityEventsOnDay(net, day) {
 
 function buildSecurityEvents(net, day) {
   const list = [];
-  if (net.mx) {
+  const pool = net.clients.filter((c) => c.kindName !== 'printer' && c.kindName !== 'deskPhone');
+  // An MX with no clients behind it (just claimed, or split off) sees nothing.
+  if (net.mx && pool.length) {
     const k = derive(net.key ^ 0x5ec, day);
     const rate = net.code === 'HQ' ? 9 : net.kind === 'retail' ? 5 : 3;
     const n = Math.floor(rate * (0.4 + unit(k, 0) * 1.2));
-    const pool = net.clients.filter((c) => c.kindName !== 'printer' && c.kindName !== 'deskPhone');
     for (let i = 0; i < n; i++) {
       const u = (j) => unit(k, 10 + i * 16 + j);
       const t = day * DAY + u(0) * DAY;

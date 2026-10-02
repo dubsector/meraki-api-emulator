@@ -41,9 +41,15 @@ export function uuid(key, salt) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20)}`;
 }
 
+// A network bound to a config template uses the template's settings. A
+// template that has none yet takes them from the first network bound to it.
 export function configOf(net) {
+  if (net.template) return (net.template.config ||= rebase(buildConfig(net), net.id, net.template.id));
   return (net.config ||= buildConfig(net));
 }
+
+// A copy of a network's or template's settings with its own ID swapped for another.
+export const rebase = (config, fromId, toId) => JSON.parse(JSON.stringify(config).replaceAll(fromId, toId));
 
 // A setting kept on the network from its first read, so writes to it stick.
 export function stored(net, key, build) {
