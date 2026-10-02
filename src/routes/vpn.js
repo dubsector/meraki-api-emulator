@@ -6,7 +6,7 @@
 import { IDS_SIGNATURES } from '../catalog.js';
 import { DEFAULT_RULE, configOf, stored } from '../config.js';
 import { badRequest } from '../http.js';
-import { isAddress, isHostname, isIpv6, parseCidr, parseIp } from '../validate.js';
+import { inRange, isAddress, isHostname, isIpv6, parseCidr, parseIp } from '../validate.js';
 import { checkHttpUrl } from '../webhooks.js';
 import { checkList, isPorts } from './firewall.js';
 import { limit, mxNet, newId, orgOf } from './common.js';
@@ -43,10 +43,6 @@ const intrusionOf = (org) => (org.applianceIntrusion ??= { allowedRules: [] });
 const asnOf = (org) => (org.vpnBgp ??= { asNumber: DEFAULT_ASN });
 
 const text = (v) => typeof v === 'string' && v.trim() !== '';
-
-function inRange(v, min, max, name) {
-  if (v != null && !(Number.isInteger(v) && v >= min && v <= max)) throw badRequest(`'${name}' must be an integer between ${min} and ${max}`);
-}
 
 function checkSubnets(list, name) {
   if (!Array.isArray(list) || !list.length) throw badRequest(`'${name}' must list at least one subnet`);

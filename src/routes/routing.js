@@ -5,9 +5,8 @@
 
 import { stored } from '../config.js';
 import { badRequest, notFound } from '../http.js';
-import { Rand, hashStr } from '../rng.js';
-import { ipInCidr, parseCidr, parseIp } from '../validate.js';
-import { devOf, limit, netOf, newId as newItemId, requireModel, requireProduct } from './common.js';
+import { inRange, ipInCidr, parseCidr, parseIp } from '../validate.js';
+import { devOf, limit, netOf, newId, requireModel, requireProduct } from './common.js';
 
 const DEV = '/devices/{serial}/switch/routing';
 const IFACES = `${DEV}/interfaces`;
@@ -28,15 +27,6 @@ const DHCP_SERVER_DEFAULTS = { dhcpLeaseTime: '1 day', dnsNameserversOption: 'go
 const VRF_ERROR = 'VRF settings need IOS XE firmware 17.18 or higher';
 // SSDP, the group clients join most, stands in for groups an 'Any' RP serves.
 const SSDP = '239.255.255.250';
-
-const newRand = (ctx, kind, parent, n) => new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:${kind}:${parent}:${n}`));
-
-function newId(r, taken) {
-  let id;
-  do id = r.digits(18);
-  while (taken.some((x) => x === id));
-  return id;
-}
 
 export const newL3 = () => ({ defaultGateway: null, interfaces: { created: 0, list: [] }, routes: { created: 0, list: [] } });
 
@@ -173,8 +163,7 @@ export function createIface(ctx, R) {
   if (store.list.length >= MAX_ITEMS) throw badRequest(`${R.what === 'stack' ? 'Stacks' : 'Switches'} are limited to ${MAX_ITEMS} layer 3 interfaces in the emulator`);
   const base = { name: b.name, multicastRouting: 'disabled', ospfSettings: { ...OSPF_DEFAULTS }, dhcp: { dhcpMode: 'dhcpDisabled' } };
   const iface = applyIface(R, base, b, null);
-  store.created++;
-  iface.interfaceId = newId(newRand(ctx, R.kinds[0], R.parent, store.created), store.list.map((i) => i.interfaceId));
+  iface.interfaceId = newId(ctx, store, R.kinds[0], R.parent, 'interfaceId');
   store.list.push(iface);
   return ifaceJson(R, iface);
 }
@@ -261,8 +250,7 @@ export function createRoute(ctx, R) {
   const store = R.l3.routes;
   if (store.list.length >= MAX_ITEMS) throw badRequest(`${R.what === 'stack' ? 'Stacks' : 'Switches'} are limited to ${MAX_ITEMS} static routes in the emulator`);
   const route = applyRoute(R, { name: null, advertiseViaOspfEnabled: false, preferOverOspfRoutesEnabled: false }, ctx.body, null);
-  store.created++;
-  route.staticRouteId = newId(newRand(ctx, R.kinds[1], R.parent, store.created), store.list.map((r) => r.staticRouteId));
+  route.staticRouteId = newId(ctx, store, R.kinds[1], R.parent, 'staticRouteId');
   store.list.push(route);
   return routeJson(route);
 }
@@ -295,10 +283,6 @@ function ospfJson(o) {
   const { md5AuthenticationKey, ...out } = structuredClone(o);
   if (o.md5AuthenticationEnabled) out.md5AuthenticationKey = { ...md5AuthenticationKey };
   return out;
-}
-
-function inRange(v, min, max, name) {
-  if (v != null && (!Number.isInteger(v) || v < min || v > max)) throw badRequest(`'${name}' must be between ${min} and ${max}`);
 }
 
 function checkAreas(areas, at) {
@@ -439,7 +423,7 @@ function createRp(ctx) {
   const store = rpsOf(net);
   if (livePoints(net).length >= MAX_RPS) throw badRequest(`Rendezvous points are limited to ${MAX_RPS} in the emulator`);
   const rp = applyRp(net, {}, ctx.body);
-  rp.id = newItemId(ctx, store, 'rendezvousPoint', net.id);
+  rp.id = newId(ctx, store, 'rendezvousPoint', net.id);
   store.list = store.list.filter((x) => holderOf(net, x.iface));
   store.list.push(rp);
   return rpJson({ rp, R: holderOf(net, rp.iface) });
