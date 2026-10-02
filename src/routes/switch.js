@@ -128,8 +128,19 @@ function linkSpeeds(sw, port) {
   return [...(sw.model === 'MS390-48UX' ? MGIG_SPEEDS : GIG_SPEEDS)];
 }
 
+// The switch profile a switch in a template-bound network is bound to.
+export function boundProfile(sw) {
+  return sw.switchProfileId ? sw.net.template?.profiles.find((p) => p.switchProfileId === sw.switchProfileId) : undefined;
+}
+
 // Topology decides the defaults; anything written through the API sits on top.
-function portConfig(net, sw, port) {
+// A switch bound to a profile takes its ports from the profile instead.
+export function portConfig(net, sw, port) {
+  const profile = boundProfile(sw);
+  if (profile) {
+    const config = profile.ports.find((p) => p.portId === port.portId)?.config;
+    return config ? merge(portDefaults(sw, port), config) : portDefaults(sw, port);
+  }
   const base = defaultPortConfig(net, sw, port);
   return port.config ? merge(base, port.config) : base;
 }
@@ -469,6 +480,7 @@ export default [
       const dev = devOf(ctx);
       requireModel(dev, 'switch');
       const port = portOf(dev, ctx.params.portId);
+      if (boundProfile(dev)) throw badRequest('This switch is bound to a switch profile; change the port on the profile instead');
       checkPortBody(dev, port, ctx.body);
       const { portId, ...patch } = ctx.body;
       port.config = merge(port.config || {}, patch);

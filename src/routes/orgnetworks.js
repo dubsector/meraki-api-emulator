@@ -8,8 +8,8 @@ import { deviceStatus } from '../sim/outages.js';
 import { presenceIn } from '../sim/presence.js';
 import { WD_RECV, WD_SENT, WL_RECV, WL_SENT, networkTotals } from '../sim/usage.js';
 import { DAY, iso } from '../time.js';
-import { combineNetworks, moveNetwork } from '../world.js';
-import { orgOf, round } from './common.js';
+import { combineNetworks, moveNetwork, splitNetwork } from '../world.js';
+import { netOf, orgOf, round } from './common.js';
 
 const GROUPS = '/organizations/{organizationId}/networks/groups';
 const GROUP = `${GROUPS}/{groupId}`;
@@ -112,6 +112,7 @@ const msIso = (t) => iso(t).replace('Z', '.000Z');
 function moveProblem(org, net, dest) {
   if (!dest || dest === org) return 'Cannot move network: Target organization is invalid or inaccessible.';
   if (dest.licensing !== org.licensing) return 'Cannot move network: The source and target organizations use different licensing models.';
+  if (net.template) return 'Cannot move network: The network is bound to a configuration template.';
   if (dest.networks.some((n) => n.name === net.name)) return 'Cannot move network: A network with the same name already exists in the target organization.';
   if (dest.networks.length >= MAX_NETWORKS) return 'Cannot move network: The target organization has reached its network limit.';
   return null;
@@ -163,6 +164,8 @@ function combine(ctx) {
   const ids = networksIn(org, b.networkIds);
   if (ids.length < 2) throw badRequest("'networkIds' must list at least two networks");
   const nets = ids.map((id) => org.networks.find((n) => n.id === id));
+  const bound = nets.find((n) => n.template);
+  if (bound) throw badRequest(`Network ${bound.id} is bound to a config template; unbind it first`);
   for (const n of nets) {
     const other = nets.find((x) => x !== n && x.productTypes.some((p) => n.productTypes.includes(p)));
     if (other) throw badRequest(`Networks ${n.id} and ${other.id} both have ${other.productTypes.find((p) => n.productTypes.includes(p))} devices; only networks with different product types can be combined`);
@@ -170,6 +173,13 @@ function combine(ctx) {
   if (!b.name?.trim()) throw badRequest("'name' must not be empty");
   if (org.networks.some((n) => !nets.includes(n) && n.name === b.name)) throw badRequest('Name has already been taken');
   return { resultingNetwork: networkJson(combineNetworks(ctx.world, org, nets, b)) };
+}
+
+function split(ctx) {
+  const net = netOf(ctx);
+  if (net.productTypes.length < 2) throw badRequest('Only a combined network can be split');
+  if (net.template) throw badRequest('This network is bound to a config template; unbind it first');
+  return { resultingNetworks: splitNetwork(ctx.world, net).map(networkJson) };
 }
 
 export default [
@@ -250,4 +260,5 @@ export default [
       return paginateItems(ctx, rows, (m) => m.moveId, { def: 50, max: 100, min: 10 }, moveJson);
     },
   },
+  { op: 'splitNetwork', method: 'POST', path: '/networks/{networkId}/split', status: 200, handler: split },
 ];

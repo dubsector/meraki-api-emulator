@@ -167,4 +167,48 @@ describe('network groups, moves and combining', () => {
     assert.deepEqual([again.resultingNetwork.id, again.resultingNetwork.productTypes], [net.id, ['wireless', 'appliance', 'camera']]);
     await noErrors([sb.world.networkById.get(net.id)]);
   });
+
+  test('a combined network splits into one network per product type', async () => {
+    fresh();
+    const hq = corp.networks[0];
+    const austin = corp.networks[1];
+    const types = [...hq.productTypes];
+    const devices = Object.fromEntries(types.map((p) => [p, hq.devices.filter((d) => d.productType === p).map((d) => d.serial).sort()]));
+    const wireless = hq.clients.filter((c) => !c.wired).length;
+    const ssid = (await sb.get(`/networks/${hq.id}/wireless/ssids/0`)).body;
+    assert.match(await errorOf(sb.post(`/networks/${lab.networks[0].id}/split`)), /combined network/);
+
+    const r = await created(sb.post(`/networks/${hq.id}/split`), 200);
+    const parts = r.resultingNetworks;
+    assert.deepEqual(parts.map((n) => [n.name, n.productTypes]), types.map((p) => [`${hq.name} - ${p}`, [p]]));
+    assert.ok(parts.every((n) => /^N_\d{18}$/.test(n.id) && n.timeZone === hq.timeZone && n.organizationId === corp.id && !n.isBoundToConfigTemplate));
+    await errorOf(sb.get(`/networks/${hq.id}`), 404);
+    for (const [i, p] of types.entries()) {
+      const list = (await sb.get(`/networks/${parts[i].id}/devices`)).body;
+      assert.deepEqual(list.map((d) => d.serial).sort(), devices[p]);
+    }
+    const wl = parts[types.indexOf('wireless')];
+    assert.equal((await sb.get(`/networks/${wl.id}/clients?timespan=2592000&perPage=1000`)).body.length, wireless);
+    assert.deepEqual((await sb.get(`/networks/${wl.id}/wireless/ssids/0`)).body, ssid);
+
+    // HQ was the VPN hub; its spokes now point at the appliance network.
+    const mx = parts[types.indexOf('appliance')];
+    const vpn = (await sb.get(`/networks/${austin.id}/appliance/vpn/siteToSiteVpn`)).body;
+    assert.deepEqual(vpn.hubs.map((h) => h.hubId), [mx.id]);
+    await noErrors(parts.map((n) => sb.world.networkById.get(n.id)));
+
+    // The parts combine back into one network.
+    const again = await created(sb.post(`${O}/combine`, { name: hq.name, networkIds: parts.map((n) => n.id) }), 200);
+    assert.deepEqual(again.resultingNetwork.productTypes, types);
+    assert.equal((await sb.get(`/networks/${again.resultingNetwork.id}/devices`)).body.length, hq.devices.length);
+  });
+
+  test('a network bound to a template answers every read', async () => {
+    fresh();
+    const [hq, austin] = corp.networks;
+    const t = (await sb.post(`/organizations/${corp.id}/configTemplates`, { name: 'HQ', copyFromNetworkId: hq.id })).body;
+    await created(sb.post(`/networks/${austin.id}/bind`, { configTemplateId: t.id, autoBind: false }), 200);
+    assert.match(await errorOf(sb.post(`/networks/${austin.id}/split`)), /unbind it first/);
+    await noErrors([austin]);
+  });
 });

@@ -25,7 +25,7 @@ export function networkJson(net) {
     enrollmentString: net.enrollmentString ?? null,
     url: net.url,
     notes: net.notes ?? '',
-    isBoundToConfigTemplate: false,
+    isBoundToConfigTemplate: !!net.template,
   };
 }
 

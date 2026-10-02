@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { ApiLog } from './apilog.js';
-import { ApiError } from './http.js';
+import { ApiError, badRequest } from './http.js';
 import { landingPage } from './landing.js';
 import admin from './routes/admin.js';
 import alerts from './routes/alerts.js';
@@ -50,6 +50,9 @@ export const SDK_HINT = 'This path has a full URL appended to the base URL. The 
 export const CONNECT_HINT = 'The emulator speaks plain HTTP, use an http:// base URL';
 
 export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...licenses, ...templates, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...clients, ...networkwide, ...firmware, ...floorplans, ...appliance, ...switches, ...switchports, ...stacks, ...wireless, ...wirelessstats, ...orgwireless, ...ssids, ...devices].map((r) => ({ method: 'GET', ...r }));
+
+// Network settings that come from the config template a network is bound to.
+const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance|wireless|switch\/settings|groupPolicies|syslogServers|devices\/syslog|snmp|alerts|webhooks|settings)\b/;
 
 // One entry per path template, holding a route per method.
 function compile(routes) {
@@ -227,6 +230,9 @@ export function createEmulator(options = {}) {
     const ctx = { world, params, query: url.searchParams, now: clock(), url, origin: `${proto}://${req.headers.host || 'localhost'}`, headers: {}, apiLog, body: null };
     try {
       if (write) ctx.body = validateBody(route.op, await parseBody(req));
+      if (write && TEMPLATED.test(route.path) && world.networkById.get(params.networkId)?.template) {
+        throw badRequest('This network is bound to a config template, so its settings can only be changed on the template');
+      }
       // Updates and deletes log what the resource looked like before.
       const get = write && req.method !== 'POST' ? entry.methods.GET : null;
       const before = get ? snapshot(get, ctx) : null;
