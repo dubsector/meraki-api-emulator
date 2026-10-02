@@ -80,27 +80,11 @@ function buildEvents(net, day) {
     });
     if (dev.dormant) push(dev.dormantSince + 0.3, portEvent(dev.switchPort, '1Gfdx', 'down'));
   }
-  // This network's MX logs AutoVPN peers going away and coming back.
-  if (net.mx && net.org.hub) {
-    const peers = net.vpn === 'hub' ? net.org.networks.filter((n) => n.vpn === 'spoke') : [net.org.hub];
-    for (const p of peers) {
-      const ev = { productType: 'appliance', ...device(net.mx), type: 'vpn_connectivity_change', category: 'vpn', description: 'VPN connectivity change' };
-      const data = { vpn_type: 'site-to-site', peer_contact: `${p.mx.uplinks[0].publicIp}:51820`, peer_ident: p.mx.serial };
-      eachOutage(p.mx, a - 3600, b, (s, e) => {
-        push(s + 25, { ...ev, eventData: { ...data, connectivity: 'false' } });
-        push(e + 12, { ...ev, eventData: { ...data, connectivity: 'true' } });
-      });
-    }
-  }
   if (net.mx) {
-    for (const up of net.mx.uplinks) {
-      if (up.interface !== 'wan1' || net.mx.uplinks.length < 2) continue;
-      eachUplinkFailure(up, a, b, (s, e) => {
-        const base = { type: 'failover_event', category: 'failover', description: 'Failover event', productType: 'appliance', ...device(net.mx) };
-        push(s + 0.12, { ...base, eventData: { uplink: '1', reason: 'wan1 unreachable' } });
-        push(e + 0.4, { ...base, eventData: { uplink: '0', reason: 'wan1 restored' } });
-      });
-    }
+    const ev = { productType: 'appliance', ...device(net.mx), type: 'vpn_connectivity_change', category: 'vpn', description: 'VPN connectivity change' };
+    eachVpnChange(net, a - 3600, b, (t, eventData) => push(t, { ...ev, eventData }));
+    const base = { type: 'failover_event', category: 'failover', description: 'Failover event', productType: 'appliance', ...device(net.mx) };
+    eachFailover(net, a, b, (t, eventData) => push(t, { ...base, eventData }));
   }
 
   list.sort((x, y) => x.t - y.t);
@@ -108,6 +92,32 @@ function buildEvents(net, day) {
   let prev = -Infinity;
   for (const e of list) prev = e.us = Math.max(Math.floor(e.t * 1e6), prev + 1);
   return list;
+}
+
+// This network's MX logs AutoVPN peers going away and coming back, for peer
+// outages that overlap [a, b). fn gets the log time and the event data.
+export function eachVpnChange(net, a, b, fn) {
+  if (!net.mx || !net.org.hub) return;
+  const peers = net.vpn === 'hub' ? net.org.networks.filter((n) => n.vpn === 'spoke') : [net.org.hub];
+  for (const p of peers) {
+    const data = { vpn_type: 'site-to-site', peer_contact: `${p.mx.uplinks[0].publicIp}:51820`, peer_ident: p.mx.serial };
+    eachOutage(p.mx, a, b, (s, e) => {
+      fn(s + 25, { ...data, connectivity: 'false' });
+      fn(e + 12, { ...data, connectivity: 'true' });
+    });
+  }
+}
+
+// An MX with two uplinks fails over when wan1 fails, and back when it returns.
+export function eachFailover(net, a, b, fn) {
+  if (!net.mx || net.mx.uplinks.length < 2) return;
+  for (const up of net.mx.uplinks) {
+    if (up.interface !== 'wan1') continue;
+    eachUplinkFailure(up, a, b, (s, e) => {
+      fn(s + 0.12, { uplink: '1', reason: 'wan1 unreachable' });
+      fn(e + 0.4, { uplink: '0', reason: 'wan1 restored' });
+    });
+  }
 }
 
 function device(dev) {

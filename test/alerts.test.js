@@ -295,3 +295,81 @@ describe('assurance alert profiles', () => {
     assert.equal((await sb.post(P, body())).body.profileId, first);
   });
 });
+
+describe('network alert history', () => {
+  let sb;
+  let org;
+  before(async () => (sb = await start()));
+  afterEach(async () => {
+    assert.equal((await sb.reset()).status, 204);
+  });
+  after(() => sb.close());
+  const fresh = () => (org = sb.world.orgs[0]);
+  const H = (net) => `/networks/${net.id}/alerts/history`;
+  const history = (net) => collect(sb.get, `${H(net)}?perPage=1000`);
+
+  test('lists what the alert settings would have sent, newest first', async () => {
+    fresh();
+    const rno = org.networks.find((n) => n.code === 'RNO');
+    const rows = await history(rno);
+    const times = rows.map((r) => r.occurredAt);
+    assert.deepEqual(times, [...times].sort().reverse());
+    assert.ok(times.every((t) => Date.parse(t) / 1000 >= now - 31 * DAY && Date.parse(t) / 1000 <= now));
+    assert.deepEqual(new Set(rows.map((r) => r.alertTypeId)), new Set(['stopped_reporting', 'failover_event', 'vpn_connectivity_change', 'amp_malware_blocked', 'settings_changed']));
+    // Seeded settings mail netops@example.com and call the NetOps webhook.
+    assert.ok(rows.every((r) => Object.keys(r.destinations).join() === 'email,webhook'));
+
+    // The dormant camera never came back, so it alerts 30 minutes after going dark.
+    const cam = rno.cameras.find((c) => c.dormant);
+    const gone = rows.filter((r) => r.device?.serial === cam.serial);
+    assert.equal(gone.length, 1);
+    assert.deepEqual([gone[0].alertType, gone[0].occurredAt, gone[0].destinations.email.sentAt], ['Cameras went down', at(cam.dormantSince), at(cam.dormantSince + 30 * 60)]);
+    const ap = rows.filter((r) => r.alertTypeId === 'stopped_reporting' && r.alertType === 'APs went down');
+    assert.ok(ap.every((r) => Date.parse(r.destinations.email.sentAt) - Date.parse(r.occurredAt) === 10 * 60 * 1000));
+
+    const page = await sb.get(`${H(rno)}?perPage=3`);
+    assert.deepEqual(page.body, rows.slice(0, 3));
+    assert.equal((await sb.get(`${H(rno)}?perPage=2`)).status, 400);
+  });
+
+  test('settings changes match the configuration change log', async () => {
+    fresh();
+    const hq = org.networks[0];
+    const log = await collect(sb.get, `/organizations/${org.id}/configurationChanges?networkId=${hq.id}&timespan=${31 * DAY}`);
+    let rows = (await history(hq)).filter((r) => r.alertTypeId === 'settings_changed');
+    assert.equal(rows.length, log.length);
+    assert.deepEqual(rows.map((r) => r.alertData.label), log.map((c) => c.label));
+
+    await sb.put(`/networks/${hq.id}/settings`, { localStatusPageEnabled: false });
+    rows = await history(hq);
+    assert.deepEqual([rows[0].alertTypeId, rows[0].alertType, rows[0].occurredAt, rows[0].device, rows[0].alertData.page], ['settings_changed', 'Settings changed', NOW, null, 'via API']);
+  });
+
+  test('follows the alert settings for types and destinations', async () => {
+    fresh();
+    const hq = org.networks[0];
+    const S = `/networks/${hq.id}/alerts/settings`;
+    const before = await history(hq);
+    await sb.put(S, { defaultDestinations: { emails: [], allAdmins: false, httpServerIds: [] }, alerts: [{ type: 'ampMalwareBlocked', enabled: false }, { type: 'gatewayDown', alertDestinations: { allAdmins: true, smsNumbers: ['+15555550100'] } }] });
+    // Each alert keeps its own destinations.
+    const settings = (await sb.get(S)).body.alerts;
+    assert.deepEqual(settings.filter((a) => a.alertDestinations.smsNumbers.length).map((a) => a.type), ['gatewayDown']);
+    const rows = await history(hq);
+    assert.ok(!rows.some((r) => r.alertTypeId === 'amp_malware_blocked'));
+    assert.equal(rows.length, before.length - before.filter((r) => r.alertTypeId === 'amp_malware_blocked').length + 1);
+    for (const r of rows) {
+      const mx = r.alertType === 'Appliances went down';
+      assert.deepEqual(Object.keys(r.destinations), mx ? ['email', 'push', 'sms'] : [], r.alertType);
+    }
+  });
+
+  test('a network made through the API only has its own settings changes', async () => {
+    fresh();
+    const net = (await sb.post(`/organizations/${org.id}/networks`, { name: 'Empty', productTypes: ['switch'] })).body;
+    const rows = await history(net);
+    assert.deepEqual(rows, []);
+    await sb.put(`/networks/${net.id}`, { notes: 'hello' });
+    assert.deepEqual((await history(net)).map((r) => [r.alertTypeId, r.destinations]), [['settings_changed', {}]]);
+    assert.equal((await sb.get('/networks/L_0/alerts/history')).status, 404);
+  });
+});

@@ -1,7 +1,7 @@
 """Runs the official Meraki Python SDK against the emulator.
 
     python -m pip install --require-hashes -r scripts/sdk-requirements.txt
-    python scripts/sdk-check.py [paging events writes ratelimit faults aio]
+    python scripts/sdk-check.py [paging events writes ratelimit faults aio summaries]
 
 Each scenario starts its own emulator from this checkout (needs node on PATH)
 with the flags it tests. The SDK only follows Link URLs on meraki.com hosts, so
@@ -456,7 +456,69 @@ def aio():
         asyncio.run(go(emu))
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio]
+@scenario
+def summaries():
+    # Pinned like the events scenario, so time windows don't follow the real clock.
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu:
+        d = dashboard(emu)
+        org = acme(d.organizations.getOrganizations())
+        nets = d.organizations.getOrganizationNetworks(org)
+        hq = next(n["id"] for n in nets if n["name"] == "HQ - San Francisco")
+        day = "timespan=86400"
+        for op, path, kw in [
+            ("getOrganizationSummaryTopAppliancesByUtilization", "appliances/byUtilization", {}),
+            ("getOrganizationSummaryTopApplicationsCategoriesByUsage", "applications/categories/byUsage", {}),
+            ("getOrganizationSummaryTopClientsManufacturersByUsage", "clients/manufacturers/byUsage", {}),
+            ("getOrganizationSummaryTopDevicesModelsByUsage", "devices/models/byUsage", {}),
+            ("getOrganizationSummaryTopSwitchesByEnergyUsage", "switches/byEnergyUsage", {}),
+        ]:
+            got = getattr(d.organizations, op)(org, timespan=86400, quantity=5)
+            want = emu.raw(f"/organizations/{org}/summary/top/{path}?{day}&quantity=5")
+            check(f"{op} ({len(got)} rows)", got and got == want, got[:1])
+        got = d.organizations.getOrganizationSummaryTopNetworksByStatus(org, total_pages="all", perPage=3)
+        want = emu.raw(f"/organizations/{org}/summary/top/networks/byStatus")
+        check(f"getOrganizationSummaryTopNetworksByStatus perPage=3, all pages ({len(want)} rows)", got == want, len(got))
+        got = d.switch.getOrganizationSummarySwitchPowerHistory(org, timespan=86400)
+        check(f"getOrganizationSummarySwitchPowerHistory ({len(got)} intervals)", len(got) == 72 and got == emu.raw(f"/organizations/{org}/summary/switch/power/history?{day}"), len(got))
+        got = d.organizations.getOrganizationClientsBandwidthUsageHistory(org, timespan=86400)
+        check(f"getOrganizationClientsBandwidthUsageHistory ({len(got)} rows)", len(got) == 288 and got == emu.raw(f"/organizations/{org}/clients/bandwidthUsageHistory?{day}"), len(got))
+        got = d.appliance.getOrganizationApplianceUplinksStatusesOverview(org)
+        uplinks = sum(len(x["uplinks"]) for x in emu.raw(f"/organizations/{org}/appliance/uplink/statuses"))
+        check("getOrganizationApplianceUplinksStatusesOverview", sum(got["counts"]["byStatus"].values()) == uplinks, got)
+
+        week = 7 * 86400
+        got = d.appliance.getOrganizationApplianceSecurityEvents(org, total_pages="all", perPage=50, timespan=week)
+        want = emu.raw(f"/organizations/{org}/appliance/security/events?timespan={week}&perPage=1000")
+        check(f"getOrganizationApplianceSecurityEvents perPage=50, all pages ({len(want)} events)", want and got == want, len(got))
+        mac = want[0]["clientMac"]
+        client = d.organizations.getOrganizationClientsSearch(org, mac)
+        check("getOrganizationClientsSearch", client["mac"] == mac and len(client["records"]) == 1, client)
+        net = client["records"][0]["network"]["id"]
+        got = d.appliance.getNetworkApplianceClientSecurityEvents(net, client["clientId"], total_pages="all", perPage=3, timespan=week)
+        check(f"getNetworkApplianceClientSecurityEvents perPage=3, all pages ({len(got)} events)", got and got == [e for e in want if e["clientMac"] == mac], len(got))
+        try:
+            d.organizations.getOrganizationClientsSearch(org, "02:00:00:00:00:01")
+            check("an unknown MAC raises", False)
+        except meraki.APIError as e:
+            check("an unknown MAC raises 404", e.status == 404, e.status)
+
+        got = d.networks.getNetworkAlertsHistory(hq, total_pages="all", perPage=25)
+        want = emu.raw(f"/networks/{hq}/alerts/history?perPage=1000")
+        check(f"getNetworkAlertsHistory perPage=25, all pages ({len(want)} alerts)", want and got == want, len(got))
+
+        upgrades = d.organizations.getOrganizationFirmwareUpgrades(org, total_pages="all", perPage=3)
+        check(f"getOrganizationFirmwareUpgrades perPage=3, all pages ({len(upgrades)} upgrades)", upgrades and upgrades == emu.raw(f"/organizations/{org}/firmware/upgrades"), len(upgrades))
+        fw = d.networks.getNetworkFirmwareUpgrades(hq)
+        beta = fw["products"]["wireless"]["availableVersions"][0]["id"]
+        d.networks.updateNetworkFirmwareUpgrades(hq, products={"wireless": {"nextUpgrade": {"time": "2026-10-05T10:00:00Z", "toVersion": {"id": beta}}}})
+        sched = d.organizations.getOrganizationFirmwareUpgrades(org, status=["Scheduled"])
+        check("a scheduled upgrade lists as Scheduled", len(sched) == 1 and sched[0]["toVersion"]["id"] == beta and sched[0]["completedAt"] is None, sched)
+        rows = d.organizations.getOrganizationFirmwareUpgradesByDevice(org, total_pages="all", perPage=5, networkIds=[hq], upgradeStatuses=["scheduled"])
+        aps = [x for x in d.networks.getNetworkDevices(hq) if x["productType"] == "wireless"]
+        check(f"getOrganizationFirmwareUpgradesByDevice perPage=5, all pages ({len(rows)} rows)", len(rows) == len(aps) and all(r["upgrade"]["id"] == sched[0]["upgradeId"] for r in rows), len(rows))
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

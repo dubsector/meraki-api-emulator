@@ -216,7 +216,7 @@ function alertSettings(net, servers) {
     alerts: ALERTS.filter(([, product]) => !product || net.productTypes.includes(product)).map(([type, , filters]) => ({
       type,
       enabled: type !== 'usageAlert' && type !== 'rogueAp',
-      alertDestinations: quiet,
+      alertDestinations: structuredClone(quiet),
       filters,
     })),
     muting: { byPortSchedules: { enabled: false } },

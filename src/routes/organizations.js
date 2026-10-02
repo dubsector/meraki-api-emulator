@@ -31,7 +31,7 @@ function createNetwork(ctx) {
   return networkJson(net);
 }
 
-const MB = 1024;
+export const MB = 1024;
 
 // The address the cloud sees a device on: its MX's WAN 1, or a stand-in without an MX.
 function publicIpOf(d) {
@@ -214,14 +214,14 @@ function vpnPeerStats(local, peer, t0, t1) {
 }
 
 // Usage in MB for top-N summaries, over the networks a query selects.
-function summaryNetworks(ctx, org) {
+export function summaryNetworks(ctx, org) {
   const q = ctx.query;
   const networkId = q.get('networkId');
   const networkTag = q.get('networkTag');
   return org.networks.filter((n) => (!networkId || n.id === networkId) && (!networkTag || n.tags.includes(networkTag)));
 }
 
-function deviceUsage(dev, t0, t1) {
+export function deviceUsage(dev, t0, t1) {
   const net = dev.net;
   if (dev.productType === 'appliance') {
     const [s, r] = networkTotals(net, t0, t1, [WAN_SENT, WAN_RECV]);

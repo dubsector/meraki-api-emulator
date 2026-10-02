@@ -16,6 +16,24 @@ const EVENT_RETENTION = 90 * DAY;
 const PRODUCT_TYPES = ['appliance', 'camera', 'campusGateway', 'cellularGateway', 'secureConnect', 'switch', 'systemsManager', 'wireless', 'wirelessController'];
 const WIRELESS_RESOLUTIONS = [300, 600, 1200, 3600, 14400, 86400];
 
+// MX security events from the given networks in time order, as the network,
+// client and organization endpoints list them. Spans are in seconds.
+export function securityEvents(ctx, nets, span, keep = () => true) {
+  const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: span, defaultSpan: 31 * DAY, lookback: span });
+  const order = ctx.query.get('sortOrder') || 'ascending';
+  if (order !== 'ascending' && order !== 'descending') throw badRequest("'sortOrder' must be 'ascending' or 'descending'");
+  const found = [];
+  for (const net of nets) {
+    for (let d = Math.floor(t0 / DAY); d <= Math.floor(t1 / DAY); d++) {
+      for (const e of securityEventsOnDay(net, d)) if (e.t >= t0 && e.t < t1 && keep(e)) found.push(e);
+    }
+  }
+  if (nets.length > 1) found.sort((a, b) => a.t - b.t);
+  const rows = found.map(({ t, ts, ...rest }) => ({ ts: isoMicro(t), ...rest }));
+  if (order === 'descending') rows.reverse();
+  return paginate(ctx, rows, (r) => r.ts, { def: 100, max: 1000 });
+}
+
 // ── Clients ──
 
 function clientFilter(q) {
@@ -363,17 +381,18 @@ export default [
     handler: (ctx) => {
       const net = netOf(ctx);
       requireProduct(net, 'appliance');
-      const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 365 * DAY, defaultSpan: 31 * DAY, lookback: 365 * DAY });
-      const order = ctx.query.get('sortOrder') || 'ascending';
-      if (order !== 'ascending' && order !== 'descending') throw badRequest("'sortOrder' must be 'ascending' or 'descending'");
-      const rows = [];
-      for (let d = Math.floor(t0 / DAY); d <= Math.floor(t1 / DAY); d++) {
-        for (const { t, ts, ...rest } of securityEventsOnDay(net, d)) {
-          if (t >= t0 && t < t1) rows.push({ ts: isoMicro(t), ...rest });
-        }
-      }
-      if (order === 'descending') rows.reverse();
-      return paginate(ctx, rows, (r) => r.ts, { def: 100, max: 1000 });
+      return securityEvents(ctx, [net], 365 * DAY);
+    },
+  },
+  {
+    op: 'getNetworkApplianceClientSecurityEvents',
+    path: '/networks/{networkId}/appliance/clients/{clientId}/security/events',
+    handler: (ctx) => {
+      const net = netOf(ctx);
+      requireProduct(net, 'appliance');
+      const c = findClient(net, ctx.params.clientId);
+      if (!c) throw notFound('Client');
+      return securityEvents(ctx, [net], 791 * DAY, (e) => e.clientMac === c.mac);
     },
   },
   {

@@ -3,11 +3,11 @@
 // config: a scheduled upgrade counts as done once its time passes, but device
 // firmware strings never change.
 
-import { badRequest, notFound } from '../http.js';
+import { arrayParam, badRequest, boolParam, intParam, notFound, paginate } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { DAY, HOUR, Zone, iso, parseTime, weekday } from '../time.js';
 import { validTimeZone } from '../validate.js';
-import { netOf, requireProduct } from './common.js';
+import { bySerial, filterDevices, netOf, orgOf, requireProduct } from './common.js';
 
 const BASE = '/networks/{networkId}/firmwareUpgrades';
 const GROUPS = `${BASE}/staged/groups`;
@@ -38,24 +38,39 @@ const productsOf = (net) => net.productTypes.filter((p) => TRAINS[p]);
 const newRand = (ctx, kind, parent, n) => new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:${kind}:${parent}:${n}`));
 
 // Kept on the network, not its config, so copying a network doesn't copy schedules.
-const stateOf = (net) => (net.firmware ??= { window: null, timezone: null, products: {}, rollbacks: 0 });
+const stateOf = (net) => (net.firmware ??= { window: null, timezone: null, products: {}, rollbacks: 0, upgrades: 0 });
 const windowOf = (net) => net.firmware?.window ?? { dayOfWeek: 'sun', hourOfDay: '2:00' };
 const zoneOf = (net) => net.firmware?.timezone ?? net.timeZone;
 
 // One product's firmware at time t. Every network upgraded to the current
-// release about two weeks after it came out.
+// release about two weeks after it came out. Earlier upgrades, and scheduled
+// ones that were canceled, stay in history.
 function productAt(net, p, t) {
   const s = net.firmware?.products[p] ?? {};
   const upgraded = Date.parse(`${TRAINS[p][CURRENT][2]}T00:00:00Z`) / 1000 + (14 + (net.key % 7)) * DAY + 3 * HOUR;
   let at = s.at ?? CURRENT;
   let last = s.last ?? { time: upgraded, from: CURRENT - 1, to: CURRENT };
   let next = s.next ? { ...s.next } : null;
+  let history = s.history ?? [];
   if (next && next.time <= t) {
-    last = { time: next.time, from: at, to: next.to };
+    history = [...history, last];
+    last = { time: next.time, from: at, to: next.to, id: next.id, batchId: next.batchId };
     at = next.to;
     next = null;
   }
-  return { at, last, next, beta: s.beta ?? net.tags.includes('lab') };
+  return { at, last, next, beta: s.beta ?? net.tags.includes('lab'), history };
+}
+
+// A scheduled upgrade that's replaced or called off is kept as canceled.
+function cancelNext(cur, now) {
+  if (cur.next) cur.history = [...cur.history, { ...cur.next, from: cur.at, canceledAt: now }];
+  cur.next = null;
+}
+
+// IDs for a newly scheduled upgrade, from a count that never goes down.
+function newUpgrade(ctx, net, fields) {
+  const r = newRand(ctx, 'firmwareUpgrade', net.id, ++stateOf(net).upgrades);
+  return { id: r.digits(18), batchId: r.digits(18), ...fields };
 }
 
 function nextJson(p, next) {
@@ -100,7 +115,7 @@ function timeOf(v, name) {
 
 // Works out one product's new schedule without storing it, so a bad product
 // later in the body leaves everything unchanged.
-function planProduct(net, p, body, win, tz, now) {
+function planProduct(ctx, net, p, body, win, tz, now) {
   if (!productsOf(net).includes(p)) throw badRequest(`This network has no ${p} devices`);
   const cur = productAt(net, p, now);
   const n = body.nextUpgrade;
@@ -115,11 +130,12 @@ function planProduct(net, p, body, win, tz, now) {
       if (cur.next?.to === to) {
         if (time != null) cur.next.time = time;
       } else if (to === cur.at) {
-        cur.next = null;
+        cancelNext(cur, now);
       } else if (to < cur.at) {
         throw badRequest(`'${id}' is older than the current ${p} firmware; use POST ${BASE.replace('{networkId}', net.id)}/rollbacks`);
       } else {
-        cur.next = { time: time ?? nextWindow(win, tz, now), to };
+        cancelNext(cur, now);
+        cur.next = newUpgrade(ctx, net, { time: time ?? nextWindow(win, tz, now), to });
         if (p === 'wireless') Object.assign(cur.next, { strategy: 'minimizeUpgradeTime', predownload: false });
       }
     } else if (time != null) {
@@ -143,7 +159,7 @@ function updateFirmware(ctx) {
   if (b.upgradeWindow?.dayOfWeek) win.dayOfWeek = b.upgradeWindow.dayOfWeek.slice(0, 3);
   if (b.upgradeWindow?.hourOfDay) win.hourOfDay = b.upgradeWindow.hourOfDay;
   const tz = b.timezone ?? zoneOf(net);
-  const plans = Object.entries(b.products ?? {}).map(([p, body]) => [p, planProduct(net, p, body, win, tz, ctx.now)]);
+  const plans = Object.entries(b.products ?? {}).map(([p, body]) => [p, planProduct(ctx, net, p, body, win, tz, ctx.now)]);
   const state = stateOf(net);
   state.window = win;
   state.timezone = tz;
@@ -168,15 +184,17 @@ function createRollback(ctx) {
   const time = b.time ? timeOf(b.time, 'time') : ctx.now;
   if (time < ctx.now) throw badRequest("'time' must not be in the past");
   const predownload = b.predownload?.enabled ?? false;
-  cur.next = { time, to };
-  if (p === 'wireless') Object.assign(cur.next, { strategy: 'minimizeUpgradeTime', predownload });
   const state = stateOf(net);
-  state.products[p] = cur;
   state.rollbacks++;
+  const batchId = newRand(ctx, 'firmwareRollback', net.id, state.rollbacks).digits(18);
+  cancelNext(cur, ctx.now);
+  cur.next = { ...newUpgrade(ctx, net, { time, to }), batchId };
+  if (p === 'wireless') Object.assign(cur.next, { strategy: 'minimizeUpgradeTime', predownload });
+  state.products[p] = cur;
   return {
     product: p,
     status: time > ctx.now ? 'pending' : 'completed',
-    upgradeBatchId: newRand(ctx, 'firmwareRollback', net.id, state.rollbacks).digits(18),
+    upgradeBatchId: batchId,
     time: iso(time),
     toVersion: version(p, to),
     reasons: b.reasons.map(({ category, comment }) => ({ category, comment })),
@@ -362,7 +380,7 @@ function createEvent(ctx) {
   const to = versionIndex('switch', id);
   if (to < 0) throw badRequest(`'${id}' is not one of the switch firmware versions`);
   if (to <= productAt(net, 'switch', ctx.now).at) throw badRequest(`'${id}' is not newer than the switch firmware this network runs`);
-  staged.event = { to, reasons: [], stages: parseStages(net, staged, b.stages) };
+  staged.event = { ...newUpgrade(ctx, net, {}), from: productAt(net, 'switch', ctx.now).at, to, reasons: [], stages: parseStages(net, staged, b.stages) };
   return eventJson(staged, ctx.now);
 }
 
@@ -403,11 +421,124 @@ function rollbackEvent(ctx) {
   }
   const canceled = e.stages.filter((s) => s.canceledAt == null && s.time > ctx.now).map((s) => ({ ...s, canceledAt: ctx.now }));
   const reasons = (ctx.body.reasons ?? []).map(({ category, comment }) => ({ category, comment }));
-  staged.event = { to: productAt(net, 'switch', ctx.now).at, reasons, stages: [...stages, ...canceled] };
+  staged.event = { ...newUpgrade(ctx, net, {}), from: e.to, to: productAt(net, 'switch', ctx.now).at, reasons, stages: [...stages, ...canceled] };
   return eventJson(staged, ctx.now);
 }
 
+// ── Organization views ──
+
+const STATUS = { canceled: 'Cancelled', completed: 'Completed', scheduled: 'Scheduled', started: 'Started' };
+const utc = (t) => iso(t).replace('T', ' ').replace('Z', ' UTC');
+
+// Every upgrade of one product in a network, scheduled ones included. The
+// seeded upgrade gets its IDs from the network and product.
+function upgradesOf(ctx, net, p) {
+  const cur = productAt(net, p, ctx.now);
+  const r = newRand(ctx, 'firmwareUpgrade', net.id, `${p}:seeded`);
+  const seeded = { id: r.digits(18), batchId: r.digits(18) };
+  const list = [...cur.history, cur.last].map((u) => (u.id ? u : { ...u, ...seeded }));
+  if (cur.next) list.push({ ...cur.next, from: cur.at });
+  return list.map((u) => ({ ...u, product: p, status: u.canceledAt != null ? 'canceled' : u.time <= ctx.now ? 'completed' : 'scheduled' }));
+}
+
+const newestFirst = (a, b) => b.time - a.time || (a.id < b.id ? -1 : 1);
+
+function orgUpgrades(ctx) {
+  const org = orgOf(ctx);
+  const statuses = arrayParam(ctx.query, 'status').map((x) => x.toLowerCase());
+  const products = arrayParam(ctx.query, 'productTypes');
+  const rows = [];
+  for (const net of org.networks) {
+    for (const p of productsOf(net)) {
+      if (products.length && !products.includes(p)) continue;
+      for (const u of upgradesOf(ctx, net, p)) {
+        if (statuses.length && !statuses.includes(u.status) && !statuses.includes(STATUS[u.status].toLowerCase())) continue;
+        rows.push({ net, u });
+      }
+    }
+  }
+  rows.sort((a, b) => newestFirst(a.u, b.u));
+  return paginate(ctx, rows, (r) => r.u.id, { def: 1000, max: 1000 }).map(({ net, u }) => ({
+    upgradeId: u.id,
+    upgradeBatchId: u.batchId,
+    network: { id: net.id, name: net.name },
+    status: STATUS[u.status],
+    time: iso(u.time),
+    completedAt: u.status === 'completed' ? utc(u.time) : null,
+    productTypes: u.product,
+    toVersion: version(u.product, u.to),
+    fromVersion: version(u.product, u.from),
+  }));
+}
+
+// A switch's part in the network's staged upgrade event, if it has one.
+function stagedUpgrade(net, dev, now) {
+  const e = net.stagedUpgrades?.event;
+  if (!e) return null;
+  const s = e.stages.find((x) => x.group.devices.includes(dev) || x.group.stacks.some((st) => st.members.includes(dev)));
+  if (!s) return null;
+  const status = s.canceledAt != null ? 'canceled' : now >= s.time + STAGE_TIME ? 'completed' : now >= s.time ? 'started' : 'scheduled';
+  return { id: e.id, batchId: e.batchId, time: s.time, end: s.time + STAGE_TIME, from: e.from, to: e.to, product: 'switch', status, group: s.group.id };
+}
+
+const PHASES = ['checkin', 'download', 'install', 'verify'];
+const DETAIL = { canceled: 'canceled', completed: 'upgrade-complete', scheduled: 'scheduled' };
+
+// Check-in, download, install and verify each take a quarter of the run.
+// Upgrades outside a staged event take no time, as in the network view.
+function deviceUpgradeJson(dev, u, now) {
+  const end = u.end ?? u.time;
+  const q = (end - u.time) / 4;
+  const row = { serial: dev.serial, name: dev.name, deviceStatus: u.status };
+  let current = null;
+  for (const [i, ph] of PHASES.entries()) {
+    const a = u.time + i * q;
+    const b = a + q;
+    const live = u.status !== 'canceled';
+    if (live && now >= a && now < b && !current) current = ph;
+    row[`${ph}FinishedAt`] = live && now >= b ? iso(b) : null;
+    row[`${ph}StartedAt`] = live && now >= a ? iso(a) : null;
+    if (i === 0) row.detailedStatus = null;
+    if (ph !== 'checkin') row[`${ph}Status`] = !live ? 'canceled' : now >= b ? 'complete' : now >= a ? 'in-progress' : 'pending';
+  }
+  row.detailedStatus = DETAIL[u.status] ?? `${current ?? 'verify'}-in-progress`;
+  const ver = (i) => {
+    const { id, shortName, releaseDate } = version(u.product, i);
+    return { id, shortName, releaseDate };
+  };
+  row.upgrade = { time: iso(u.time), fromVersion: ver(u.from), toVersion: ver(u.to), status: STATUS[u.status], id: u.id, upgradeBatchId: u.batchId };
+  if (u.group) row.upgrade.staged = { group: { id: u.group } };
+  return row;
+}
+
+function upgradesByDevice(ctx) {
+  const org = orgOf(ctx);
+  const q = ctx.query;
+  const batches = arrayParam(q, 'firmwareUpgradeBatchIds');
+  const statuses = arrayParam(q, 'upgradeStatuses');
+  for (const st of statuses) if (!STATUS[st]) throw badRequest(`'upgradeStatuses' must be one of: ${Object.keys(STATUS).join(', ')}`);
+  const current = boolParam(q, 'currentUpgradesOnly');
+  const limit = intParam(q, 'limitPerDevice', 5, { min: 1, max: 1000 });
+  const devices = filterDevices(q, org.devices)
+    .filter((d) => d.productType === 'switch' || d.productType === 'wireless')
+    .sort(bySerial);
+  const rows = [];
+  for (const dev of devices) {
+    const list = upgradesOf(ctx, dev.net, dev.productType);
+    const staged = dev.productType === 'switch' ? stagedUpgrade(dev.net, dev, ctx.now) : null;
+    if (staged) list.push(staged);
+    const keep = list
+      .filter((u) => (!batches.length || batches.includes(u.batchId)) && (!statuses.length || statuses.includes(u.status)) && (!current || u.status === 'scheduled' || u.status === 'started'))
+      .sort(newestFirst)
+      .slice(0, limit);
+    for (const u of keep) rows.push({ dev, u });
+  }
+  return paginate(ctx, rows, (r) => `${r.dev.serial}_${r.u.id}`, { def: 50, max: 1000 }).map(({ dev, u }) => deviceUpgradeJson(dev, u, ctx.now));
+}
+
 export default [
+  { op: 'getOrganizationFirmwareUpgrades', path: '/organizations/{organizationId}/firmware/upgrades', handler: orgUpgrades },
+  { op: 'getOrganizationFirmwareUpgradesByDevice', path: '/organizations/{organizationId}/firmware/upgrades/byDevice', handler: upgradesByDevice },
   { op: 'getNetworkFirmwareUpgrades', path: BASE, handler: (ctx) => firmwareJson(netOf(ctx), ctx.now) },
   { op: 'updateNetworkFirmwareUpgrades', method: 'PUT', path: BASE, handler: updateFirmware },
   { op: 'createNetworkFirmwareUpgradesRollback', method: 'POST', path: `${BASE}/rollbacks`, status: 200, handler: createRollback },

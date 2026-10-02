@@ -52,6 +52,8 @@ const CONDITIONAL = [
   [/^\.products\.(cellularGateway|sensor|wirelessController|campusGateway|secureConnect)$|\.nextUpgrade\.(toVersion\.|strategy|predownload)/, 'getNetworkFirmwareUpgrades', 'other products, or a scheduled upgrade'],
   [/^\.products\.(switch|switchCatalyst)$/, 'getNetworkFirmwareUpgradesStagedEvents', 'a staged upgrade event (networks start with none), or Catalyst switches'],
   [/\.encryption\.certificate$/, 'getOrganizationDevicesSyslogServersByNetwork', 'encrypted syslog servers (the seeded ones are plain UDP)'],
+  [/^\[\]\.destinations\.(push|sms)$/, 'getNetworkAlertsHistory', 'alerts sent to all admins or to SMS numbers (seeded settings use neither)'],
+  [/^\[\]\.upgrade\.staged$/, 'getOrganizationFirmwareUpgradesByDevice', 'a staged upgrade event (networks start with none)'],
 ];
 
 function conditional(op, field) {

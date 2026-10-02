@@ -66,9 +66,9 @@ function assignNetworks(ctx) {
   return { networkIds: ids };
 }
 
-// Status counts, clients and usage over the last seven days for each group.
-function groupOverview(org, g, now) {
-  const nets = org.networks.filter((n) => g.networkIds.includes(n.id));
+// Status counts, clients and usage over the last seven days for a set of
+// networks. Also used by the top networks by status summary.
+export function statusOverview(nets, now) {
   const productTypes = [...new Set(nets.flatMap((n) => n.productTypes))];
   const t0 = now - 7 * DAY;
   let up = 0;
@@ -87,12 +87,20 @@ function groupOverview(org, g, now) {
   });
   const seen = (s) => byProductType.some((p) => p.counts[s] > 0);
   return {
-    groupId: g.groupId,
-    name: g.name,
     clients: { counts: { total: clients }, usage: { upstream: round(up, 2), downstream: round(down, 2) } },
     statuses: { overall: STATUS_ORDER.find(seen) ?? 'online', byProductType },
     productTypes,
   };
+}
+
+// Worst status first, then by name.
+export const byStatus = (a, b) => STATUS_ORDER.indexOf(a.statuses.overall) - STATUS_ORDER.indexOf(b.statuses.overall) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+
+// The group a network is in, if any. Reading doesn't create the group store.
+export const groupOfNetwork = (org, id) => org.networkGroups?.list.find((g) => g.networkIds.includes(id)) ?? null;
+
+function groupOverview(org, g, now) {
+  return { groupId: g.groupId, name: g.name, ...statusOverview(org.networks.filter((n) => g.networkIds.includes(n.id)), now) };
 }
 
 // ── Moves ──
@@ -225,10 +233,9 @@ export default [
       const org = orgOf(ctx);
       const sortBy = ctx.query.get('sortBy');
       if (sortBy != null && sortBy !== 'status') throw badRequest("'sortBy' must be one of: status");
-      // Worst status first, then by name.
       const rows = groupsOf(org)
         .list.map((g) => groupOverview(org, g, ctx.now))
-        .sort((a, b) => STATUS_ORDER.indexOf(a.statuses.overall) - STATUS_ORDER.indexOf(b.statuses.overall) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+        .sort(byStatus);
       return paginateItems(ctx, rows, (g) => g.groupId, { def: 5000, max: 5000 });
     },
   },

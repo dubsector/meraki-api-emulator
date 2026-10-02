@@ -13,6 +13,16 @@ import { lldpCdp } from './switch.js';
 
 const UPLINKS = ['wan1', 'wan2', 'wan3', 'cellular', 'wan4'];
 
+// An MX's load score over [t0, t1): its WAN throughput against the model's
+// rated throughput, plus a little per client.
+export function perfScore(dev, t0, t1) {
+  const [s, r] = networkTotals(dev.net, t0, t1, [WAN_SENT, WAN_RECV]);
+  const mbps = ((s + r) * 8) / 1000 / (t1 - t0);
+  const clients = dev.net.clients.length;
+  const score = (2 + 100 * (mbps / dev.info.throughput) ** 0.6 + clients / 40) * lognoise(dev.key, Math.floor(t1 / 300), 0.08);
+  return round(Math.min(100, score), 1);
+}
+
 function deviceClients(dev) {
   const net = dev.net;
   if (dev.productType === 'wireless') return net.clients.filter((c) => !c.wired && c.ap === dev);
@@ -117,11 +127,7 @@ export default [
       const dev = devOf(ctx);
       requireModel(dev, 'appliance');
       const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 14 * DAY, minSpan: 30 * MIN, defaultSpan: 30 * MIN, lookback: 30 * DAY });
-      const [s, r] = networkTotals(dev.net, t0, t1, [WAN_SENT, WAN_RECV]);
-      const mbps = ((s + r) * 8) / 1000 / (t1 - t0);
-      const clients = dev.net.clients.length;
-      const score = (2 + 100 * (mbps / dev.info.throughput) ** 0.6 + clients / 40) * lognoise(dev.key, Math.floor(t1 / 300), 0.08);
-      return { perfScore: round(Math.min(100, score), 1) };
+      return { perfScore: perfScore(dev, t0, t1) };
     },
   },
   {
