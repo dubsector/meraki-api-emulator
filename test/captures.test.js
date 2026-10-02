@@ -115,7 +115,9 @@ describe('packet captures', () => {
 
     assert.match(await errorOf(sb.del(`${S}/${weekly.scheduleId}`, { body: { scheduleId: daily.scheduleId } })), /must match/);
     assert.equal((await sb.del(`${S}/${weekly.scheduleId}`, { body: { scheduleId: weekly.scheduleId } })).status, 204);
-    assert.equal((await sb.get(S)).body.items.length, 3);
+    // The Python SDK sends this delete with no body, taking the ID from the path.
+    assert.equal((await sb.del(`${S}/${ended.scheduleId}`)).status, 204);
+    assert.equal((await sb.get(S)).body.items.length, 2);
   });
 });
 
