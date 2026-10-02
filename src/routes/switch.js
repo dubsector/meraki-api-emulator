@@ -73,6 +73,9 @@ export function peerConnected(port, now) {
   return c ? isOnline(c, now) : false;
 }
 
+// A speed like '2.5 Gbps' in Mbps.
+export const speedMbps = (speed) => parseFloat(speed) * (speed.endsWith('Gbps') ? 1000 : 1);
+
 export function portSpeed(sw, port) {
   const peer = port.peer?.device;
   if (port.uplinkPort) {

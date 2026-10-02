@@ -123,6 +123,7 @@ export function paginate(ctx, items, keyOf, opts) {
   const before = q.get('endingBefore');
   const find = (token) => items.findIndex((x) => keyOf(x) === token);
   let start;
+  let end;
   if (after != null && after !== FIRST && after !== '0') {
     const i = find(after);
     // Unknown cursor: fall back to ordering, which holds for ID-sorted lists.
@@ -130,15 +131,16 @@ export function paginate(ctx, items, keyOf, opts) {
     start = j >= 0 ? j : items.length;
   } else if (before != null) {
     const i = before === LAST || before === '0' ? items.length : find(before);
-    const end = i >= 0 ? i : items.length;
+    // A page before the cursor stops at it, so the first page can be short.
+    end = i >= 0 ? i : items.length;
     start = Math.max(0, end - perPage);
   } else {
     start = 0;
   }
-  const page = items.slice(start, start + perPage);
+  const page = items.slice(start, end ?? start + perPage);
   const links = [['first', { startingAfter: FIRST }]];
   if (start > 0 && page.length) links.push(['prev', { endingBefore: keyOf(page[0]) }]);
-  if (start + perPage < items.length && page.length) links.push(['next', { startingAfter: keyOf(page[page.length - 1]) }]);
+  if (start + page.length < items.length && page.length) links.push(['next', { startingAfter: keyOf(page[page.length - 1]) }]);
   links.push(['last', { endingBefore: LAST }]);
   ctx.headers.Link = linkHeader(ctx, perPage, links);
   return page;

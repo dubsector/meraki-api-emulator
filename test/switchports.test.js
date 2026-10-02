@@ -72,6 +72,13 @@ describe('switch and appliance port views', () => {
     assert.equal(long.status, 200);
     const day = (await sb.get(`${O}/switch/ports/overview`)).body;
     assert.ok(long.body.counts.byStatus.active.total >= day.counts.byStatus.active.total);
+
+    // A switch that was offline the whole window reports no ports.
+    const sw = switches()[0];
+    Object.assign(sw, { dormant: true, dormantSince: Date.parse(NOW) / 1000 - 2 * 86400 });
+    const off = (await sb.get(`${O}/switch/ports/overview`)).body.counts;
+    assert.equal(off.total, day.counts.total - sw.ports.length);
+    assert.equal((await sb.get(`${O}/switch/ports/overview?timespan=${3 * 86400}`)).body.counts.total, day.counts.total);
   });
 
   test('client counts match the port statuses for the same window', async () => {

@@ -339,6 +339,15 @@ function failedConnections(ctx) {
 
 // ── Organization-wide ──
 
+// Wireless networks in the org, narrowed by networkIds and networkGroupIds.
+export function wirelessNets(ctx) {
+  const org = orgOf(ctx);
+  const ids = arrayParam(ctx.query, 'networkIds');
+  const groupIds = arrayParam(ctx.query, 'networkGroupIds');
+  const inGroup = (net) => (org.networkGroups?.list ?? []).some((g) => groupIds.includes(g.groupId) && g.networkIds.includes(net.id));
+  return org.networks.filter((n) => n.productTypes.includes('wireless') && (!ids.length || ids.includes(n.id)) && (!groupIds.length || inGroup(n)));
+}
+
 export function orgAps(ctx) {
   const networkIds = arrayParam(ctx.query, 'networkIds');
   const serials = arrayParam(ctx.query, 'serials');

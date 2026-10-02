@@ -92,6 +92,16 @@ describe('organization summaries', () => {
     assert.match(await errorOf(sb.get(`${O}/summary/top/devices/models/byUsage?timespan=3600`)), /28800/);
   });
 
+  test('device tops keep the devices with deviceTag', async () => {
+    fresh();
+    const lobby = org.devices.find((d) => d.tags.includes('lobby'));
+    assert.deepEqual((await sb.get(`${O}/summary/top/devices/byUsage?deviceTag=lobby`)).body.map((d) => d.serial), [lobby.serial]);
+    assert.deepEqual((await sb.get(`${O}/summary/top/devices/models/byUsage?deviceTag=lobby`)).body.map((m) => [m.model, m.count]), [[lobby.model, 1]]);
+    assert.equal((await sb.get(`${O}/summary/top/appliances/byUtilization?deviceTag=edge`)).body.length, 5);
+    assert.deepEqual((await sb.get(`${O}/summary/top/appliances/byUtilization?deviceTag=lobby`)).body, []);
+    assert.deepEqual((await sb.get(`${O}/summary/top/switches/byEnergyUsage?deviceTag=edge`)).body, []);
+  });
+
   test('networks by status match device statuses and network groups', async () => {
     fresh();
     const rows = (await sb.get(`${O}/summary/top/networks/byStatus`)).body;
@@ -169,7 +179,9 @@ describe('organization summaries', () => {
     assert.equal(rows.length, 288);
     const nets = await Promise.all(org.networks.map(async (n) => (await sb.get(`/networks/${n.id}/clients/bandwidthUsageHistory?perPage=1000`)).body));
     for (const [i, r] of rows.entries()) {
-      for (const k of ['upstream', 'downstream']) close(r[k], sum(nets.map((n) => n[i][k])), 0.001, `${r.ts} ${k}`);
+      // Whole Mbps, as the spec types them.
+      for (const k of ['total', 'upstream', 'downstream']) assert.ok(Number.isInteger(r[k]), `${r.ts} ${k}`);
+      for (const k of ['upstream', 'downstream']) close(r[k], sum(nets.map((n) => n[i][k])), 0.5, `${r.ts} ${k}`);
       assert.equal(r.ts, nets[0][i].ts);
     }
     const week = (await sb.get(`${O}/clients/bandwidthUsageHistory?timespan=${7 * 86400}`)).body;

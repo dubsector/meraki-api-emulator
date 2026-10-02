@@ -1,12 +1,12 @@
 import { configOf, exportedSubnets } from '../config.js';
 import { deviceJson, networkJson, networkRef, orgJson } from '../format.js';
-import { arrayParam, badRequest, hasTags, intParam, notFound, paginate, paginateItems, timeWindow } from '../http.js';
+import { arrayParam, badRequest, hasTags, notFound, paginate, paginateItems, timeWindow } from '../http.js';
 import { linkAverage, linkSample, pathLatency, vpnReachable } from '../sim/links.js';
 import { memorySamples, ramKb } from '../sim/memory.js';
 import { deviceStatus, lastReportedAt, statusChanges, uplinkStatus } from '../sim/outages.js';
 import { presenceIn } from '../sim/presence.js';
-import { trafficRows, uplinkBytes } from '../sim/traffic.js';
-import { WAN_RECV, WAN_SENT, WD_RECV, WD_SENT, WL_RECV, WL_SENT, clientUsage, networkTotals } from '../sim/usage.js';
+import { uplinkBytes } from '../sim/traffic.js';
+import { WAN_RECV, WAN_SENT, WD_RECV, WD_SENT, WL_RECV, WL_SENT, networkTotals } from '../sim/usage.js';
 import { DAY, HOUR, MIN, iso, isoMicro } from '../time.js';
 import { validTimeZone } from '../validate.js';
 import { addNetwork, addOrganization, removeOrganization } from '../world.js';
@@ -30,8 +30,6 @@ function createNetwork(ctx) {
   if (source) net.config = JSON.parse(JSON.stringify(configOf(source)).replaceAll(source.id, net.id));
   return networkJson(net);
 }
-
-export const MB = 1024;
 
 // The address the cloud sees a device on: its MX's WAN 1, or a stand-in without an MX.
 function publicIpOf(d) {
@@ -211,41 +209,6 @@ function vpnPeerStats(local, peer, t0, t1) {
     jitterSummaries: [{ ...pair, avgJitter: round(jitter, 2), minJitter: round(jitter * 0.2, 2), maxJitter: round(jitter * 4 + 2, 2) }],
     mosSummaries: [{ ...pair, avgMos: round(mos, 1), minMos: round(Math.max(1, mos - 0.6), 1), maxMos: round(Math.min(4.5, mos + 0.1), 1) }],
   };
-}
-
-// Usage in MB for top-N summaries, over the networks a query selects.
-export function summaryNetworks(ctx, org) {
-  const q = ctx.query;
-  const networkId = q.get('networkId');
-  const networkTag = q.get('networkTag');
-  return org.networks.filter((n) => (!networkId || n.id === networkId) && (!networkTag || n.tags.includes(networkTag)));
-}
-
-export function deviceUsage(dev, t0, t1) {
-  const net = dev.net;
-  if (dev.productType === 'appliance') {
-    const [s, r] = networkTotals(net, t0, t1, [WAN_SENT, WAN_RECV]);
-    return { kb: s + r, clients: net.clients };
-  }
-  if (dev.productType === 'wireless') {
-    const clients = net.clients.filter((c) => c.ap === dev && !c.wired);
-    let kb = 0;
-    for (const c of clients) {
-      const u = clientUsage(c, t0, t1);
-      kb += u.sent + u.recv;
-    }
-    return { kb, clients };
-  }
-  if (dev.productType === 'switch') {
-    const clients = net.clients.filter((c) => c.switchPort?.switch === dev || (c.ap?.switchPort?.switch === dev));
-    let kb = 0;
-    for (const c of clients) {
-      const u = clientUsage(c, t0, t1);
-      kb += u.sent + u.recv;
-    }
-    return { kb, clients };
-  }
-  return { kb: 0, clients: [] };
 }
 
 export default [
@@ -536,90 +499,6 @@ export default [
       }
       const total = Math.round(up + down);
       return { usage: { overall: { total, downstream: Math.round(down), upstream: Math.round(up) }, average: count ? round(total / count, 2) : 0 }, counts: { total: count } };
-    },
-  },
-  {
-    op: 'getOrganizationSummaryTopApplicationsByUsage',
-    path: '/organizations/{organizationId}/summary/top/applications/byUsage',
-    handler: (ctx) => {
-      const org = orgOf(ctx);
-      const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 186 * DAY, minSpan: 25 * MIN });
-      const quantity = intParam(ctx.query, 'quantity', 10, { min: 1, max: 50 });
-      const totals = new Map();
-      for (const n of summaryNetworks(ctx, org)) {
-        for (const row of trafficRows(n, t0, t1)) {
-          const t = totals.get(row.application) || { application: row.application, downstream: 0, upstream: 0 };
-          t.downstream += row.recv / MB;
-          t.upstream += row.sent / MB;
-          totals.set(row.application, t);
-        }
-      }
-      const rows = [...totals.values()].map((t) => ({ ...t, total: t.downstream + t.upstream }));
-      const sum = rows.reduce((a, r) => a + r.total, 0) || 1;
-      return rows
-        .sort((a, b) => b.total - a.total)
-        .slice(0, quantity)
-        .map((r) => ({ application: r.application, total: round(r.total, 1), downstream: round(r.downstream, 1), upstream: round(r.upstream, 1), percentage: round((r.total / sum) * 100, 4) }));
-    },
-  },
-  {
-    op: 'getOrganizationSummaryTopClientsByUsage',
-    path: '/organizations/{organizationId}/summary/top/clients/byUsage',
-    handler: (ctx) => {
-      const org = orgOf(ctx);
-      const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 186 * DAY, minSpan: 8 * HOUR });
-      const quantity = intParam(ctx.query, 'quantity', 10, { min: 1, max: 50 });
-      const ssidName = ctx.query.get('ssidName');
-      const rows = [];
-      for (const n of summaryNetworks(ctx, org)) {
-        for (const c of n.clients) {
-          if (ssidName && c.ssid?.name !== ssidName) continue;
-          const u = clientUsage(c, t0, t1);
-          if (u.sent + u.recv > 0) rows.push({ c, up: u.sent / MB, down: u.recv / MB });
-        }
-      }
-      const sum = rows.reduce((a, r) => a + r.up + r.down, 0) || 1;
-      return rows
-        .sort((a, b) => b.up + b.down - (a.up + a.down))
-        .slice(0, quantity)
-        .map(({ c, up, down }) => ({
-          name: c.description || c.mac,
-          mac: c.mac,
-          id: c.id,
-          network: { name: c.net.name, id: c.net.id },
-          usage: { total: round(up + down, 1), upstream: round(up, 1), downstream: round(down, 1), percentage: round(((up + down) / sum) * 100, 4) },
-        }));
-    },
-  },
-  {
-    op: 'getOrganizationSummaryTopDevicesByUsage',
-    path: '/organizations/{organizationId}/summary/top/devices/byUsage',
-    handler: (ctx) => {
-      const org = orgOf(ctx);
-      const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 186 * DAY, minSpan: 8 * HOUR });
-      const quantity = intParam(ctx.query, 'quantity', 10, { min: 1, max: 50 });
-      const nets = new Set(summaryNetworks(ctx, org));
-      const rows = org.devices
-        .filter((d) => nets.has(d.net) && d.productType !== 'camera')
-        .map((d) => {
-          const u = deviceUsage(d, t0, t1);
-          const seen = u.clients.filter((c) => presenceIn(c, t0, t1)).length;
-          return { d, mb: u.kb / MB, seen };
-        });
-      const sum = rows.reduce((a, r) => a + r.mb, 0) || 1;
-      return rows
-        .sort((a, b) => b.mb - a.mb)
-        .slice(0, quantity)
-        .map(({ d, mb, seen }) => ({
-          name: d.name,
-          model: d.model,
-          serial: d.serial,
-          mac: d.mac,
-          productType: d.productType,
-          network: { name: d.net.name, id: d.net.id },
-          usage: { total: round(mb, 1), percentage: round((mb / sum) * 100, 4) },
-          clients: { counts: { total: seen } },
-        }));
     },
   },
 ];

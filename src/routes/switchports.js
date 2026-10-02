@@ -10,7 +10,7 @@ import { eachSession, presenceIn } from '../sim/presence.js';
 import { buckets } from '../sim/usage.js';
 import { DAY, iso } from '../time.js';
 import { bySerial, netOf, orgOf, requireProduct, round } from './common.js';
-import { neighbor, orgSwitches, portSpeed, portTraffic, switchHeader, upSeconds } from './switch.js';
+import { neighbor, orgSwitches, portSpeed, portTraffic, speedMbps, switchHeader, upSeconds } from './switch.js';
 
 const RJ45 = [10, 100, 1000, 2500, 5000, 10000];
 const SFP = [100, 1000, 10000, 20000, 25000, 40000, 50000, 100000];
@@ -37,8 +37,6 @@ function lastConnected(port, t0, t1) {
   return p ? p.last : null;
 }
 
-const mbps = (speed) => parseFloat(speed) * (speed.endsWith('Gbps') ? 1000 : 1);
-
 function portsOverview(ctx) {
   const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 186 * DAY, minSpan: 12 * 3600 });
   const zeros = (keys) => Object.fromEntries([...keys.map((k) => [k, 0]), ['total', 0]]);
@@ -46,6 +44,8 @@ function portsOverview(ctx) {
   const inactive = { rj45: { total: 0 }, sfp: { total: 0 } };
   let total = 0;
   for (const sw of orgOf(ctx).devices.filter((d) => d.productType === 'switch')) {
+    // Only switches online at some point in the window report their ports.
+    if (upSeconds(sw, t0, t1) <= 0) continue;
     for (const port of sw.ports) {
       const media = port.uplinkPort ? 'sfp' : 'rj45';
       total++;
@@ -53,7 +53,7 @@ function portsOverview(ctx) {
         inactive[media].total++;
         continue;
       }
-      const speed = mbps(portSpeed(sw, port));
+      const speed = speedMbps(portSpeed(sw, port));
       if (speed in active[media]) active[media][speed]++;
       active[media].total++;
     }
