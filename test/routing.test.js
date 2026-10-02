@@ -76,6 +76,9 @@ describe('switch layer 3 routing and multicast', () => {
     assert.equal(moved.status, 201);
     assert.equal(moved.body.managementNextHop, '192.0.2.11');
     assert.deepEqual((await sb.get(R)).body, [moved.body]);
+    // The route's next hop needs the interface's subnet.
+    assert.equal(await errorOf(sb.del(one)), 'Change or delete static route 198.51.100.0/24 (next hop 192.0.2.10) before deleting this interface');
+    assert.equal(await errorOf(sb.put(one, { subnet: '192.0.2.0/29', interfaceIp: '192.0.2.2', defaultGateway: '192.0.2.1' })), 'Next hop 192.0.2.10 of static route 198.51.100.0/24 would no longer be in a layer 3 interface subnet');
     assert.equal((await sb.del(`${R}/${route.body.staticRouteId}`)).status, 204);
     assert.equal((await sb.del(one)).status, 204);
     assert.deepEqual((await sb.get(I(core))).body, []);

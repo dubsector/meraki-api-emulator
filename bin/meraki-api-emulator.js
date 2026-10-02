@@ -17,7 +17,7 @@ Options:
       --burst <n>         Requests allowed at once before throttling (default 20)
       --now <time>        Freeze the clock (ISO 8601 or epoch seconds)
       --read-only         Refuse PUT, POST and DELETE with 405
-      --no-webhooks       Record webhook tests and callbacks as delivered without sending them
+      --webhooks          Send webhook tests and callbacks (default: record them as delivered)
   -q, --quiet             Don't log requests
   -h, --help              Show this help
   -v, --version           Show the version
@@ -41,7 +41,7 @@ try {
       burst: { type: 'string' },
       now: { type: 'string' },
       'read-only': { type: 'boolean' },
-      'no-webhooks': { type: 'boolean' },
+      webhooks: { type: 'boolean' },
       quiet: { type: 'boolean', short: 'q' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
@@ -77,7 +77,7 @@ try {
     burst: values.burst ?? env('BURST'),
     now: values.now ?? env('NOW'),
     readOnly: values['read-only'] || env('READ_ONLY'),
-    noWebhooks: values['no-webhooks'] || env('NO_WEBHOOKS'),
+    webhooks: values.webhooks || env('WEBHOOKS'),
     log: quiet ? null : (line) => console.log(`${new Date().toISOString()} ${line}`),
   });
 } catch (e) {
@@ -99,6 +99,7 @@ server.listen(port, host, () => {
     `  API base   ${url}${API_PREFIX}`,
     `  Auth       ${options.apiKey ? 'X-Cisco-Meraki-API-Key must match --api-key' : 'any non-empty X-Cisco-Meraki-API-Key'}`,
     `  Writes     ${options.readOnly ? 'off (--read-only)' : 'on, kept in memory until restart or POST /_emulator/reset'}`,
+    `  Webhooks   ${options.webhooks ? 'sent to the URLs callers give' : 'not sent, recorded as delivered (--webhooks to send them)'}`,
     `  Seed       ${options.seed}${options.now != null ? `, clock frozen at ${new Date(options.now * 1000).toISOString()}` : ''}`,
   ];
   if (options.latency || options.faultRate) lines.push(`  Faults     ${options.latency}ms latency, ${Math.round(options.faultRate * 1e4) / 100}% 5xx`);

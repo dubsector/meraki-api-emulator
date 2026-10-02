@@ -265,6 +265,7 @@ describe('assurance alert profiles', () => {
     assert.match(await bad(body({ networkIds: [lab.networks[0].id] })), /is not in this organization/);
     assert.match(await bad(body({ alertTypes: ['unreachable', 'cosmic_rays'] })), /'cosmic_rays' is not an assurance alert type/);
     assert.match(await bad(body({ name: '  ' })), /must not be empty/);
+    assert.match(await bad(body({ name: null })), /must not be empty/);
     const labHook = await hook(lab.networks[0]);
     assert.match(await bad(body({ configuration: { alertDestinations: { email: { enabled: false }, webhook: { enabled: true, recipients: [labHook.id] } } } })), /does not exist in this organization/);
     assert.match(await bad({ name: 'x', networkIds: [], alertTypes: [] }), /'configuration' is required/);

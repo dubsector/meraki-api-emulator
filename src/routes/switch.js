@@ -192,8 +192,13 @@ export const CUSTOM_POLICY = 'Custom access policy';
 // A switch or profile port on a custom access policy has to name a policy that exists.
 export function checkPortPolicy(config, current, b) {
   const policies = config?.switchAccessPolicies?.list ?? [];
-  if (b.accessPolicyNumber != null && !policies.some((p) => p.number === String(b.accessPolicyNumber))) throw badRequest(`Access policy '${b.accessPolicyNumber}' does not exist in this network`);
-  if (b.accessPolicyType === CUSTOM_POLICY && (b.accessPolicyNumber ?? current.accessPolicyNumber) == null) throw badRequest("'accessPolicyNumber' is required when 'accessPolicyType' is 'Custom access policy'");
+  const missing = (n) => badRequest(`Access policy '${n}' does not exist in this network`);
+  if (b.accessPolicyNumber != null && !policies.some((p) => p.number === String(b.accessPolicyNumber))) throw missing(b.accessPolicyNumber);
+  if (b.accessPolicyType !== CUSTOM_POLICY) return;
+  // A port going back to a custom policy keeps its old number, which may be gone by now.
+  const number = b.accessPolicyNumber ?? current.accessPolicyNumber;
+  if (number == null) throw badRequest("'accessPolicyNumber' is required when 'accessPolicyType' is 'Custom access policy'");
+  if (!policies.some((p) => p.number === String(number))) throw missing(number);
 }
 
 function defaultPortConfig(net, sw, port) {

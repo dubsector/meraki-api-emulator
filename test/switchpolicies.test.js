@@ -142,6 +142,8 @@ describe('switch ACLs, access policies and QoS', () => {
     await ok(sb.put(port(11), { accessPolicyType: 'Open' }));
     assert.equal((await ok(sb.get(`${P}/1`))).counts.ports.withThisPolicy, 0);
     assert.equal((await sb.del(`${P}/1`)).status, 204);
+    // Port 10 still holds number 1, so going back to a custom policy needs one that exists.
+    assert.match(await errorOf(sb.put(port(10), { accessPolicyType: 'Custom access policy' })), /Access policy '1' does not exist/);
   });
 
   test('a bound network reads the template and refuses writes', async () => {

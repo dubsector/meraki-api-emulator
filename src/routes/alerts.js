@@ -250,7 +250,7 @@ export function webhookServers(org) {
 // Every top-level field is required, so an update replaces the whole profile.
 function shapeProfile(ctx, org, profileId) {
   const b = ctx.body;
-  if (!b.name.trim()) throw badRequest("'name' must not be empty");
+  if (!b.name?.trim()) throw badRequest("'name' must not be empty");
   const networkIds = [...new Set(b.networkIds)];
   for (const id of networkIds) if (ctx.world.networkById.get(id)?.org !== org) throw badRequest(`Network ${id} is not in this organization`);
   const alertTypes = [...new Set(b.alertTypes)];

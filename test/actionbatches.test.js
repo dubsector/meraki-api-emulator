@@ -84,7 +84,7 @@ describe('action batches', () => {
   let org;
   let hq;
   let B;
-  before(async () => (sb = await start({ noWebhooks: true })));
+  before(async () => (sb = await start()));
   after(() => sb.close());
   afterEach(() => sb.reset());
   const refresh = () => {
@@ -160,7 +160,12 @@ describe('action batches', () => {
       .filter((u) => u.status === 200 && !/apiRequests|actionBatches|administered/.test(u.url))
       .map((u) => u.url)
       .concat([`/networks/${hq.id}/webhooks/webhookTests/${webhookTest.id}`, `/devices/${sw.serial}/liveTools/ping/${ping.pingId}`, `/networks/${net.id}`]);
-    const read = async () => Promise.all(urls.map(async (u) => JSON.stringify((await sb.get(u)).body)));
+    // One at a time: Windows refuses connections past its accept backlog.
+    const read = async () => {
+      const out = [];
+      for (const u of urls) out.push(JSON.stringify((await sb.get(u)).body));
+      return out;
+    };
     const before = await read();
 
     const r = await sb.post(B, {
@@ -238,7 +243,7 @@ describe('action batch callbacks', () => {
   let sb;
   let hook;
   before(async () => {
-    sb = await start();
+    sb = await start({ webhooks: true });
     hook = await receiver();
   });
   after(async () => {
@@ -300,7 +305,7 @@ describe('action batch callbacks', () => {
 
 describe('action batches on a running clock', () => {
   let sb;
-  before(async () => (sb = await start({ now: null, noWebhooks: true })));
+  before(async () => (sb = await start({ now: null })));
   after(() => sb.close());
 
   test('an asynchronous batch runs a moment after it is confirmed', async () => {
