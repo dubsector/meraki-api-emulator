@@ -1679,7 +1679,51 @@ def globalfirewall():
         check("deleteOrganizationPoliciesGlobalFirewallRuleset drops its rules", o.getOrganizationPoliciesGlobalFirewallRulesets(org)["items"] == [] and o.getOrganizationPoliciesGlobalFirewallRulesetsRules(org)["items"] == [])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall]
+@scenario
+def globalgroups():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o = d.organizations
+        a = d.appliance
+        org = acme(o.getOrganizations())
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        net = nets["HQ - San Francisco"]
+
+        made = [o.createOrganizationPoliciesGlobalGroupPolicy(org, f"Policy {i}", description="d") for i in range(4)]
+        check("createOrganizationPoliciesGlobalGroupPolicy counts group numbers up", [p["group"]["number"] for p in made] == [100, 101, 102, 103], made[0])
+        up = o.updateOrganizationPoliciesGlobalGroupPolicy(org, made[1]["policyId"], name="Lab")
+        listed = o.getOrganizationPoliciesGlobalGroupPolicies(org, total_pages="all", perPage=3)["items"]
+        check("updateOrganizationPoliciesGlobalGroupPolicy, getOrganizationPoliciesGlobalGroupPolicies pages", [p["name"] for p in listed] == ["Policy 0", "Lab", "Policy 2", "Policy 3"] and listed[1] == up, [p["name"] for p in listed])
+        o.deleteOrganizationPoliciesGlobalGroupPolicy(org, made[3]["policyId"])
+        check("deleteOrganizationPoliciesGlobalGroupPolicy", len(o.getOrganizationPoliciesGlobalGroupPolicies(org)["items"]) == 3)
+        pid = made[0]["policyId"]
+
+        groups = d.organizations.getOrganizationAdaptivePolicyGroups(org)
+        ok = o.assignOrganizationPoliciesGlobalGroupPoliciesAdaptivePolicyGroups(org, {"id": pid}, [{"id": g["groupId"]} for g in groups])
+        rows = o.getOrganizationPoliciesGlobalGroupPoliciesAdaptivePolicyGroupsAssignments(org, total_pages="all", perPage=3)["items"]
+        check("assignOrganizationPoliciesGlobalGroupPoliciesAdaptivePolicyGroups, then list", ok == {"success": True} and sorted(r["adaptivePolicyGroupId"] for r in rows) == sorted(g["groupId"] for g in groups), rows)
+        o.removeOrganizationPoliciesGlobalGroupPoliciesAdaptivePolicyGroups(org, {"id": pid}, [{"id": groups[0]["groupId"]}])
+        check("removeOrganizationPoliciesGlobalGroupPoliciesAdaptivePolicyGroups", len(o.getOrganizationPoliciesGlobalGroupPoliciesAdaptivePolicyGroupsAssignments(org)["items"]) == len(groups) - 1)
+
+        vlans = a.getNetworkApplianceVlans(net)
+        a.assignOrganizationPoliciesGlobalGroupPoliciesApplianceVlans(org, {"id": pid}, [{"interfaceId": v["interfaceId"]} for v in vlans[:4]])
+        rows = a.getOrganizationPoliciesGlobalGroupPoliciesApplianceVlansAssignments(org, total_pages="all", perPage=3)["items"]
+        check("assignOrganizationPoliciesGlobalGroupPoliciesApplianceVlans, then list", [r["interfaceId"] for r in rows] == [f"{net}_vlan_{v['id']}" for v in vlans[:4]], rows[:2])
+        a.removeOrganizationPoliciesGlobalGroupPoliciesApplianceVlans(org, {"id": pid}, [{"interfaceId": rows[0]["interfaceId"]}])
+        by = a.getOrganizationPoliciesGlobalGroupPoliciesApplianceVlansAssignmentsByVlan(org, total_pages="all", perPage=3)["items"]
+        mine = [x for x in by if x["network"]["id"] == net]
+        check("removeOrganizationPoliciesGlobalGroupPoliciesApplianceVlans, byVlan agrees with getNetworkApplianceVlans", [x["vlanId"] for x in mine] == [v["id"] for v in vlans] and [x["policy"] and x["policy"]["id"] for x in mine[:4]] == [None, pid, pid, pid], mine[:2])
+
+        rs = o.createOrganizationPoliciesGlobalFirewallRuleset(org, "Rules")
+        x = o.createOrganizationPoliciesGlobalGroupPoliciesFirewallRulesetsAssignment(org, rs["rulesetId"], pid, priority=3)
+        x = o.updateOrganizationPoliciesGlobalGroupPoliciesFirewallRulesetsAssignment(org, x["assignmentId"], priority=2)
+        listed = o.getOrganizationPoliciesGlobalGroupPoliciesFirewallRulesetsAssignments(org, total_pages="all")["items"]
+        check("createOrganizationPoliciesGlobalGroupPoliciesFirewallRulesetsAssignment, then update and list it", listed == [x] and x["priority"] == 2, listed)
+        o.deleteOrganizationPoliciesGlobalGroupPoliciesFirewallRulesetsAssignment(org, x["assignmentId"])
+        check("deleteOrganizationPoliciesGlobalGroupPoliciesFirewallRulesetsAssignment", o.getOrganizationPoliciesGlobalGroupPoliciesFirewallRulesetsAssignments(org)["items"] == [])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

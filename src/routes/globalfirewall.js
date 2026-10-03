@@ -219,12 +219,14 @@ function listRulesets(ctx) {
   return paginateItems(ctx, list, (s) => s.rulesetId, { def: 100, max: 100 }, rulesetJson);
 }
 
-// A ruleset goes with its rules.
+// A ruleset goes with its rules and its group policy assignments.
 function deleteRuleset(ctx) {
   const { parent: org, store: s, item } = rulesets.find(ctx);
   s.list.splice(s.list.indexOf(item), 1);
   const rules = rulesOf(org);
   rules.list = rules.list.filter((r) => r.rulesetId !== item.rulesetId);
+  const a = org.globalGroupPolicyRulesets;
+  if (a) a.list = a.list.filter((r) => r.rulesetId !== item.rulesetId);
 }
 
 // ── Rules ──
