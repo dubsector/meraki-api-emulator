@@ -73,7 +73,16 @@ function* holders(org) {
   for (const t of org.configTemplates?.list ?? []) yield* t.config?.ssids ?? [];
 }
 
-export const usesAdaptivePolicy = (net) => (net.switches ?? []).some((sw) => sw.ports.some((p) => p.config?.adaptivePolicyGroupId != null)) || (net.config?.ssids ?? []).some((s) => s.adaptivePolicyGroupId != null);
+// MX ports name a group as sgt.id in the network's port overrides.
+function* mxPortSgts(org) {
+  const configs = [...org.networks.map((n) => n.config), ...(org.configTemplates?.list ?? []).map((t) => t.config)];
+  for (const c of configs) for (const o of Object.values(c?.portOverrides ?? {})) if (o.sgt?.id != null) yield o.sgt;
+}
+
+export const usesAdaptivePolicy = (net) =>
+  (net.switches ?? []).some((sw) => sw.ports.some((p) => p.config?.adaptivePolicyGroupId != null)) ||
+  (net.config?.ssids ?? []).some((s) => s.adaptivePolicyGroupId != null) ||
+  Object.values(net.config?.portOverrides ?? {}).some((o) => o.sgt?.id != null);
 
 // ── Groups ──
 
@@ -134,8 +143,8 @@ const groups = collection({
   missing: MISSING,
 });
 
-// Policies from or to the group go with it, and ports, SSIDs and
-// organization-wide group policies drop it.
+// Policies from or to the group go with it, and switch and MX ports, SSIDs
+// and organization-wide group policies drop it.
 function deleteGroup(ctx) {
   const { parent: org, store: s, item: g } = groups.find(ctx);
   if (g.isDefaultGroup) throw badRequest(`The ${g.name} group is a default group and cannot be deleted`);
@@ -145,6 +154,7 @@ function deleteGroup(ctx) {
   const a = org.globalGroupPolicyAssignments;
   if (a) a.groups = a.groups.filter((x) => x.groupId !== g.groupId);
   for (const c of holders(org)) if (c.adaptivePolicyGroupId === g.groupId) delete c.adaptivePolicyGroupId;
+  for (const s of mxPortSgts(org)) if (String(s.id) === g.groupId) s.id = null;
 }
 
 // ── ACLs ──

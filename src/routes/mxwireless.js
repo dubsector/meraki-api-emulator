@@ -77,7 +77,8 @@ function profileUser(x, net) {
   const c = configOf(net);
   for (const n of net.org.networks) {
     if (configOf(n) !== c) continue;
-    const dev = n.devices.find((d) => d.applianceRadio?.rfProfileId === x.id);
+    // A W model swapped for one without a radio keeps its settings, unused.
+    const dev = n.devices.find((d) => hasRadio(d) && d.applianceRadio?.rfProfileId === x.id);
     if (dev) return dev;
   }
   return null;

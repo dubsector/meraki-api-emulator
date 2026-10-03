@@ -258,7 +258,8 @@ function orgInterfaces(ctx) {
     .filter((n) => n.productTypes.includes('appliance') && (!ids.length || ids.includes(n.id)))
     .sort(byId)
     .flatMap((n) => (configOf(n).applianceL3Interfaces?.list ?? []).map((x) => ({ x, n })));
-  return paginateItems(ctx, rows, (r) => r.x.interfaceId, { def: 100, max: 1000 }, ({ x, n }) => ({ ...interfaceJson(x), network: { id: n.id } }));
+  // Network copies and bound networks share interface IDs, so the cursor names the network too.
+  return paginateItems(ctx, rows, (r) => `${r.n.id}_${r.x.interfaceId}`, { def: 100, max: 1000 }, ({ x, n }) => ({ ...interfaceJson(x), network: { id: n.id } }));
 }
 
 // ── VRFs ──
