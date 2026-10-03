@@ -104,6 +104,13 @@ describe('client policy views and organization-wide firewall', () => {
     assert.equal((await sb.del(`${F}/rulesets/rules/${a.ruleId}`)).status, 204);
     assert.equal((await sb.del(`${F}/rulesets/rules/${a.ruleId}`)).status, 404);
 
+    // Moving a rule into a full ruleset is refused like creating one there.
+    const store = org.globalFirewallRules;
+    const filler = Array.from({ length: 1999 }, (_, i) => ({ ...store.list.find((r) => r.ruleId === b.ruleId), ruleId: `x${i}`, rulesetId: other.rulesetId }));
+    store.list.push(...filler);
+    assert.match(await errorOf(sb.put(`${F}/rulesets/rules/${b.ruleId}`, { rulesetId: other.rulesetId })), /limited to 2000 rules/);
+    store.list = store.list.filter((r) => !filler.includes(r));
+
     // A ruleset goes with its rules.
     assert.equal((await sb.del(`${F}/rulesets/${set.rulesetId}`)).status, 204);
     assert.deepEqual((await collect(sb.get, `${F}/rulesets/rules`)).map((r) => r.name), ['D']);

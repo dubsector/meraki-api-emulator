@@ -100,6 +100,19 @@ describe('organization-wide group policies', () => {
     assert.equal((await ok(sb.get(`${P}/appliance/vlans/assignments`))).items.length, 0);
   });
 
+  test('an interface ID that several networks share has to be named by network', async () => {
+    fresh();
+    const a = await policy('Production');
+    const austin = org.networks.find((n) => n.name === 'Branch - Austin');
+    const copy = await ok(sb.post(`/organizations/${org.id}/networks`, { name: 'Austin copy', productTypes: ['appliance'], copyFromNetworkId: austin.id }), 201);
+    const [v] = await ok(sb.get(`/networks/${copy.id}/appliance/vlans`));
+    assert.equal(v.interfaceId, (await ok(sb.get(`/networks/${austin.id}/appliance/vlans`)))[0].interfaceId);
+    assert.match(await errorOf(sb.post(`${P}/appliance/vlans/assign`, { policy: { id: a.policyId }, vlans: [{ interfaceId: v.interfaceId }] })), /more than one network/);
+    await ok(sb.post(`${P}/appliance/vlans/assign`, { policy: { id: a.policyId }, vlans: [{ interfaceId: `${copy.id}_vlan_${v.id}` }] }));
+    const rows = (await ok(sb.get(`${P}/appliance/vlans/assignments?interfaceIds[]=${v.interfaceId}`))).items;
+    assert.deepEqual(rows.map((r) => r.interfaceId), [`${copy.id}_vlan_${v.id}`]);
+  });
+
   test('VLAN assignments follow their network through a split and leave with it', async () => {
     fresh();
     const a = await policy('Production');

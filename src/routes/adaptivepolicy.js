@@ -28,6 +28,8 @@ export function groupsOf(org, now) {
 const aclsOf = (org) => (org.adaptivePolicyAcls ??= store(org, 'adaptivePolicyAcl', 10000000, 89999999));
 const policiesOf = (org) => (org.adaptivePolicies ??= store(org, 'adaptivePolicy', 100, 899));
 const settingsOf = (org) => (org.adaptivePolicySettings ??= { enabledNetworks: [] });
+// Deleted networks drop out on read.
+const enabledJson = (org) => ({ enabledNetworks: settingsOf(org).enabledNetworks.filter((id) => org.networks.some((n) => n.id === id)) });
 
 // Builds the default groups before any route reads the organization's stores.
 const parent = (ctx) => {
@@ -290,7 +292,7 @@ function updateSettings(ctx) {
     }
     settingsOf(org).enabledNetworks = [...new Set(ids)];
   }
-  return { enabledNetworks: [...settingsOf(org).enabledNetworks] };
+  return enabledJson(org);
 }
 
 export default [
@@ -300,6 +302,6 @@ export default [
   { op: 'deleteOrganizationAdaptivePolicyGroup', method: 'DELETE', path: `${ORG}/groups/{id}`, handler: deleteGroup },
   { op: 'getOrganizationAdaptivePolicyOverview', path: `${ORG}/overview`, handler: overview },
   ...policies.routes,
-  { op: 'getOrganizationAdaptivePolicySettings', path: `${ORG}/settings`, handler: (ctx) => ({ enabledNetworks: [...settingsOf(orgOf(ctx)).enabledNetworks] }) },
+  { op: 'getOrganizationAdaptivePolicySettings', path: `${ORG}/settings`, handler: (ctx) => enabledJson(orgOf(ctx)) },
   { op: 'updateOrganizationAdaptivePolicySettings', method: 'PUT', path: `${ORG}/settings`, handler: updateSettings },
 ];

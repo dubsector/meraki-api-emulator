@@ -149,6 +149,15 @@ describe('adaptive policy', () => {
     const move = await ok(sb.post(`/organizations/${org.id}/networks/moves`, { network: { id: austin.id }, organizations: { target: { id: dest.id } } }), 201);
     assert.equal(move.result.status, 'completed');
     assert.deepEqual((await ok(sb.get(S))).enabledNetworks, [hq.id]);
+
+    // A split keeps it on for the switch, wireless and appliance parts, not the cameras.
+    const parts = (await ok(sb.post(`/networks/${hq.id}/split`))).resultingNetworks;
+    const tagging = parts.filter((n) => !n.productTypes.includes('camera')).map((n) => n.id);
+    assert.equal(tagging.length, 3);
+    assert.deepEqual((await ok(sb.get(S))).enabledNetworks, tagging);
+    // A deleted network leaves it too.
+    assert.equal((await sb.del(`/networks/${tagging[0]}`)).status, 204);
+    assert.deepEqual((await ok(sb.get(S))).enabledNetworks, tagging.slice(1));
   });
 
   test('switch ports and SSIDs name a group, which leaves them when deleted', async () => {
