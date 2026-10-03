@@ -101,12 +101,14 @@ export const round = (v, d = 0) => Math.round(v * 10 ** d) / 10 ** d;
 //   store     (parent) => its { created, list } store
 //   what      the item in messages ('MQTT broker'); `plural` if not what + 's'
 //   kind      the newId kind; `key` the items' ID field (default 'id')
+//   nextId    (ctx, store, parent) => a new item's ID, in place of newId
 //   max       the most items a parent can hold
 //   required  body fields a create must have (null counts as missing)
 //   unique    false when names may repeat; `scope` is 'network' or 'organization'
 //   check     (ctx, parent, body, self) => other body checks; self is null on create
 //   blank     (ctx, parent) => a new item's fields before the body is applied
-//   apply     (item, body, parent) => copies the body onto an item
+//   apply     (item, body, parent, ctx) => copies the body onto an item, which
+//             already has its ID
 //   json      (item, parent) => the item as the API returns it
 //   inUse     (item, parent) => why it can't be deleted, or nothing
 //   missing   the get route's sample (an unknown ID and status 404)
@@ -143,9 +145,8 @@ export function collection(c) {
       if (store.list.length >= c.max) throw badRequest(`${parents} are limited to ${c.max} ${plural} in the emulator`);
       for (const k of c.required ?? []) if (b[k] == null) throw badRequest(`'${k}' is required`);
       checkBody(ctx, parent, store, b, null);
-      const x = { [key]: null, ...c.blank(ctx, parent) };
-      c.apply(x, b, parent);
-      x[key] = newId(ctx, store, c.kind, parent.id, key);
+      const x = { [key]: c.nextId ? c.nextId(ctx, store, parent) : newId(ctx, store, c.kind, parent.id, key), ...c.blank(ctx, parent) };
+      c.apply(x, b, parent, ctx);
       store.list.push(x);
       return c.json(x, parent);
     },
@@ -156,7 +157,7 @@ export function collection(c) {
     update: (ctx) => {
       const { parent, store, item: x } = find(ctx);
       checkBody(ctx, parent, store, ctx.body, x);
-      c.apply(x, ctx.body, parent);
+      c.apply(x, ctx.body, parent, ctx);
       return c.json(x, parent);
     },
     delete: (ctx) => {
