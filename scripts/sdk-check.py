@@ -1260,7 +1260,58 @@ def switchdhcp():
         check("deleteNetworkSwitchPortSchedule", s.getNetworkSwitchPortSchedules(hq) == [])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp]
+@scenario
+def wirelessradio():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o = d.organizations
+        w = d.wireless
+        org = acme(o.getOrganizations())
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        hq, reno = nets["HQ - San Francisco"], nets["Warehouse - Reno"]
+        aps = sorted(x["serial"] for x in o.getOrganizationDevices(org, total_pages=-1, productTypes=["wireless"]))
+        ap = sorted(x["serial"] for x in o.getOrganizationDevices(org, networkIds=[hq], productTypes=["wireless"]))[0]
+
+        before = w.getDeviceWirelessRadioOverrides(ap)
+        check("getDeviceWirelessRadioOverrides", [r["band"] for r in before["radios"]] == ["2.4", "5", "6"] and before["radios"][1]["channel"] is None, before)
+        o1 = w.updateDeviceWirelessRadioOverrides(ap, radios=[{"index": "1", "channel": 149, "channelWidth": 80, "targetPower": 17}, {"index": "2", "enabled": False}])
+        settings = w.getDeviceWirelessRadioSettings(ap)
+        check("updateDeviceWirelessRadioOverrides", o1["radios"][2]["targetPower"] == -1 and settings["fiveGhzSettings"] == {"channel": 149, "channelWidth": 80, "targetPower": 17}, o1)
+        rows = w.getOrganizationWirelessRadioOverridesByDevice(org, total_pages=-1, perPage=3)["items"]
+        check("getOrganizationWirelessRadioOverridesByDevice", [r["serial"] for r in rows] == aps and o1 in rows, len(rows))
+        pages = w.getOrganizationWirelessRfProfilesAssignmentsByDevice(org, models=["MR78"])
+        check("getOrganizationWirelessRfProfilesAssignmentsByDevice", len(pages) == 1 and pages[0]["items"] and all(r["rfProfile"]["isOutdoorDefault"] for r in pages[0]["items"]), pages)
+        # Each page is a one-item array, so the SDK hands back one envelope per page.
+        paged = w.getOrganizationWirelessRfProfilesAssignmentsByDevice(org, total_pages=-1, perPage=3)
+        check("getOrganizationWirelessRfProfilesAssignmentsByDevice pages", [r["serial"] for p in paged for r in p["items"]] == aps, len(paged))
+
+        rrm = w.updateNetworkWirelessRadioRrm(hq, ai={"enabled": True}, fra={"enabled": True}, busyHour={"schedule": {"mode": "manual", "manual": {"start": "09:00", "end": "12:00"}}})
+        check("updateNetworkWirelessRadioRrm", rrm["ai"]["enabled"] and rrm["ai"]["lastEnabledAt"] and rrm["busyHour"]["schedule"]["manual"]["start"] == "09:00", rrm)
+        listed = w.getOrganizationWirelessRadioRrmByNetwork(org, total_pages=-1, perPage=3)["items"]
+        check("getOrganizationWirelessRadioRrmByNetwork", rrm in listed and len(listed) == 5, len(listed))
+        r = w.recalculateOrganizationWirelessRadioAutoRfChannels(org, [hq, reno])
+        check("recalculateOrganizationWirelessRadioAutoRfChannels", r["estimatedCompletedAt"] > EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ"), r)
+
+        scan = w.getNetworkWirelessAirMarshal(reno, timespan=86400)
+        rogue = [x for x in scan if "rogue" in x["types"]]
+        check("getNetworkWirelessAirMarshal", len(rogue) == 1 and rogue[0]["wiredMacs"], scan)
+        rule = w.createNetworkWirelessAirMarshalRule(reno, "block", {"type": "exact", "string": rogue[0]["ssid"]})
+        contained = [x for x in w.getNetworkWirelessAirMarshal(reno, timespan=86400) if x["ssid"] == rogue[0]["ssid"]][0]
+        check("createNetworkWirelessAirMarshalRule", rule["type"] == "block" and all(b["contained"] for b in contained["bssids"]), rule)
+        rule = w.updateNetworkWirelessAirMarshalRule(reno, rule["ruleId"], type="alert")
+        check("updateNetworkWirelessAirMarshalRule", rule["type"] == "alert" and rule["match"]["type"] == "exact", rule)
+        made = [w.createNetworkWirelessAirMarshalRule(hq, "allow", {"type": "contains", "string": f"Neighbor{n}"}) for n in range(4)]
+        all_rules = w.getOrganizationWirelessAirMarshalRules(org, total_pages=-1, perPage=3)["items"]
+        check("getOrganizationWirelessAirMarshalRules", sorted(x["ruleId"] for x in all_rules) == sorted([rule["ruleId"]] + [m["ruleId"] for m in made]), all_rules)
+        w.deleteNetworkWirelessAirMarshalRule(reno, rule["ruleId"])
+        check("deleteNetworkWirelessAirMarshalRule", w.getOrganizationWirelessAirMarshalRules(org, networkIds=[reno])["items"] == [])
+        s = w.updateNetworkWirelessAirMarshalSettings(reno, "allow")
+        by = w.getOrganizationWirelessAirMarshalSettingsByNetwork(org, total_pages=-1, perPage=3)["items"]
+        check("updateNetworkWirelessAirMarshalSettings", s == {"networkId": reno, "defaultPolicy": "allow"} and s in by, s)
+        check("getOrganizationWirelessAirMarshalSettingsByNetwork", len(by) == 5, by)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

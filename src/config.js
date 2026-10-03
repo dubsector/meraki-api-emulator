@@ -64,7 +64,7 @@ const WIRELESS_SETTINGS = new Set(['ssids', 'rfProfiles', 'wirelessSettings', 'i
 export function settingProduct(key) {
   if (APPLIANCE_SETTINGS.has(key) || key.startsWith('appliance')) return 'appliance';
   if (key.startsWith('switch')) return 'switch';
-  if (WIRELESS_SETTINGS.has(key) || key.startsWith('ssid')) return 'wireless';
+  if (WIRELESS_SETTINGS.has(key) || key.startsWith('wireless') || key.startsWith('ssid')) return 'wireless';
   return null;
 }
 
