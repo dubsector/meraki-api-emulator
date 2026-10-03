@@ -324,12 +324,15 @@ const mqttOf = (ctx, net) =>
 
 const brokerOf = (net, pick) => (net.mqttBrokers?.list ?? []).find(pick) ?? null;
 
+// Deleting the broker turns MQTT off, since it can't be on without one.
+const liveBroker = (net, m) => (m.brokerId ? brokerOf(net, (x) => x.id === m.brokerId) : null);
+
 function mqttJson(ctx, net) {
   const m = mqttOf(ctx, net);
-  const broker = m.brokerId && brokerOf(net, (x) => x.id === m.brokerId);
+  const broker = liveBroker(net, m);
   return {
     network: { id: net.id, name: net.name },
-    mqtt: { settingsId: m.settingsId, enabled: m.enabled, topic: m.topic, messageFields: [...m.messageFields], publishing: { ...m.publishing }, broker: broker ? { id: broker.id, name: broker.name } : null },
+    mqtt: { settingsId: m.settingsId, enabled: m.enabled && Boolean(broker), topic: m.topic, messageFields: [...m.messageFields], publishing: { ...m.publishing }, broker: broker ? { id: broker.id, name: broker.name } : null },
     ble: structuredClone(m.ble),
     wifi: structuredClone(m.wifi),
   };
@@ -369,15 +372,15 @@ function updateMqtt(ctx) {
     if (new Set(fields).size !== fields.length) throw badRequest("'mqtt.messageFields' lists a field more than once");
   }
   inRange(q.publishing?.frequency, 1, MAX_INT, 'mqtt.publishing.frequency');
-  let brokerId = m.brokerId;
+  let brokerId = liveBroker(net, m)?.id ?? null;
   if (q.broker) {
     const name = q.broker.name;
     const broker = name == null ? null : brokerOf(net, (x) => x.name === name);
     if (name != null && !broker) throw badRequest(`MQTT broker '${name}' does not exist in this network`);
     brokerId = broker?.id ?? null;
   }
-  const enabled = q.enabled ?? m.enabled;
-  if (enabled && !(brokerId && brokerOf(net, (x) => x.id === brokerId))) throw badRequest("'mqtt.broker' must name one of the network's MQTT brokers to enable MQTT");
+  const enabled = q.enabled ?? (m.enabled && brokerId != null);
+  if (enabled && brokerId == null) throw badRequest("'mqtt.broker' must name one of the network's MQTT brokers to enable MQTT");
   checkTelemetry(b.ble, 'ble');
   checkTelemetry(b.wifi, 'wifi');
   for (const u of b.ble?.allowLists?.uuids ?? []) if (!UUID_RE.test(u)) throw badRequest("'ble.allowLists.uuids' must hold UUIDs like 00000000-0000-0000-0000-000000000000");

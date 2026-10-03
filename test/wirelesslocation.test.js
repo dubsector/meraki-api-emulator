@@ -209,8 +209,34 @@ describe('wireless Bluetooth, location scanning, billing and MQTT', () => {
     assert.match(await errorOf(put({ ble: { flush: { frequency: 0 } } })), /between 1 and 2147483647/);
     assert.match(await errorOf(put({ wifi: { allowLists: { macs: ['zz'] } } })), /MAC addresses/);
     assert.match(await errorOf(put({ network: { id: 'L_1' } })), /not in this organization/);
-    // A deleted broker drops out.
+    // A deleted broker drops out and turns MQTT off.
     await ok(sb.del(`/networks/${austin.id}/mqttBrokers/${broker.id}`), 204);
-    assert.equal((await ok(sb.get(`${M}?networkIds[]=${austin.id}`))).items[0].mqtt.broker, null);
+    const gone = (await ok(sb.get(`${M}?networkIds[]=${austin.id}`))).items[0].mqtt;
+    assert.deepEqual([gone.enabled, gone.broker], [false, null]);
+    assert.equal((await ok(put({ mqtt: { topic: 'other' } }), 201)).mqtt.topic, 'other');
+  });
+
+  test('wireless MQTT keeps its broker when networks split and combine', async () => {
+    fresh();
+    const M = (org) => `/organizations/${org.id}/wireless/mqtt/settings`;
+    const enable = async (org, net) => {
+      await ok(sb.post(`/networks/${net.id}/mqttBrokers`, { name: 'Hub', host: 'mqtt.example.com', port: 1883 }), 201);
+      return (await ok(sb.put(M(org), { network: { id: net.id }, mqtt: { enabled: true, broker: { name: 'Hub' } } }), 201)).mqtt;
+    };
+    // HQ's brokers serve its cameras and its APs, so both parts keep them.
+    const before = await enable(corp, hq);
+    const parts = (await ok(sb.post(`/networks/${hq.id}/split`))).resultingNetworks;
+    const wl = parts.find((n) => n.productTypes[0] === 'wireless');
+    const cam = parts.find((n) => n.productTypes[0] === 'camera');
+    const after = (await ok(sb.get(`${M(corp)}?networkIds[]=${wl.id}`))).items[0].mqtt;
+    assert.deepEqual([after.enabled, after.broker], [true, before.broker]);
+    for (const n of [wl, cam]) assert.deepEqual((await ok(sb.get(`/networks/${n.id}/mqttBrokers`))).map((b) => b.id), [before.broker.id]);
+    // A wireless-only network's brokers survive combining with an MX.
+    const toronto = lab.networks[0];
+    const own = await enable(lab, toronto);
+    const mx = await ok(sb.post(`/organizations/${lab.id}/networks`, { name: 'Toronto MX', productTypes: ['appliance'] }), 201);
+    const net = (await ok(sb.post(`/organizations/${lab.id}/networks/combine`, { name: 'Toronto', networkIds: [mx.id, toronto.id] }))).resultingNetwork;
+    const combined = (await ok(sb.get(`${M(lab)}?networkIds[]=${net.id}`))).items[0].mqtt;
+    assert.deepEqual([combined.enabled, combined.broker], [true, own.broker]);
   });
 });
