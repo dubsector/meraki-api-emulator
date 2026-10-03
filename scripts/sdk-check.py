@@ -1508,7 +1508,54 @@ def cameraroles():
         check("deleteOrganizationCameraRole", c.getOrganizationCameraRoles(org) == [])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles]
+@scenario
+def cameraanalytics():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        c = d.camera
+        org = acme(d.organizations.getOrganizations())
+        nets = {x["name"]: x["id"] for x in d.organizations.getOrganizationNetworks(org)}
+        net = nets["HQ - San Francisco"]
+        serial = next(x["serial"] for x in d.networks.getNetworkDevices(net) if x["model"].startswith("MV"))
+
+        areas = c.getOrganizationCameraBoundariesAreasByDevice(org)
+        lines = c.getOrganizationCameraBoundariesLinesByDevice(org, serials=[serial])
+        check("getOrganizationCameraBoundariesAreasByDevice lists every camera", len(areas) == 7 and areas[0]["boundaries"]["type"] == "area", areas[0])
+        check("getOrganizationCameraBoundariesLinesByDevice filters by serial", [x["serial"] for x in lines] == [serial] and "directionVertex" in lines[0]["boundaries"], lines)
+        area = next(x for x in areas if x["serial"] == serial)["boundaries"]["id"]
+        end = EVENTS_NOW.replace(minute=0)
+        fmt = lambda t: t.strftime("%Y-%m-%dT%H:%M:%SZ")
+        ranges = [{"startTime": fmt(end - timedelta(hours=2)), "endTime": fmt(end), "interval": 3600}, {"startTime": fmt(end - timedelta(hours=1)), "endTime": fmt(end), "interval": 900}]
+        ids = [area, lines[0]["boundaries"]["id"]]
+        rows = c.getOrganizationCameraDetectionsHistoryByBoundaryByInterval(org, ids, ranges, boundaryTypes=["person", "vehicle"], total_pages=-1, perPage=5)
+        check("getOrganizationCameraDetectionsHistoryByBoundaryByInterval pages every range", len(rows) == 2 * 2 * 2 + 2 * 2 * 4, len(rows))
+        whole = lambda r: [x for x in r if x["results"]["objectType"] == "person" and x["boundaryId"] == area]
+        hourly = whole(rows)[:2]
+        fine = whole(rows)[2:]
+        check("detections add up across intervals", hourly[1]["results"]["in"] == sum(x["results"]["in"] for x in fine), (hourly, fine))
+
+        a = c.createOrganizationCameraCustomAnalyticsArtifact(org, name="ppe")
+        check("createOrganizationCameraCustomAnalyticsArtifact answers an upload URL", a["artifactId"] == "1" and a["uploadUrl"].endswith(a["uploadId"]), a)
+        got = c.getOrganizationCameraCustomAnalyticsArtifact(org, a["artifactId"])
+        check("getOrganizationCameraCustomAnalyticsArtifacts and get one", c.getOrganizationCameraCustomAnalyticsArtifacts(org) == [got] and got["status"]["type"] == "ready", got)
+        ca = c.updateDeviceCameraCustomAnalytics(serial, enabled=True, artifactId=a["artifactId"], parameters=[{"name": "detection_threshold", "value": "0.5"}])
+        check("updateDeviceCameraCustomAnalytics names the artifact", c.getDeviceCameraCustomAnalytics(serial) == ca == {"enabled": True, "artifactId": "1", "parameters": [{"name": "detection_threshold", "value": 0.5}]}, ca)
+        try:
+            c.deleteOrganizationCameraCustomAnalyticsArtifact(org, a["artifactId"])
+            check("an artifact in use can't be deleted", False)
+        except meraki.APIError as e:
+            check("an artifact in use can't be deleted", e.status == 400, e.message)
+        c.updateDeviceCameraCustomAnalytics(serial, enabled=False, artifactId=None)
+        c.deleteOrganizationCameraCustomAnalyticsArtifact(org, a["artifactId"])
+        check("deleteOrganizationCameraCustomAnalyticsArtifact", c.getOrganizationCameraCustomAnalyticsArtifacts(org) == [])
+
+        statuses = c.getOrganizationCameraOnboardingStatuses(org, networkIds=[net])
+        check("getOrganizationCameraOnboardingStatuses filters by network", len(statuses) == 3 and all(x["status"] == "complete" for x in statuses), statuses)
+        ok = c.updateOrganizationCameraOnboardingStatuses(org, serial=serial, wirelessCredentialsSent=False)
+        check("updateOrganizationCameraOnboardingStatuses records it", ok == {"success": True} and c.getOrganizationCameraOnboardingStatuses(org, serials=[serial])[0]["status"] == "pending onboarding", ok)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

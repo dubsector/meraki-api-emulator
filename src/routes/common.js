@@ -110,7 +110,7 @@ export const round = (v, d = 0) => Math.round(v * 10 ** d) / 10 ** d;
 //   blank     (ctx, parent) => a new item's fields before the body is applied
 //   apply     (item, body, parent, ctx, checked) => copies the body onto an
 //             item, which already has its ID
-//   json      (item, parent) => the item as the API returns it
+//   json      (item, parent, ctx) => the item as the API returns it
 //   inUse     (item, parent) => why it can't be deleted, or nothing
 //   missing   the get route's sample (an unknown ID and status 404)
 export function collection(c) {
@@ -138,7 +138,7 @@ export function collection(c) {
   const handlers = {
     list: (ctx) => {
       const { parent, store } = storeOf(ctx);
-      return store.list.map((x) => c.json(x, parent));
+      return store.list.map((x) => c.json(x, parent, ctx));
     },
     create: (ctx) => {
       const { parent, store } = storeOf(ctx);
@@ -149,17 +149,17 @@ export function collection(c) {
       const x = { [key]: c.nextId ? c.nextId(ctx, store, parent) : newId(ctx, store, c.kind, parent.id, key), ...c.blank(ctx, parent) };
       c.apply(x, b, parent, ctx, checked);
       store.list.push(x);
-      return c.json(x, parent);
+      return c.json(x, parent, ctx);
     },
     get: (ctx) => {
       const { parent, item: x } = find(ctx);
-      return c.json(x, parent);
+      return c.json(x, parent, ctx);
     },
     update: (ctx) => {
       const { parent, store, item: x } = find(ctx);
       const checked = checkBody(ctx, parent, store, ctx.body, x);
       c.apply(x, ctx.body, parent, ctx, checked);
-      return c.json(x, parent);
+      return c.json(x, parent, ctx);
     },
     delete: (ctx) => {
       const { parent, store, item: x } = find(ctx);
