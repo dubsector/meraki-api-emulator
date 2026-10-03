@@ -75,8 +75,9 @@ export function templateOf(net, id) {
 }
 
 // An HTTP server's template, by ID or by name. The ID wins when both are given,
-// and Meraki (included) is the default.
-export function pickTemplate(net, { payloadTemplateId, name } = {}) {
+// and Meraki (included) is the default, also for a null.
+export function pickTemplate(net, given) {
+  let { payloadTemplateId, name } = given ?? {};
   if (payloadTemplateId == null && name == null) payloadTemplateId = 'wpt_00001';
   const list = templatesOf(net);
   const t = payloadTemplateId != null ? list.find((x) => x.payloadTemplateId === payloadTemplateId) : list.find((x) => x.name === name);
