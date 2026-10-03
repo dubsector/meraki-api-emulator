@@ -340,7 +340,7 @@ function updateOspf(ctx) {
 // ── Multicast ──
 
 const multicastDefaults = () => ({ defaultSettings: { igmpSnoopingEnabled: true, floodUnknownMulticastTrafficEnabled: true }, overrides: [] });
-const multicastOf = (net) => stored(net, 'switchMulticast', multicastDefaults);
+export const multicastOf = (net) => stored(net, 'switchMulticast', multicastDefaults);
 const profilesOf = (net) => net.template?.profiles ?? [];
 
 // Switches, stacks and profiles that left the network drop out of their override.

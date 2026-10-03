@@ -139,10 +139,17 @@ export function portConfig(net, sw, port) {
   const profile = boundProfile(sw);
   if (profile) {
     const config = profile.ports.find((p) => p.portId === port.portId)?.config;
-    return config ? merge(portDefaults(sw, port), config) : portDefaults(sw, port);
+    return withSchedule(configOf(net), config ? merge(portDefaults(sw, port), config) : portDefaults(sw, port));
   }
   const base = defaultPortConfig(net, sw, port);
-  return port.config ? merge(base, port.config) : base;
+  return withSchedule(configOf(net), port.config ? merge(base, port.config) : base);
+}
+
+// A port shows its schedule's name; one that's gone reads as no schedule.
+export function withSchedule(config, out) {
+  if (out.portScheduleId == null) return out;
+  const s = config?.switchPortSchedules?.list.find((x) => x.id === out.portScheduleId);
+  return s ? { ...out, schedule: { id: s.id, name: s.name } } : { ...out, portScheduleId: null };
 }
 
 // What a port starts with before its neighbors or writes change it.
@@ -189,8 +196,10 @@ export function checkPortBody(sw, port, b) {
 
 export const CUSTOM_POLICY = 'Custom access policy';
 
-// A switch or profile port on a custom access policy has to name a policy that exists.
+// A switch or profile port on a custom access policy has to name a policy that
+// exists, and a port schedule has to exist too.
 export function checkPortPolicy(config, current, b) {
+  if (b.portScheduleId != null && !config?.switchPortSchedules?.list.some((s) => s.id === b.portScheduleId)) throw badRequest(`Port schedule '${b.portScheduleId}' does not exist in this network`);
   const policies = config?.switchAccessPolicies?.list ?? [];
   const missing = (n) => badRequest(`Access policy '${n}' does not exist in this network`);
   if (b.accessPolicyNumber != null && !policies.some((p) => p.number === String(b.accessPolicyNumber))) throw missing(b.accessPolicyNumber);
