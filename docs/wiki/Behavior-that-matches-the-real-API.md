@@ -1,0 +1,11 @@
+- `Link` headers use unquoted `rel=next`, `rel=prev`, `rel=first` and `rel=last`, like Meraki sends them.
+- The network event log always includes a `rel=next` link, even past the newest event, so clients have to decide when to stop. Pages are newest first.
+- A missing, wrong or revoked key gets `401` with `{"errors":["No valid authentication method found"]}`.
+- About 10 requests per second per key, with a burst of 20, then `429` with `Retry-After`.
+- Live tools and reboot also have the spec's per-device limits: one request every 5 seconds with a burst of 5 (a single request for throughput tests), one every 10 seconds for LED blinks and one every 60 seconds for reboots. `--rate-limit 0` turns these off too.
+- `t0`, `t1`, `timespan`, `resolution` and `perPage` are checked against each endpoint's limits from the OpenAPI spec (lookback, longest and shortest span, valid resolutions), and bad values get a `400` with an `errors` array.
+- `uplinksLossAndLatency` data ends two minutes before the current time.
+- `getNetworkEvents` needs `productType` on networks with more than one product type.
+- Assurance alerts return only active alerts unless you pass `resolved=true` or `dismissed=true`, like the real defaults.
+- `getOrganizationSwitchPortsStatusesBySwitch` wraps its results in `items` and `meta`, unlike most list endpoints.
+- The per-device license endpoints answer `400` for co-term organizations.
