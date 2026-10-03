@@ -225,19 +225,21 @@ function cameraOf(ctx) {
 
 const analyticsOf = (dev) => (dev.cameraCustomAnalytics ??= { enabled: false, artifact: null, parameters: [] });
 
-// An artifact from another organization (after a network move) reads as none.
 function analyticsJson(dev) {
   const a = analyticsOf(dev);
-  const artifact = a.artifact && artifactsOf(dev.net.org).list.includes(a.artifact) ? a.artifact : null;
-  return { enabled: a.enabled && !!artifact, artifactId: artifact?.artifactId ?? null, parameters: a.parameters.map((p) => ({ ...p })) };
+  return { enabled: a.enabled, artifactId: a.artifact?.artifactId ?? null, parameters: a.parameters.map((p) => ({ ...p })) };
 }
+
+// Artifacts belong to the organization, so a network whose cameras name one
+// can't move to another.
+export const usesArtifacts = (net) => net.cameras.some((d) => d.cameraCustomAnalytics?.artifact);
 
 function updateAnalytics(ctx) {
   const dev = cameraOf(ctx);
   const b = ctx.body;
   const a = analyticsOf(dev);
   const list = artifactsOf(dev.net.org).list;
-  let artifact = a.artifact && list.includes(a.artifact) ? a.artifact : null;
+  let artifact = a.artifact;
   if (b.artifactId !== undefined) {
     artifact = b.artifactId == null || b.artifactId === '' ? null : list.find((x) => x.artifactId === b.artifactId);
     if (artifact === undefined) throw badRequest("'artifactId' must name a custom analytics artifact in this organization");
