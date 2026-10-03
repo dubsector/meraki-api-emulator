@@ -1,7 +1,7 @@
 // Builds the static world (orgs, networks, devices, clients, switch ports) from a seed.
 
 import { CLIENT_PROFILES, DEVICE_OUI, FIRST_NAMES, ISPS, KINDS, LAST_NAMES, MODELS, ORGS, SERIAL_PREFIX, SSIDS } from './catalog.js';
-import { configOf, rebase, settingProduct } from './config.js';
+import { configOf, rebase, settingProduct, syslogRolesFor } from './config.js';
 import { Rand, derive, hashStr } from './rng.js';
 import { DAY, Zone } from './time.js';
 
@@ -939,6 +939,9 @@ export function splitNetwork(world, net) {
     const part = addNetwork(world, org, { name: `${net.name} - ${p}`, productTypes: [p], tags: [...net.tags], timeZone: net.timeZone, notes: net.notes ?? '' });
     for (const k of ['code', 'kind', 'zone', 'address', 'lat', 'lng', 'siteIndex', 'subnet']) part[k] = net[k];
     part.config = rebase(config, net.id, part.id);
+    // Syslog servers keep only the roles of the part's product, and go if none is left.
+    const roles = new Set(syslogRolesFor(part).map((r) => r.value));
+    part.config.syslog.servers = part.config.syslog.servers.map((x) => ({ ...x, roles: x.roles.filter((r) => roles.has(r)) })).filter((x) => x.roles.length);
     if (net.firmware) part.firmware = { ...net.firmware, products: net.firmware.products[p] ? { [p]: net.firmware.products[p] } : {} };
     return part;
   });
