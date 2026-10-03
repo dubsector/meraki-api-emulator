@@ -1,3 +1,4 @@
+import { L7_CATEGORIES } from '../catalog.js';
 import { ApiError, arrayParam, badRequest, hasTags, notFound } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 
@@ -85,6 +86,34 @@ export function filterDevices(q, devices) {
       (!serial || d.serial.includes(serial)) &&
       (!model || d.model.includes(model)),
   );
+}
+
+// L7 firewall rules from a body, for MX and SSID rules alike. The spec types
+// `value` as a string, but it's an object for applications and categories and
+// a list of country codes for the country types. A bare ID is taken for an
+// application too, and names come from the category list.
+const L7_NAMES = new Map(L7_CATEGORIES.flatMap((c) => [[c.id, c.name], ...c.applications.map((a) => [a.id, a.name])]));
+const COUNTRY_TYPES = ['allowedCountries', 'blockedCountries', 'whitelistedCountries', 'blacklistedCountries'];
+
+export function l7Rules(rules) {
+  return rules.map((r, i) => {
+    const at = `rules[${i}]`;
+    if (r.type == null) throw badRequest(`'${at}.type' is required`);
+    let value = r.value;
+    if (r.type === 'application' || r.type === 'applicationCategory') {
+      const kind = r.type === 'application' ? 'application' : 'category';
+      const id = typeof value === 'string' ? value : value?.id;
+      if (typeof id !== 'string' || !new RegExp(`^meraki:layer7/${kind}/\\d+$`).test(id)) throw badRequest(`'${at}.value' must be an object with the ID of an ${r.type === 'application' ? 'application' : 'application category'}, like meraki:layer7/${kind}/1`);
+      value = { id, name: L7_NAMES.get(id) ?? (typeof value?.name === 'string' ? value.name : null) };
+    } else if (COUNTRY_TYPES.includes(r.type)) {
+      if (!Array.isArray(value) || !value.length || !value.every((c) => /^[A-Za-z]{2}$/.test(c))) throw badRequest(`'${at}.value' must be a list of two-letter country codes`);
+      value = value.map((c) => c.toUpperCase());
+    } else {
+      if (typeof value === 'number') value = String(value);
+      if (typeof value !== 'string') throw badRequest(`'${at}.value' must be a string`);
+    }
+    return { policy: r.policy ?? 'deny', type: r.type, value };
+  });
 }
 
 export const bySerial = (a, b) => (a.serial < b.serial ? -1 : a.serial > b.serial ? 1 : 0);

@@ -57,7 +57,8 @@ export default [
       const dev = devOf(ctx);
       const plan = ctx.body.floorPlanId;
       if (plan != null && !hasFloorPlan(dev.net, plan)) throw badRequest(`Floor plan ${plan} does not exist in this device's network`);
-      for (const k of ['name', 'tags', 'lat', 'lng', 'address', 'notes', 'floorPlanId']) if (ctx.body[k] !== undefined) dev[k] = ctx.body[k];
+      for (const k of ['name', 'lat', 'lng', 'address', 'notes', 'floorPlanId']) if (ctx.body[k] !== undefined) dev[k] = ctx.body[k];
+      if (ctx.body.tags !== undefined) dev.tags = ctx.body.tags ?? [];
       return deviceJson(dev, { full: true });
     },
   },

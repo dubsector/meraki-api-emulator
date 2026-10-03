@@ -275,6 +275,26 @@ describe('device live tools on a running clock', () => {
     assert.equal((await sb.get(job.url)).body.status, 'complete');
   });
 
+  test('a callback whose payload fails is marked failed and the server keeps running', async () => {
+    const org = sb.world.orgs[0];
+    const ap = org.networks[0].aps[1];
+    // No write can store this any more, but the callback timer must survive whatever it meets.
+    ap.tags = null;
+    const logged = [];
+    const error = console.error;
+    console.error = (e) => logged.push(e);
+    try {
+      const job = (await sb.post(`/devices/${ap.serial}/liveTools/leds/blink`, { duration: 5, callback: { url: 'http://127.0.0.1:9/cb', sharedSecret: 'x' } })).body;
+      await new Promise((r) => setTimeout(r, 2100));
+      const cb = (await sb.get(`/organizations/${org.id}/webhooks/callbacks/statuses/${job.callback.id}`)).body;
+      assert.deepEqual([cb.status, cb.errors], ['failed', ['Callback failed']]);
+      assert.equal(logged.length, 1);
+    } finally {
+      console.error = error;
+      ap.tags = [];
+    }
+  });
+
   test('live tools and reboot have per-device rate limits', async () => {
     const [a, b] = sb.world.orgs[0].networks[0].switches;
     assert.equal((await sb.post(`/devices/${a.serial}/reboot`)).status, 202);

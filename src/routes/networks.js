@@ -250,7 +250,10 @@ export default [
       if (b.name != null && b.name !== net.name && net.org.networks.some((n) => n.name === b.name)) throw badRequest('Name has already been taken');
       if (b.timeZone != null && !validTimeZone(b.timeZone)) throw badRequest(`'timeZone' must be a valid IANA time zone`);
       // The time zone is what the API reports; the simulated schedule keeps the site's real one.
-      for (const k of ['name', 'timeZone', 'tags', 'enrollmentString', 'notes']) if (b[k] !== undefined) net[k] = b[k];
+      // A null name or time zone leaves it as it is, and null tags clear them.
+      for (const k of ['name', 'timeZone']) if (b[k] != null) net[k] = b[k];
+      for (const k of ['enrollmentString', 'notes']) if (b[k] !== undefined) net[k] = b[k];
+      if (b.tags !== undefined) net.tags = b.tags ?? [];
       return networkJson(net);
     },
   },

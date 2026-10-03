@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, afterEach, before, describe, test } from 'node:test';
 import { ROUTES } from '../src/server.js';
-import { schemaOf } from '../src/validate.js';
+import { schemaOf, validateBody } from '../src/validate.js';
 import { NOW, start } from './helpers.js';
 
 describe('writes', () => {
@@ -77,11 +77,37 @@ describe('writes', () => {
     assert.deepEqual((await sb.get(`${N}/settings`)).body, before);
   });
 
+  test('null tags and admin networks clear them, and a null name or time zone is left out', async () => {
+    fresh();
+    const ap = hq.aps[0];
+    const admin = org.admins.find((a) => a.networks.length);
+    for (const [path, body] of [
+      [`/networks/${hq.id}`, { name: null, timeZone: null, tags: null }],
+      [`/devices/${ap.serial}`, { tags: null }],
+      [`/organizations/${org.id}/admins/${admin.id}`, { tags: null, networks: null }],
+    ]) {
+      const r = await sb.put(path, body);
+      assert.equal(r.status, 200, `${path}: ${JSON.stringify(r.body)}`);
+    }
+    const net = (await sb.get(`/networks/${hq.id}`)).body;
+    assert.deepEqual([net.name, net.timeZone, net.tags], ['HQ - San Francisco', 'America/Los_Angeles', []]);
+    assert.deepEqual((await sb.get(`/devices/${ap.serial}`)).body.tags, []);
+    const created = await sb.post(`/organizations/${org.id}/networks`, { name: 'Branch - Boise', productTypes: ['wireless'], tags: null, timeZone: null, notes: null });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    assert.deepEqual([created.body.tags, created.body.timeZone, created.body.notes], [[], 'America/Los_Angeles', '']);
+    // Reads that filter on or copy these lists still answer.
+    for (const path of [`/organizations/${org.id}/networks?tags[]=x`, `/organizations/${org.id}/devices?tags[]=x`, `/organizations/${org.id}/admins?networkIds[]=${hq.id}`, `/organizations/${org.id}/firmware/upgrades`, `/networks/${hq.id}/networkHealth/channelUtilization`]) {
+      assert.equal((await sb.get(path)).status, 200, path);
+    }
+  });
+
   test('prototype keys in a body are ignored', async () => {
     fresh();
     const r = await sb.put(`/networks/${hq.id}/settings`, '{"__proto__": {"polluted": 1}, "fips": {"constructor": {"prototype": {"polluted": 1}}}}');
     assert.equal(r.status, 200);
     assert.equal({}.polluted, undefined);
+    // Names an object inherits aren't fields of the schema either.
+    assert.deepEqual(validateBody('updateNetwork', { name: 'A', toString: 1, valueOf: 1, hasOwnProperty: 1 }), { name: 'A' });
   });
 
   test('methods a path lacks answer 405 with Allow', async () => {
@@ -115,6 +141,51 @@ describe('writes', () => {
     assert.equal((await sb.del(`${base}/70`)).status, 204);
     assert.equal((await sb.get(`${base}/70`)).status, 404);
     assert.ok(!(await sb.get(vpn)).body.subnets.some((s) => s.localSubnet === '10.1.70.0/24'));
+  });
+
+  test('a PUT replaces fixed IP assignments whole', async () => {
+    fresh();
+    const vlan = `/networks/${hq.id}/appliance/vlans/5`;
+    const seeded = (await sb.get(vlan)).body.fixedIpAssignments;
+    assert.equal(Object.keys(seeded).length, 1);
+    const printer = { '00:11:22:33:44:55': { ip: '10.1.5.50', name: 'Printer' } };
+    assert.deepEqual((await sb.put(vlan, { fixedIpAssignments: { ...seeded, ...printer } })).body.fixedIpAssignments, { ...seeded, ...printer });
+    assert.deepEqual((await sb.put(vlan, { fixedIpAssignments: printer })).body.fixedIpAssignments, printer);
+    assert.deepEqual((await sb.put(vlan, { name: 'Servers' })).body.fixedIpAssignments, printer, 'left out, it stays');
+    assert.deepEqual((await sb.put(vlan, { fixedIpAssignments: {} })).body.fixedIpAssignments, {});
+    const route = `/networks/${hq.id}/appliance/staticRoutes/${(await sb.get(`/networks/${hq.id}/appliance/staticRoutes`)).body[0].id}`;
+    assert.deepEqual((await sb.put(route, { fixedIpAssignments: printer })).body.fixedIpAssignments, printer);
+    assert.deepEqual((await sb.put(route, { fixedIpAssignments: null })).body.fixedIpAssignments, {});
+  });
+
+  test('L7 rules take each value shape the spec gives and read back as written', async () => {
+    fresh();
+    const mx = `/networks/${hq.id}/appliance/firewall/l7FirewallRules`;
+    for (const path of [mx, `/networks/${hq.id}/wireless/ssids/1/firewall/l7FirewallRules`]) {
+      const seeded = (await sb.get(path)).body;
+      assert.ok(seeded.rules.some((r) => typeof r.value === 'object'), path);
+      const put = await sb.put(path, seeded);
+      assert.equal(put.status, 200, `${path}: ${JSON.stringify(put.body)}`);
+      assert.deepEqual(put.body, seeded);
+    }
+    const [cat] = (await sb.get(`${mx}/applicationCategories`)).body.applicationCategories;
+    const rules = [
+      { policy: 'deny', type: 'applicationCategory', value: { id: cat.id } },
+      { policy: 'deny', type: 'application', value: cat.applications[0].id },
+      { policy: 'deny', type: 'blockedCountries', value: ['cn', 'RU'] },
+      { policy: 'deny', type: 'port', value: 23 },
+    ];
+    const r = await sb.put(mx, { rules });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.rules.map((x) => x.value), [{ id: cat.id, name: cat.name }, cat.applications[0], ['CN', 'RU'], '23']);
+    for (const [rule, message] of [
+      [{ type: 'host', value: { id: 'x' } }, /'rules\[0\]\.value' must be a string/],
+      [{ type: 'applicationCategory', value: 'games' }, /application category/],
+      [{ type: 'blockedCountries', value: 'CN' }, /country codes/],
+      [{ value: 'x' }, /'rules\[0\]\.type' is required/],
+    ]) {
+      assert.match((await sb.put(mx, { rules: [{ policy: 'deny', ...rule }] })).body.errors[0], message);
+    }
   });
 
   test('the default firewall rule stays last and is never duplicated', async () => {
@@ -159,6 +230,26 @@ describe('writes', () => {
     const statuses = (await sb.get(`/organizations/${org.id}/devices/statuses`)).body;
     assert.ok(!statuses.some((d) => serials.includes(d.serial)));
     assert.equal((await sb.get(`/organizations/${org.id}/configurationChanges?timespan=604800`)).status, 200);
+  });
+
+  test('a deleted network drops out of its spokes and admin privileges', async () => {
+    fresh();
+    const reno = org.networks.find((n) => n.code === 'RNO');
+    const austin = org.networks.find((n) => n.code === 'AUS');
+    const vpn = (net) => `/networks/${net.id}/appliance/vpn/siteToSiteVpn`;
+    // Reno's settings are read before the hub goes, Austin's only after.
+    assert.deepEqual((await sb.get(vpn(reno))).body.hubs.map((h) => h.hubId), [hq.id]);
+    assert.equal((await sb.del(`/networks/${hq.id}`)).status, 204);
+    for (const net of [reno, austin]) {
+      const s2s = (await sb.get(vpn(net))).body;
+      assert.deepEqual([s2s.mode, s2s.hubs], ['none', []], net.name);
+      const put = await sb.put(vpn(net), s2s);
+      assert.equal(put.status, 200, JSON.stringify(put.body));
+    }
+    assert.ok(org.admins.some((a) => a.networks.some((n) => n.id === reno.id)));
+    assert.equal((await sb.del(`/networks/${reno.id}`)).status, 204);
+    const admins = (await sb.get(`/organizations/${org.id}/admins`)).body;
+    assert.ok(!admins.some((a) => a.networks.some((n) => n.id === reno.id)));
   });
 
   test('renames reach events, statuses and clients', async () => {

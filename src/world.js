@@ -1,7 +1,7 @@
 // Builds the static world (orgs, networks, devices, clients, switch ports) from a seed.
 
 import { CLIENT_PROFILES, DEVICE_OUI, FIRST_NAMES, ISPS, KINDS, LAST_NAMES, MODELS, ORGS, SERIAL_PREFIX, SSIDS } from './catalog.js';
-import { configOf, rebase, settingProduct } from './config.js';
+import { configOf, rebase, settingProduct, syslogRolesFor } from './config.js';
 import { Rand, derive, hashStr } from './rng.js';
 import { DAY, Zone } from './time.js';
 
@@ -466,7 +466,11 @@ export function removeOrganization(world, org) {
 }
 
 // An empty network: no devices or clients, so every stats endpoint reports nothing.
-export function addNetwork(world, org, { name, productTypes, tags = [], timeZone = 'America/Los_Angeles', notes = '' }) {
+// A null in the body counts as left out.
+export function addNetwork(world, org, { name, productTypes, tags, timeZone, notes }) {
+  tags ??= [];
+  timeZone ??= 'America/Los_Angeles';
+  notes ??= '';
   const r = nextRand(world, 'network');
   let id;
   do id = (productTypes.length > 1 ? 'L_' : 'N_') + r.digits(18);
@@ -506,12 +510,16 @@ export function addNetwork(world, org, { name, productTypes, tags = [], timeZone
   return net;
 }
 
-// Deleting a network returns its devices to the organization's inventory.
+// Deleting a network returns its devices to the organization's inventory and
+// drops it from whatever names it, as moving it does. Settings are built first,
+// since spokes take theirs from the hub.
 export function removeNetwork(world, net) {
   const org = net.org;
+  settle(org);
   const gone = new Set(net.devices);
   for (const list of [org.networks, world.networks]) list.splice(list.indexOf(net), 1);
   world.networkById.delete(net.id);
+  repoint(org, net.id, null);
   world.devices = world.devices.filter((d) => !gone.has(d));
   org.devices = org.devices.filter((d) => !gone.has(d));
   for (const d of gone) {
@@ -521,6 +529,7 @@ export function removeNetwork(world, net) {
   dropClients(world, net, new Set(net.clients));
   if (org.hub === net) org.hub = null;
   net.deleted = true;
+  dropCaches(org);
 }
 
 // ── Claiming, removing and swapping devices ──
@@ -930,6 +939,9 @@ export function splitNetwork(world, net) {
     const part = addNetwork(world, org, { name: `${net.name} - ${p}`, productTypes: [p], tags: [...net.tags], timeZone: net.timeZone, notes: net.notes ?? '' });
     for (const k of ['code', 'kind', 'zone', 'address', 'lat', 'lng', 'siteIndex', 'subnet']) part[k] = net[k];
     part.config = rebase(config, net.id, part.id);
+    // Syslog servers keep only the roles of the part's product, and go if none is left.
+    const roles = new Set(syslogRolesFor(part).map((r) => r.value));
+    part.config.syslog.servers = part.config.syslog.servers.map((x) => ({ ...x, roles: x.roles.filter((r) => roles.has(r)) })).filter((x) => x.roles.length);
     if (net.firmware) part.firmware = { ...net.firmware, products: net.firmware.products[p] ? { [p]: net.firmware.products[p] } : {} };
     return part;
   });

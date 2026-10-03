@@ -132,6 +132,8 @@ describe('webhooks and alert configs', () => {
     assert.deepEqual(server.payloadTemplate, { payloadTemplateId: t.payloadTemplateId, name: 'Ops' });
     const plain = await created(sb.post(`${N}/httpServers`, { name: 'Plain', url: 'https://hooks.example.net/b' }));
     assert.deepEqual(plain.payloadTemplate, { payloadTemplateId: 'wpt_00001', name: 'Meraki (included)' });
+    const nulled = await created(sb.post(`${N}/httpServers`, { name: 'Nulled', url: 'https://hooks.example.net/c', payloadTemplate: null }));
+    assert.deepEqual(nulled.payloadTemplate, plain.payloadTemplate);
 
     await sb.put(`${N}/payloadTemplates/${t.payloadTemplateId}`, { name: 'Ops v2' });
     assert.equal((await sb.get(`${N}/httpServers/${server.id}`)).body.payloadTemplate.name, 'Ops v2');

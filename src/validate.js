@@ -89,7 +89,7 @@ function object(value, schema, prefix) {
   for (const [k, v] of Object.entries(value)) {
     if (UNSAFE.has(k) || v === undefined) continue;
     const name = prefix ? `${prefix}.${k}` : k;
-    if (props && k in props) out[k] = check(v, props[k], name);
+    if (props && Object.hasOwn(props, k)) out[k] = check(v, props[k], name);
     else if (!props || schema.additionalProperties) out[k] = check(v, typeof schema.additionalProperties === 'object' ? schema.additionalProperties : null, name);
   }
   return out;

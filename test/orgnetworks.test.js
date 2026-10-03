@@ -197,6 +197,17 @@ describe('network groups, moves and combining', () => {
     assert.deepEqual(vpn.hubs.map((h) => h.hubId), [mx.id]);
     await noErrors(parts.map((n) => sb.world.networkById.get(n.id)));
 
+    // Each part keeps only its own product's syslog roles, so its servers can be sent back.
+    for (const part of parts) {
+      const path = `/networks/${part.id}/syslogServers`;
+      const servers = (await sb.get(path)).body;
+      const put = await sb.put(path, servers);
+      assert.equal(put.status, 200, `${part.name}: ${JSON.stringify(put.body)}`);
+    }
+    const [row] = (await sb.get(`/organizations/${corp.id}/devices/syslog/servers/byNetwork?networkIds[]=${wl.id}`)).body.items;
+    const roles = row.servers.flatMap((s) => s.roles);
+    assert.ok(roles.length && roles.every((r) => r.startsWith('wireless')), roles.join(', '));
+
     // The parts combine back into one network.
     const again = await created(sb.post(`${O}/combine`, { name: hq.name, networkIds: parts.map((n) => n.id) }), 200);
     assert.deepEqual(again.resultingNetwork.productTypes, types);

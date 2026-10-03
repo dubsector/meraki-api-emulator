@@ -14,8 +14,9 @@ const KEEP = ['type', 'enum', 'properties', 'items', 'required', 'minimum', 'max
 function trim(schema) {
   if (!schema || typeof schema !== 'object') return schema;
   const out = {};
-  // Rule values the spec types as strings but takes as objects for applications.
-  const anyType = schema.type === 'string' && /must be an object/.test(schema.description ?? '');
+  // Rule values the spec types as strings but takes as objects for applications
+  // (and as lists for countries), saying so only in the description.
+  const anyType = schema.type === 'string' && /must be an object|varies depending on type/.test(schema.description ?? '');
   for (const k of KEEP) {
     if (!(k in schema) || (anyType && k === 'type')) continue;
     if (k === 'properties') out.properties = Object.fromEntries(Object.entries(schema.properties).map(([name, s]) => [name, trim(s)]));
