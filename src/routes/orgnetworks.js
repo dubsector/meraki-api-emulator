@@ -13,6 +13,7 @@ import { usesAdaptivePolicy } from './adaptivepolicy.js';
 import { usesArtifacts } from './cameraanalytics.js';
 import { netOf, orgOf, round } from './common.js';
 import { usesPolicyObjects } from './policyobjects.js';
+import { usesSplashThemes } from './splash.js';
 
 const GROUPS = '/organizations/{organizationId}/networks/groups';
 const GROUP = `${GROUPS}/{groupId}`;
@@ -119,6 +120,7 @@ function moveProblem(org, net, dest) {
   if (usesPolicyObjects(net)) return "Cannot move network: The network's firewall rules use policy objects of the source organization.";
   if (usesAdaptivePolicy(net)) return "Cannot move network: The network's switch ports, appliance ports or SSIDs use adaptive policy groups of the source organization.";
   if (usesArtifacts(net)) return "Cannot move network: The network's cameras use custom analytics artifacts of the source organization.";
+  if (usesSplashThemes(net)) return "Cannot move network: The network's splash pages use custom splash themes of the source organization.";
   if (dest.networks.some((n) => n.name === net.name)) return 'Cannot move network: A network with the same name already exists in the target organization.';
   if (dest.networks.length >= MAX_NETWORKS) return 'Cannot move network: The target organization has reached its network limit.';
   return null;

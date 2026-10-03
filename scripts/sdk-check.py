@@ -1896,7 +1896,50 @@ def authusers():
         check("deleteNetworkVlanProfile", [x["iname"] for x in n.getNetworkVlanProfiles(hq)] == ["Default"])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers]
+def branding():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o = d.organizations
+        org = acme(o.getOrganizations())
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        hq = nets["HQ - San Francisco"]
+
+        a = o.createOrganizationBrandingPolicy(org, "Partners", adminSettings={"appliesTo": "All admins of networks...", "values": [hq]}, helpSettings={"helpTab": "show"})
+        b = o.createOrganizationBrandingPolicy(org, "Staff", customLogo={"enabled": True, "image": {"contents": "iVBORw0KGgo=", "format": "png"}})
+        check("createOrganizationBrandingPolicy", a["adminSettings"]["values"] == [hq] and b["customLogo"]["image"]["preview"]["url"].endswith(".png"), b)
+        r = o.updateOrganizationBrandingPolicy(org, a["brandingPolicyId"], "Partners", enabled=False)
+        check("updateOrganizationBrandingPolicy and getOrganizationBrandingPolicy", not r["enabled"] and r["helpSettings"]["helpTab"] == "show" and o.getOrganizationBrandingPolicy(org, a["brandingPolicyId"]) == r, r)
+        ids = [b["brandingPolicyId"], a["brandingPolicyId"]]
+        r = o.updateOrganizationBrandingPoliciesPriorities(org, brandingPolicyIds=ids)
+        check("updateOrganizationBrandingPoliciesPriorities and getOrganizationBrandingPoliciesPriorities", r == {"brandingPolicyIds": ids} and o.getOrganizationBrandingPoliciesPriorities(org) == r, r)
+        check("getOrganizationBrandingPolicies", [x["name"] for x in o.getOrganizationBrandingPolicies(org)] == ["Staff", "Partners"])
+        o.deleteOrganizationBrandingPolicy(org, b["brandingPolicyId"])
+        check("deleteOrganizationBrandingPolicy", o.getOrganizationBrandingPoliciesPriorities(org)["brandingPolicyIds"] == [a["brandingPolicyId"]])
+
+        features = o.getOrganizationEarlyAccessFeatures(org)
+        name = next(f["shortName"] for f in features if not f["isOrgScopedOnly"])
+        check(f"getOrganizationEarlyAccessFeatures ({len(features)} features)", len(features) >= 5, features[:1])
+        x = o.createOrganizationEarlyAccessFeaturesOptIn(org, name, limitScopeToNetworks=[hq])
+        check("createOrganizationEarlyAccessFeaturesOptIn", x["limitScopeToNetworks"] == [{"id": hq, "name": "HQ - San Francisco"}], x)
+        r = o.updateOrganizationEarlyAccessFeaturesOptIn(org, x["id"], limitScopeToNetworks=[])
+        check("updateOrganizationEarlyAccessFeaturesOptIn and getOrganizationEarlyAccessFeaturesOptIn", r["limitScopeToNetworks"] == [] and o.getOrganizationEarlyAccessFeaturesOptIn(org, x["id"]) == r, r)
+        check("getOrganizationEarlyAccessFeaturesOptIns", o.getOrganizationEarlyAccessFeaturesOptIns(org) == [r])
+        o.deleteOrganizationEarlyAccessFeaturesOptIn(org, x["id"])
+        check("deleteOrganizationEarlyAccessFeaturesOptIn", o.getOrganizationEarlyAccessFeaturesOptIns(org) == [])
+
+        system = o.getOrganizationSplashThemes(org)
+        t = o.createOrganizationSplashTheme(org, name="Lobby", baseTheme=system[0]["id"])
+        check("createOrganizationSplashTheme", not t["isSystemTheme"] and len(t["themeAssets"]) == len(system[0]["themeAssets"]), t)
+        f = o.createOrganizationSplashThemeAsset(org, t["id"], name="logo.png", content="iVBORw0KGgo=")
+        check("createOrganizationSplashThemeAsset and getOrganizationSplashAsset", f["fileData"] == "iVBORw0KGgo=\n" and o.getOrganizationSplashAsset(org, f["id"]) == f, f)
+        check("getOrganizationSplashThemes", [x["name"] for x in o.getOrganizationSplashThemes(org)][-1] == "Lobby")
+        o.deleteOrganizationSplashAsset(org, f["id"])
+        check("deleteOrganizationSplashAsset", len(next(x for x in o.getOrganizationSplashThemes(org) if x["id"] == t["id"])["themeAssets"]) == len(system[0]["themeAssets"]))
+        o.deleteOrganizationSplashTheme(org, t["id"])
+        check("deleteOrganizationSplashTheme", o.getOrganizationSplashThemes(org) == system)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
