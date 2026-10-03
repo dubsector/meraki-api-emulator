@@ -64,13 +64,17 @@ export function withGroup(org, out) {
   return { ...out, adaptivePolicyGroupId: g ? g.groupId : null, adaptivePolicyGroup: g ? { id: g.groupId, name: g.name } : null, peerSgtCapable: out.peerSgtCapable ?? false };
 }
 
-// Port configs and SSID settings of the organization's networks and templates.
+// VLAN profiles name groups on their named VLANs.
+const profileVlans = (config) => (config?.switchVlanProfiles?.list ?? []).flatMap((p) => p.vlanNames);
+
+// Port configs, SSID settings and named VLANs of the organization's networks and templates.
 function* holders(org) {
   for (const net of org.networks) {
     for (const sw of net.switches ?? []) for (const p of sw.ports) if (p.config) yield p.config;
     yield* net.config?.ssids ?? [];
+    yield* profileVlans(net.config);
   }
-  for (const t of org.configTemplates?.list ?? []) yield* t.config?.ssids ?? [];
+  for (const t of org.configTemplates?.list ?? []) yield* [...(t.config?.ssids ?? []), ...profileVlans(t.config)];
 }
 
 // MX ports name a group as sgt.id in the network's port overrides.
@@ -82,6 +86,7 @@ function* mxPortSgts(org) {
 export const usesAdaptivePolicy = (net) =>
   (net.switches ?? []).some((sw) => sw.ports.some((p) => p.config?.adaptivePolicyGroupId != null)) ||
   (net.config?.ssids ?? []).some((s) => s.adaptivePolicyGroupId != null) ||
+  profileVlans(net.config).some((v) => v.adaptivePolicyGroupId != null) ||
   Object.values(net.config?.portOverrides ?? {}).some((o) => o.sgt?.id != null);
 
 // ── Groups ──
