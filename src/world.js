@@ -711,8 +711,9 @@ export function moveLicenses(world, org, dest, licenses) {
 }
 
 // Org-wide wireless rows naming a network: scanning receivers, SSID profile
-// assignments and isolation allowlist entries. A split sends them to the
-// wireless part. SSID rows keep their number; one already on the target wins.
+// assignments, isolation allowlist entries and zero touch deployments. A split
+// sends them to the wireless part. SSID rows keep their number; one already on
+// the target wins. A deployment whose network leaves keeps no network.
 function repointWireless(org, fromId, toId) {
   const rx = org.wirelessScanningReceivers;
   if (rx) rx.list = rx.list.flatMap((r) => (r.networkId !== fromId ? [r] : toId ? [Object.assign(r, { networkId: toId })] : []));
@@ -721,6 +722,7 @@ function repointWireless(org, fromId, toId) {
   if (sp) sp.assignments = ssidRows(sp.assignments, (a, b) => a.number === b.number);
   const al = org.wirelessIsolationAllowlist;
   if (al) al.list = ssidRows(al.list, (a, b) => a.number === b.number && a.mac === b.mac);
+  for (const d of org.wirelessDeployments?.list ?? []) if (d.networkId === fromId) d.networkId = toId;
 }
 
 // Points what names a network at its new ID, or drops it when toId is null:
@@ -772,7 +774,7 @@ export function moveNetwork(world, net, dest) {
 
 // Settings kept on a network outside its config, since they name its own
 // devices or items. They go with the product they belong to.
-const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless' };
+const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless', wirelessPortProfiles: 'wireless' };
 
 // MQTT brokers serve cameras, sensors and wireless MQTT alike, which name them
 // by ID: a combined network takes every network's brokers and each part of a

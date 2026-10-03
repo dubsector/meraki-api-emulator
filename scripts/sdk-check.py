@@ -1426,7 +1426,58 @@ def ssidprofiles():
         check("getOrganizationWirelessSsidsOpenRoamingByNetwork", len(rows) == 5 and hq_row["ssid"][1]["openRoaming"] == roam, hq_row["ssid"][1])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles]
+@scenario
+def wirelessdevices():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o = d.organizations
+        w = d.wireless
+        org = acme(o.getOrganizations())
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        hq = nets["HQ - San Francisco"]
+        aps = sorted(x["serial"] for x in o.getOrganizationDevices(org, networkIds=[hq], productTypes=["wireless"]))
+
+        listed = w.getNetworkWirelessEthernetPortsProfiles(hq)
+        check("getNetworkWirelessEthernetPortsProfiles", [(x["profileId"], x["isDefault"]) for x in listed] == [("1001", True)] and listed[0]["ports"][0]["ssid"] == 1, listed)
+        p = w.createNetworkWirelessEthernetPortsProfile(hq, "Lobby", [{"name": "Kiosk", "ssid": 2, "pskGroupId": "100"}], usbPorts=[{"name": "usb", "enabled": False}])
+        check("createNetworkWirelessEthernetPortsProfile", p["profileId"] == "1002" and p["ports"] == [{"name": "Kiosk", "number": 1, "enabled": True, "ssid": 2, "pskGroupId": "100"}], p)
+        u = w.updateNetworkWirelessEthernetPortsProfile(hq, p["profileId"], name="Lobby 2")
+        check("updateNetworkWirelessEthernetPortsProfile", u["name"] == "Lobby 2" and u["ports"] == p["ports"], u)
+        check("getNetworkWirelessEthernetPortsProfile", w.getNetworkWirelessEthernetPortsProfile(hq, p["profileId"]) == u, "")
+        a = w.assignNetworkWirelessEthernetPortsProfiles(hq, aps[:2], p["profileId"])
+        check("assignNetworkWirelessEthernetPortsProfiles", a == {"serials": aps[:2], "profileId": p["profileId"]}, a)
+        s = w.setNetworkWirelessEthernetPortsProfilesDefault(hq, p["profileId"])
+        check("setNetworkWirelessEthernetPortsProfilesDefault", s == {"profileId": p["profileId"]} and [x["isDefault"] for x in w.getNetworkWirelessEthernetPortsProfiles(hq)] == [False, True], s)
+        w.deleteNetworkWirelessEthernetPortsProfile(hq, "1001")
+        check("deleteNetworkWirelessEthernetPortsProfile", [x["profileId"] for x in w.getNetworkWirelessEthernetPortsProfiles(hq)] == ["1002"], "")
+
+        spare = o.getOrganizationInventoryDevices(org, usedState="unused", productTypes=["wireless"])[0]["serial"]
+        made = [w.createOrganizationWirelessDevicesProvisioningDeployment(org, [{"devices": {"new": {"serial": spare, "name": f"AP {i}"}}, "status": "ready", "type": "deploy", "network": {"id": hq}}])["items"][0] for i in range(4)]
+        check("createOrganizationWirelessDevicesProvisioningDeployment", made[0]["status"] == "completed" and made[0]["network"]["id"] == hq and made[0]["devices"]["new"]["model"] == "MR46", made[0])
+        r = w.createOrganizationWirelessDevicesProvisioningDeployment(org, [{"devices": {"new": {"serial": spare}, "old": {"serial": aps[0]}}, "status": "ready", "type": "replace"}])["items"][0]
+        u = w.updateOrganizationWirelessDevicesProvisioningDeployments(org, [{"deploymentId": r["deploymentId"], "devices": {"new": {"serial": spare, "name": "Lobby AP"}, "old": {"serial": aps[1], "afterAction": "release"}}, "status": "ready", "type": "replace"}])["items"][0]
+        check("updateOrganizationWirelessDevicesProvisioningDeployments", u["devices"]["new"]["name"] == "Lobby AP" and u["devices"]["old"]["serial"] == aps[1], u)
+        # Each page is a one-item array, so the SDK hands back one envelope per page.
+        pages = w.getOrganizationWirelessDevicesProvisioningDeployments(org, total_pages=-1, perPage=3, sortBy="name")
+        names = [x["devices"]["new"]["name"] for p in pages for x in p["items"]]
+        check("getOrganizationWirelessDevicesProvisioningDeployments", names == ["AP 0", "AP 1", "AP 2", "AP 3", "Lobby AP"] and len(pages) == 2, names)
+        w.deleteOrganizationWirelessDevicesProvisioningDeployment(org, r["deploymentId"])
+        left = w.getOrganizationWirelessDevicesProvisioningDeployments(org, deploymentType="replace")
+        check("deleteOrganizationWirelessDevicesProvisioningDeployment", left[0]["items"] == [], left)
+
+        ca = w.createOrganizationWirelessDevicesRadsecCertificatesAuthority(org)
+        check("createOrganizationWirelessDevicesRadsecCertificatesAuthority", ca["status"] == "untrusted" and ca["contents"].startswith("-----BEGIN CERTIFICATE-----"), ca)
+        t = w.updateOrganizationWirelessDevicesRadsecCertificatesAuthorities(org, status="trusted", certificateAuthorityId=ca["certificateAuthorityId"])
+        check("updateOrganizationWirelessDevicesRadsecCertificatesAuthorities", t == {**ca, "status": "trusted"}, t)
+        cas = w.getOrganizationWirelessDevicesRadsecCertificatesAuthorities(org, certificateAuthorityIds=[ca["certificateAuthorityId"]])
+        check("getOrganizationWirelessDevicesRadsecCertificatesAuthorities", cas[0]["items"] == [t], cas)
+        crls = w.getOrganizationWirelessDevicesRadsecCertificatesAuthoritiesCrls(org)
+        check("getOrganizationWirelessDevicesRadsecCertificatesAuthoritiesCrls", [x["certificateAuthorityId"] for x in crls["items"]] == [ca["certificateAuthorityId"]], crls)
+        deltas = w.getOrganizationWirelessDevicesRadsecCertificatesAuthoritiesCrlsDeltas(org, certificateAuthorityIds=["1"])
+        check("getOrganizationWirelessDevicesRadsecCertificatesAuthoritiesCrlsDeltas", deltas["items"] == [], deltas)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
