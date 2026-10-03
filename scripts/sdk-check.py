@@ -1763,7 +1763,45 @@ def dns():
         check("deleteOrganizationApplianceDnsSplitProfile", a.getOrganizationApplianceDnsSplitProfiles(org) == [])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns]
+@scenario
+def mxinterfaces():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        a = d.appliance
+        org = acme(d.organizations.getOrganizations())
+        nets = {x["name"]: x["id"] for x in d.organizations.getOrganizationNetworks(org)}
+        hq = nets["HQ - San Francisco"]
+        mx = next(x["serial"] for x in d.networks.getNetworkDevices(hq) if x["model"].startswith("MX"))
+
+        port = a.createDeviceApplianceInterfacesPortsUpdate(mx, interface={"slot": 0, "subslot": 0, "number": 5}, downlink={"mode": "access", "access": {"vlan": "30", "policy": {"type": "open"}}})
+        net_port = a.getNetworkAppliancePort(hq, "5")
+        check("createDeviceApplianceInterfacesPortsUpdate writes the network port", port["downlink"]["access"]["vlan"] == "30" and net_port["type"] == "access" and net_port["vlan"] == 30, port)
+
+        i = a.createNetworkApplianceInterfacesL3(hq, {"address": "172.20.1.2", "subnet": "172.20.1.0/24"}, port={"interface": {"slot": 0, "subslot": 0, "number": 7}})
+        i = a.updateNetworkApplianceInterfacesL3(hq, i["interfaceId"], ipv4={"address": "172.20.1.3", "subnet": "172.20.1.0/24"})
+        listed = a.getOrganizationApplianceDevicesInterfacesL3(org, total_pages="all", perPage=3)
+        check("createNetworkApplianceInterfacesL3, update, then the org list", listed["items"] == [{**i, "network": {"id": hq}}] and i["port"]["interface"]["number"] == 7, listed)
+        a.deleteNetworkApplianceInterfacesL3(hq, i["interfaceId"])
+        check("deleteNetworkApplianceInterfacesL3", a.getOrganizationApplianceDevicesInterfacesL3(org)["items"] == [])
+
+        p = a.createNetworkAppliancePrefixesDelegatedStatic(hq, "2001:db8:3c4d::/48", {"type": "internet", "interfaces": ["wan1"]}, description="ISP A")
+        p = a.updateNetworkAppliancePrefixesDelegatedStatic(hq, p["staticDelegatedPrefixId"], description="ISP B")
+        check("createNetworkAppliancePrefixesDelegatedStatic, update, then list", a.getNetworkAppliancePrefixesDelegatedStatics(hq) == [p] and p["description"] == "ISP B", p)
+        check("getNetworkAppliancePrefixesDelegatedStatic", a.getNetworkAppliancePrefixesDelegatedStatic(hq, p["staticDelegatedPrefixId"]) == p)
+        a.updateNetworkApplianceVlan(hq, "10", ipv6={"enabled": True, "prefixAssignments": [{"autonomous": True, "origin": {"type": "internet", "interfaces": ["wan1"]}}]})
+        delegated = a.getDeviceAppliancePrefixesDelegated(mx)
+        check("getDeviceAppliancePrefixesDelegated", [(x["prefix"], x["counts"]["assigned"]) for x in delegated] == [("2001:db8:3c4d::/48", 1)], delegated)
+        rows = a.getDeviceAppliancePrefixesDelegatedVlanAssignments(mx)
+        check("getDeviceAppliancePrefixesDelegatedVlanAssignments", [(x["vlan"]["id"], x["ipv6"]["prefix"]) for x in rows] == [(10, "2001:db8:3c4d::/64")], rows)
+        a.deleteNetworkAppliancePrefixesDelegatedStatic(hq, p["staticDelegatedPrefixId"])
+        check("deleteNetworkAppliancePrefixesDelegatedStatic", a.getNetworkAppliancePrefixesDelegatedStatics(hq) == [])
+
+        before = a.getOrganizationApplianceRoutingVrfsSettings(org)
+        after = a.updateOrganizationApplianceRoutingVrfsSettings(org, True)
+        check("getOrganizationApplianceRoutingVrfsSettings and update", before == {"enabled": False} and after == a.getOrganizationApplianceRoutingVrfsSettings(org) == {"enabled": True}, after)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

@@ -247,12 +247,12 @@ function performanceClass(net, pc, at) {
   throw badRequest(`'${at}.type' is required`);
 }
 
-// Checks one rule and returns it as stored. VRFs aren't enabled for any
-// organization, so only the default VRF is taken.
+// Checks one rule and returns it as stored. The API has no way to add VRFs,
+// so only the default VRF is taken, whether or not VRFs are on.
 function preference(net, p, at, uplinks) {
   if (!uplinks.includes(p.preferredUplink)) throw badRequest(`'${at}.preferredUplink' must be one of: ${uplinks.join(', ')}`);
   if (!p.trafficFilters.length) throw badRequest(`'${at}.trafficFilters' needs at least one filter`);
-  if (p.vrf != null && String(p.vrf.id) !== '0') throw badRequest(`'${at}.vrf.id' must be 0, VRFs are not enabled for this organization`);
+  if (p.vrf != null && String(p.vrf.id) !== '0') throw badRequest(`'${at}.vrf.id' must be 0, ${net.org.applianceVrfs?.enabled ? 'the only VRF in this organization' : 'VRFs are not enabled for this organization'}`);
   const out = { trafficFilters: limit(p.trafficFilters, MAX_ITEMS, 'Traffic filters').map((f, i) => trafficFilter(f, `${at}.trafficFilters[${i}]`)), preferredUplink: p.preferredUplink };
   if (p.failOverCriterion != null) out.failOverCriterion = p.failOverCriterion;
   if (p.performanceClass != null) out.performanceClass = performanceClass(net, p.performanceClass, `${at}.performanceClass`);

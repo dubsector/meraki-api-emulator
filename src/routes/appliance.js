@@ -61,9 +61,13 @@ function portOf(net, portId) {
   return port;
 }
 
+// The device views name access policies differently from the network port.
+const POLICY_TYPES = { '8021x-radius': '802.1X', 'mac-radius': 'MAC RADIUS', 'hybrid-radius': 'hybrid', 'access-manager': 'access-manager', open: 'open' };
+const POLICY_NAMES = Object.fromEntries(Object.entries(POLICY_TYPES).map(([k, v]) => [v, k]));
+
 // The org-wide port view: one WAN port per uplink, then the LAN ports. Where
 // an uplink lands on a LAN port (the MX67's port 2), that port is flexible.
-function interfacePorts(mx) {
+export function interfacePorts(mx) {
   const iface = (n) => ({ name: `GigabitEthernet0/0/${n}`, slot: 0, subslot: 0, number: n });
   const lan = appliancePorts(mx.net);
   const wan = mx.uplinks.map((u, i) => ({
@@ -76,8 +80,8 @@ function interfacePorts(mx) {
   }));
   const downlink = (p) => {
     const out = { mode: p.type, sgt: { id: p.sgt?.id == null ? null : String(p.sgt.id) } };
-    if (p.type === 'access') return { ...out, access: { vlan: String(p.vlan), policy: { type: p.accessPolicy ?? 'open' } } };
-    return { ...out, trunk: { nativeVlan: String(p.vlan), allowedVlans: String(p.allowedVlans).split(','), sgt: { enabled: !!p.sgt?.enabled } } };
+    if (p.type === 'access') return { ...out, access: { vlan: String(p.vlan), policy: { type: POLICY_TYPES[p.accessPolicy] ?? p.accessPolicy ?? 'open' } } };
+    return { ...out, trunk: { nativeVlan: p.dropUntaggedTraffic ? '0' : String(p.vlan), allowedVlans: String(p.allowedVlans).split(','), sgt: { enabled: !!p.sgt?.enabled } } };
   };
   return [
     ...wan,
@@ -104,19 +108,98 @@ function interfacesByDevice(ctx) {
   return { items };
 }
 
+// A VLAN number from a device port body, as the network port stores it.
+function vlanNumber(v, at, min = 1) {
+  const n = /^\d{1,4}$/.test(String(v)) ? Number(v) : NaN;
+  if (!(n >= min && n <= 4094)) throw badRequest(`'${at}' must be a VLAN number from ${min} to 4094`);
+  return n;
+}
+
+// The device port update writes the same per-port overrides as the network
+// port PUT. WAN ports carry the uplinks, which stay as they are.
+function updateDevicePort(ctx) {
+  const mx = mxDevice(ctx);
+  const net = mx.net;
+  if (!net) throw badRequest('This appliance is not in a network');
+  if (net.template) throw badRequest('This network is bound to a config template, so its settings can only be changed on the template');
+  const b = ctx.body;
+  const i = b.interface;
+  if (i?.number == null) throw badRequest("'interface.number' is required");
+  const find = () => interfacePorts(mx).find((p) => p.interface.number === i.number && p.interface.slot === (i.slot ?? 0) && p.interface.subslot === (i.subslot ?? 0));
+  const port = find();
+  if (!port) throw notFound('Port');
+  const { mode, layer } = port.personality;
+  const want = b.personality;
+  if (want?.mode != null && want.mode !== mode) throw badRequest(`Port ${port.number} is a ${mode.toUpperCase()} port and can't be converted`);
+  if (want?.layer?.mode != null && want.layer.mode !== layer.mode) throw badRequest(`Port ${port.number} only operates at layer ${layer.mode}`);
+  if (mode === 'wan') {
+    if (b.downlink != null) throw badRequest("'downlink' only applies to LAN ports");
+    if (b.enabled === false) throw badRequest(`Port ${port.number} carries uplink ${port.name} and can't be disabled in the emulator`);
+    if (b.uplink?.type != null && b.uplink.type !== port.uplink.type) throw badRequest(`'uplink.type' must be '${port.uplink.type}' on port ${port.number}`);
+    return port;
+  }
+  if (b.uplink != null) throw badRequest("'uplink' only applies to WAN ports");
+  const lan = appliancePorts(net).find((p) => p.number === i.number);
+  const patch = {};
+  if (b.enabled != null) patch.enabled = b.enabled;
+  const d = b.downlink;
+  if (d) {
+    const type = d.mode ?? lan.type;
+    if (type !== 'access' && type !== 'trunk') throw badRequest("'downlink.mode' must be 'access' or 'trunk'");
+    if (d[type === 'access' ? 'trunk' : 'access'] != null) throw badRequest(`'downlink.${type === 'access' ? 'trunk' : 'access'}' doesn't apply to ${type} ports`);
+    patch.type = type;
+    if (type === 'access') {
+      if (d.access?.vlan != null) patch.vlan = vlanNumber(d.access.vlan, 'downlink.access.vlan');
+      const policy = d.access?.policy?.type;
+      if (policy != null) patch.accessPolicy = POLICY_NAMES[policy];
+      patch.dropUntaggedTraffic = false;
+    } else {
+      const t = d.trunk ?? {};
+      if (t.nativeVlan != null) {
+        const n = vlanNumber(t.nativeVlan, 'downlink.trunk.nativeVlan', 0);
+        patch.dropUntaggedTraffic = n === 0;
+        if (n) patch.vlan = n;
+      }
+      const native = patch.dropUntaggedTraffic ?? lan.dropUntaggedTraffic ? null : patch.vlan ?? lan.vlan;
+      if (t.allowedVlans != null) {
+        const list = t.allowedVlans;
+        if (!list.length) throw badRequest("'downlink.trunk.allowedVlans' must hold at least one VLAN, or 'all'");
+        if (list.includes('all')) {
+          if (list.length > 1) throw badRequest("'all' can't be combined with other VLANs in 'downlink.trunk.allowedVlans'");
+          patch.allowedVlans = 'all';
+        } else {
+          const nums = [...new Set(list.map((v, k) => vlanNumber(v, `downlink.trunk.allowedVlans[${k}]`)))];
+          if (native != null && !nums.includes(native)) throw badRequest(`'downlink.trunk.allowedVlans' must include the native VLAN ${native}`);
+          patch.allowedVlans = nums.join(',');
+        }
+      }
+      if (t.sgt?.enabled != null) patch.sgt = { enabled: t.sgt.enabled };
+    }
+    if (d.sgt && 'id' in d.sgt) {
+      const id = d.sgt.id;
+      if (id != null && !/^\d{1,9}$/.test(String(id))) throw badRequest("'downlink.sgt.id' must be an adaptive policy group ID");
+      patch.sgt = { ...patch.sgt, id: id == null ? null : Number(id) };
+    }
+  }
+  const overrides = (configOf(net).portOverrides ??= {});
+  overrides[lan.number] = merge(overrides[lan.number] || {}, patch);
+  return find();
+}
+
 // ── VLANs and addressing ──
 
-function overlaps(a, b) {
+export function overlaps(a, b) {
   const [na, ba] = parseCidr(a);
   const [nb, bb] = parseCidr(b);
   const size = 2 ** (32 - Math.min(ba, bb));
   return Math.floor(na / size) === Math.floor(nb / size);
 }
 
-function checkAddressing(v, others) {
+function checkAddressing(v, others, c) {
   if (!parseCidr(v.subnet)) throw badRequest("'subnet' must be an IPv4 CIDR such as 192.168.10.0/24");
   if (!ipInCidr(v.applianceIp, v.subnet)) throw badRequest("'applianceIp' must be an address inside 'subnet'");
   for (const o of others) if (overlaps(o.subnet, v.subnet)) throw badRequest(`'subnet' overlaps the subnet of VLAN ${o.id}`);
+  for (const l3 of c.applianceL3Interfaces?.list ?? []) if (overlaps(l3.ipv4.subnet, v.subnet)) throw badRequest(`'subnet' overlaps the subnet of L3 interface ${l3.interfaceId}`);
 }
 
 function vlansOf(ctx) {
@@ -159,7 +242,7 @@ function createVlan(ctx) {
   if (c.vlans.some((v) => v.id === String(n))) throw badRequest(`VLAN ${n} already exists`);
   if (!subnet || !applianceIp) throw badRequest("'subnet' and 'applianceIp' are required");
   const v = merge(newVlan(netOf(ctx), n, name, subnet, applianceIp), rest);
-  checkAddressing(v, c.vlans);
+  checkAddressing(v, c.vlans, c);
   c.vlans.push(v);
   c.vlans.sort((a, b) => Number(a.id) - Number(b.id));
   limit(c.vlans, 'VLANs');
@@ -172,7 +255,7 @@ function updateVlan(ctx) {
   const v = vlanOf(c, ctx.params.vlanId);
   const { id, ...patch } = ctx.body;
   const next = merge(structuredClone(v), patch);
-  checkAddressing(next, c.vlans.filter((o) => o !== v));
+  checkAddressing(next, c.vlans.filter((o) => o !== v), c);
   const vpn = c.siteToSite.subnets.find((s) => s.localSubnet === v.subnet);
   if (vpn) vpn.localSubnet = next.subnet;
   return Object.assign(v, next);
@@ -209,7 +292,7 @@ function singleLanOf(ctx) {
   return c.singleLan;
 }
 
-function localSubnets(c) {
+export function localSubnets(c) {
   return c.vlansEnabled ? c.vlans.map((v) => v.subnet) : [c.singleLan.subnet];
 }
 
@@ -363,6 +446,7 @@ export default [
       return portOf(net, ctx.params.portId);
     },
   },
+  { op: 'createDeviceApplianceInterfacesPortsUpdate', method: 'POST', path: '/devices/{serial}/appliance/interfaces/ports/update', status: 200, handler: updateDevicePort },
   {
     op: 'getNetworkApplianceVlans',
     path: '/networks/{networkId}/appliance/vlans',
@@ -393,7 +477,7 @@ export default [
     handler: (ctx) => {
       const lan = singleLanOf(ctx);
       const next = merge(structuredClone(lan), ctx.body);
-      checkAddressing(next, []);
+      checkAddressing(next, [], mxConfig(ctx));
       return Object.assign(lan, next);
     },
   },
