@@ -58,6 +58,7 @@ const CONDITIONAL = [
   [/^\[\]\.clientId$/, 'getNetworkSwitchDhcpV4ServersSeen', 'discovered (client) servers only'],
   [/^\.rtspUrl$/, 'getDeviceCameraVideoSettings', 'external RTSP turned on (cameras start with it off)'],
   [/^\.(spareSerial|uplinkMode)$/, 'getNetworkApplianceWarmSpare', 'warm spare enabled with a second MX'],
+  [/^\.spareSerial$/, 'getDeviceSwitchWarmSpare', 'switch warm spare enabled (switches start without one)'],
   [/^\.wan[12]$/, 'getNetworkApplianceWarmSpare', 'warm spare in virtual uplink mode, wan2 only on a primary with two WANs'],
   [/^\.routerId$/, 'getNetworkApplianceVpnBgp', 'a router ID set through the PUT (networks start without one)'],
   [/^\.md5AuthenticationKey$/, 'getNetworkSwitchRoutingOspf', 'MD5 authentication turned on (OSPF starts with it off)'],

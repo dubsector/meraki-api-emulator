@@ -7,6 +7,7 @@ import { stored } from '../config.js';
 import { badRequest, notFound } from '../http.js';
 import { inRange, ipInCidr, parseCidr, parseIp } from '../validate.js';
 import { devOf, limit, netOf, newId, requireModel, requireProduct } from './common.js';
+import { warmSparePair } from './switchsettings.js';
 
 const DEV = '/devices/{serial}/switch/routing';
 const IFACES = `${DEV}/interfaces`;
@@ -58,6 +59,8 @@ function switchOf(ctx) {
   if (!seriesOf(dev)) throw badRequest(`${dev.model} switches do not support layer 3 routing`);
   const stack = stackHolding(dev);
   if (stack) throw badRequest(`Switch '${dev.serial}' is in stack '${stack.name}', so its layer 3 settings are under the switch stack routing endpoints`);
+  const pair = warmSparePair(dev);
+  if (pair?.spare === dev) throw badRequest(`Switch '${dev.serial}' is the warm spare for '${pair.primary.serial}', which holds the layer 3 settings`);
   return switchRouter(dev);
 }
 

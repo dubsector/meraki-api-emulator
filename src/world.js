@@ -748,7 +748,7 @@ export function moveNetwork(world, net, dest) {
 
 // Settings kept on a network outside its config, since they name its own
 // devices or items. They go with the product they belong to.
-const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', cameraProfiles: 'camera', mqttBrokers: 'camera' };
+const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', mqttBrokers: 'camera' };
 
 // Merges networks with different product types into one. Each product's
 // devices and settings come from the network that had it; network-wide

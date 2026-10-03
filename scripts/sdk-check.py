@@ -1175,7 +1175,48 @@ def policyobjects():
         check("deleteOrganizationPolicyObject", len(o.getOrganizationPolicyObjects(org)) == 11 and o.getOrganizationPolicyObjectsGroups(org) == [])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects]
+@scenario
+def switchsettings():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o = d.organizations
+        s = d.switch
+        org = acme(o.getOrganizations())
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        hq = nets["HQ - San Francisco"]
+        sw = o.getOrganizationDevices(org, networkIds=[hq], productTypes=["switch"])
+        core = next(x["serial"] for x in sw if x["model"] == "MS390-48UX")
+        f2, f3 = sorted(x["serial"] for x in sw if x["model"] == "MS250-48FP")
+
+        stp = s.updateNetworkSwitchStp(hq, rstpEnabled=True, stpBridgePriority=[{"switches": [core], "stpPriority": 4096}])
+        check("updateNetworkSwitchStp", s.getNetworkSwitchStp(hq) == stp and stp["stpBridgePriority"][0]["switches"] == [core], stp)
+        mtu = s.updateNetworkSwitchMtu(hq, defaultMtuSize=9000, overrides=[{"switches": [f2, f3], "mtuSize": 1500}])
+        check("updateNetworkSwitchMtu", s.getNetworkSwitchMtu(hq) == mtu and mtu["defaultMtuSize"] == 9000, mtu)
+        storm = s.updateNetworkSwitchStormControl(hq, broadcastThreshold=30, multicastThreshold=30, treatTheseTrafficTypesAsOneThreshold=["broadcast", "multicast"])
+        check("updateNetworkSwitchStormControl", s.getNetworkSwitchStormControl(hq) == storm and storm["unknownUnicastThreshold"] == 100, storm)
+        ami = s.updateNetworkSwitchAlternateManagementInterface(hq, enabled=True, vlanId=10, protocols=["snmp", "syslog"], switches=[{"serial": f2, "alternateManagementIp": "10.1.10.20"}])
+        check("updateNetworkSwitchAlternateManagementInterface", s.getNetworkSwitchAlternateManagementInterface(hq) == ami and ami["switches"][0]["serial"] == f2, ami)
+
+        ports = [{"serial": core, "portId": p} for p in ("10", "11")]
+        lag = s.createNetworkSwitchLinkAggregation(hq, switchPorts=ports)
+        check("createNetworkSwitchLinkAggregation", s.getNetworkSwitchLinkAggregations(hq) == [lag] and lag["switchPorts"] == ports, lag)
+        lag = s.updateNetworkSwitchLinkAggregation(hq, lag["id"], switchPorts=ports + [{"serial": core, "portId": "12"}])
+        check("updateNetworkSwitchLinkAggregation", len(s.getNetworkSwitchLinkAggregations(hq)[0]["switchPorts"]) == 3, lag)
+        try:
+            s.createNetworkSwitchLinkAggregation(hq, switchPorts=ports)
+            check("createNetworkSwitchLinkAggregation refuses taken ports", False, "no error")
+        except meraki.APIError as e:
+            check("createNetworkSwitchLinkAggregation refuses taken ports", e.status == 400, e.message)
+        s.deleteNetworkSwitchLinkAggregation(hq, lag["id"])
+        check("deleteNetworkSwitchLinkAggregation", s.getNetworkSwitchLinkAggregations(hq) == [])
+
+        spare = s.updateDeviceSwitchWarmSpare(f2, True, spareSerial=f3)
+        check("updateDeviceSwitchWarmSpare", spare == {"enabled": True, "primarySerial": f2, "spareSerial": f3} and s.getDeviceSwitchWarmSpare(f3) == spare, spare)
+        off = s.updateDeviceSwitchWarmSpare(f2, False)
+        check("getDeviceSwitchWarmSpare after disabling", off == s.getDeviceSwitchWarmSpare(f2) and not off["enabled"], off)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
