@@ -62,7 +62,8 @@ const CONDITIONAL = [
   [/^\.wan[12]$/, 'getNetworkApplianceWarmSpare', 'warm spare in virtual uplink mode, wan2 only on a primary with two WANs'],
   [/^\.routerId$/, 'getNetworkApplianceVpnBgp', 'a router ID set through the PUT (networks start without one)'],
   [/^\.md5AuthenticationKey$/, 'getNetworkSwitchRoutingOspf', 'MD5 authentication turned on (OSPF starts with it off)'],
-  [/^\.(major|minor)$/, 'getNetworkWirelessBluetoothSettings', "'Non-unique' major and minor assignment (networks start in 'Unique' mode)"],  [/\.ports\[\]\.pskGroupId$/, /WirelessEthernetPortsProfiles?$/, 'a PSK group set on a port (the default profile has none)'],
+  [/^\.(major|minor)$/, 'getNetworkWirelessBluetoothSettings', "'Non-unique' major and minor assignment (networks start in 'Unique' mode)"],
+  [/\.ports\[\]\.pskGroupId$/, /WirelessEthernetPortsProfiles?$/, 'a PSK group set on a port (the default profile has none)'],
 ];
 
 function conditional(op, field) {

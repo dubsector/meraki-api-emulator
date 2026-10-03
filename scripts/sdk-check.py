@@ -1489,7 +1489,7 @@ def cameraroles():
 
         p = c.createNetworkCameraWirelessProfile(net, "Cams", {"name": "cam-net", "authMode": "psk", "psk": "secret123"})
         eap = c.createNetworkCameraWirelessProfile(net, "EAP", {"name": "cam-eap", "authMode": "8021x-radius", "encryptionMode": "wpa-eap"}, identity={"username": "cam", "password": "hunter22"})
-        check("createNetworkCameraWirelessProfile keeps the identity password", eap["identity"] == {"username": "cam"} and p["ssid"]["encryptionMode"] == "wpa", eap)
+        check("createNetworkCameraWirelessProfile returns the identity", eap["identity"] == {"username": "cam", "password": "hunter22"} and p["ssid"]["encryptionMode"] == "wpa", eap)
         upd = c.updateNetworkCameraWirelessProfile(net, p["id"], name="Cams 2")
         check("getNetworkCameraWirelessProfiles, then get and update one", c.getNetworkCameraWirelessProfiles(net) == [upd, eap] and c.getNetworkCameraWirelessProfile(net, p["id"]) == upd, upd)
         ids = c.updateDeviceCameraWirelessProfiles(serial, {"primary": p["id"], "secondary": eap["id"]})

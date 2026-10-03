@@ -257,13 +257,13 @@ describe('cameras and MQTT brokers', () => {
     return r.body;
   };
 
-  test('camera wireless profiles check their SSID and keep the identity password', async () => {
+  test('camera wireless profiles check their SSID and return the identity', async () => {
     fresh();
     const p = await newWireless();
     assert.match(p.id, /^\d{18}$/);
     assert.deepEqual(p, { id: p.id, name: 'Cams', appliedDeviceCount: 0, ssid: { name: 'cam-net', authMode: 'psk', encryptionMode: 'wpa', psk: 'secret123' } });
     const eap = await newWireless({ name: 'EAP', ssid: { name: 'cam-eap', encryptionMode: 'wpa-eap' }, identity: { username: 'cam', password: 'hunter22' } });
-    assert.deepEqual([eap.ssid, eap.identity], [{ name: 'cam-eap', authMode: '8021x-radius', encryptionMode: 'wpa-eap' }, { username: 'cam' }]);
+    assert.deepEqual([eap.ssid, eap.identity], [{ name: 'cam-eap', authMode: '8021x-radius', encryptionMode: 'wpa-eap' }, { username: 'cam', password: 'hunter22' }]);
     assert.deepEqual((await sb.get(`${N}/camera/wirelessProfiles`)).body.map((x) => x.name), ['Cams', 'EAP']);
     assert.deepEqual((await sb.get(`${N}/camera/wirelessProfiles/${eap.id}`)).body, eap);
     assert.match(await errorOf(sb.post(`${N}/camera/wirelessProfiles`, { name: 'x' })), /'ssid' is required/);
@@ -276,7 +276,7 @@ describe('cameras and MQTT brokers', () => {
     // Switching to 802.1X needs an identity; the old key comes back with PSK.
     assert.match(await errorOf(sb.put(`${N}/camera/wirelessProfiles/${p.id}`, { ssid: { authMode: '8021x-radius' } })), /identity.username/);
     const u = (await sb.put(`${N}/camera/wirelessProfiles/${p.id}`, { ssid: { authMode: '8021x-radius' }, identity: { username: 'a', password: 'b' } })).body;
-    assert.deepEqual([u.ssid.name, u.ssid.psk, u.identity], ['cam-net', undefined, { username: 'a' }]);
+    assert.deepEqual([u.ssid.name, u.ssid.psk, u.identity], ['cam-net', undefined, { username: 'a', password: 'b' }]);
     assert.equal((await sb.put(`${N}/camera/wirelessProfiles/${p.id}`, { ssid: { encryptionMode: 'wpa' } })).body.ssid.psk, 'secret123');
     assert.match(await errorOf(sb.get(`/networks/${austin.id}/camera/wirelessProfiles`)), /'camera'/);
     assert.equal((await sb.get(`${N}/camera/wirelessProfiles/123`)).status, 404);
@@ -358,17 +358,19 @@ describe('cameras and MQTT brokers', () => {
     assert.equal((await sb.get(`${O}/${id}`)).status, 404);
   });
 
-  test('camera roles follow combined networks and removed cameras', async () => {
+  test('camera roles follow split networks and removed cameras', async () => {
     fresh();
     const O = `/organizations/${hq.org.id}/camera/roles`;
-    const id = (await sb.post(O, { name: 'Guard', appliedOnDevices: [{ id: cam.serial, permissionScopeId: '1' }], appliedOnNetworks: [{ id: hq.id, permissionScopeId: '2' }] })).body.id;
+    const id = (await sb.post(O, { name: 'Guard', appliedOnDevices: [{ id: cam.serial, permissionScopeId: '1' }, { tag: 'lobby', inNetworksWithId: hq.id, permissionScopeId: '2' }], appliedOnNetworks: [{ id: hq.id, permissionScopeId: '2' }] })).body.id;
+    // The network's cameras go to the camera part, and so do roles naming it.
     const parts = (await sb.post(`${N}/split`)).body.resultingNetworks;
-    const main = parts.find((n) => n.productTypes[0] === 'appliance');
-    assert.equal((await sb.get(`${O}/${id}`)).body.appliedOnNetworks[0].id, main.id);
     const camNet = parts.find((n) => n.productTypes[0] === 'camera');
+    assert.equal((await sb.get(`${O}/${id}`)).body.appliedOnNetworks[0].id, camNet.id);
+    assert.equal(sb.world.orgs.find((o) => o.id === hq.org.id).cameraRoles.list[0].appliedOnDevices[1].inNetworksWithId, camNet.id);
     assert.equal((await sb.post(`/networks/${camNet.id}/devices/remove`, { serial: cam.serial })).status, 204);
-    assert.deepEqual((await sb.get(`${O}/${id}`)).body.appliedOnDevices, []);
-    assert.equal((await sb.del(`/networks/${main.id}`)).status, 204);
-    assert.deepEqual((await sb.get(`${O}/${id}`)).body.appliedOnNetworks, []);
+    assert.deepEqual((await sb.get(`${O}/${id}`)).body.appliedOnDevices.map((e) => e.tag), ['lobby']);
+    assert.equal((await sb.del(`/networks/${camNet.id}`)).status, 204);
+    const after = (await sb.get(`${O}/${id}`)).body;
+    assert.deepEqual([after.appliedOnDevices, after.appliedOnNetworks], [[], []]);
   });
 });

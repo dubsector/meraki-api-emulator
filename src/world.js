@@ -684,6 +684,7 @@ export function swapDevice(world, dev, spare, afterAction) {
   world.deviceBySerial.delete(dev.serial);
   Object.assign(dev, { serial: spare.serial, mac: spare.mac, model: spare.model, info: MODELS[spare.model], orderNumber: spare.orderNumber, claimedAt: spare.claimedAt });
   delete dev.memoryCache; // sized to the old model's RAM
+  delete dev.cameraOnboarding; // the new camera starts onboarded
   world.deviceBySerial.set(dev.serial, dev);
   if (dev.productType === 'switch') renameSwitch(dev.net, old.serial, dev.serial);
   for (const l of org.licenses || []) if (l.deviceSerial === dev.serial) l.networkId = dev.net.id;
@@ -725,6 +726,14 @@ function repointWireless(org, fromId, toId) {
   for (const d of org.wirelessDeployments?.list ?? []) if (d.networkId === fromId) d.networkId = toId;
 }
 
+// Camera roles naming a network. A split sends them to the camera part.
+function repointCamera(org, fromId, toId) {
+  for (const r of org.cameraRoles?.list ?? []) {
+    r.appliedOnNetworks = r.appliedOnNetworks.flatMap((e) => (e.networkId !== fromId ? [e] : toId ? [Object.assign(e, { networkId: toId })] : []));
+    r.appliedOnDevices = r.appliedOnDevices.flatMap((e) => (e.inNetworksWithId !== fromId ? [e] : toId ? [Object.assign(e, { inNetworksWithId: toId })] : []));
+  }
+}
+
 // Points what names a network at its new ID, or drops it when toId is null:
 // admin privileges, network groups, camera roles and spokes' VPN hubs.
 function repoint(org, fromId, toId) {
@@ -739,10 +748,7 @@ function repoint(org, fromId, toId) {
   for (const g of org.networkGroups?.list ?? []) g.networkIds = swap(g.networkIds, (id) => id, () => toId);
   for (const p of org.vpnPeers?.list ?? []) if (p.networkIds) p.networkIds = swap(p.networkIds, (id) => id, () => toId);
   repointWireless(org, fromId, toId);
-  for (const r of org.cameraRoles?.list ?? []) {
-    r.appliedOnNetworks = r.appliedOnNetworks.flatMap((e) => (e.networkId !== fromId ? [e] : toId ? [Object.assign(e, { networkId: toId })] : []));
-    r.appliedOnDevices = r.appliedOnDevices.flatMap((e) => (e.inNetworksWithId !== fromId ? [e] : toId ? [Object.assign(e, { inNetworksWithId: toId })] : []));
-  }
+  repointCamera(org, fromId, toId);
   for (const n of org.networks) {
     const s2s = n.config?.siteToSite;
     if (!s2s?.hubs.length) continue;
@@ -902,6 +908,7 @@ export function splitNetwork(world, net) {
   world.networkById.delete(net.id);
   net.deleted = true;
   if (wl) repointWireless(org, net.id, wl.id);
+  if (cam) repointCamera(org, net.id, cam.id);
   repoint(org, net.id, main.id);
   dropCaches(org);
   return parts;

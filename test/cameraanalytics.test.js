@@ -143,8 +143,13 @@ describe('camera analytics, artifacts and onboarding', () => {
     assert.match(await errorOf(sb.put(D, { parameters: [{ name: 'x', value: '1' }, { name: 'x', value: '2' }] })), /unique/);
     assert.match(await errorOf(sb.put(D, { artifactId: null })), /'artifactId' is required/);
     assert.match(await errorOf(sb.del(`${A}/1`)), new RegExp(`used by camera ${cams[0].serial}`));
+    // The camera's network can't leave the organization holding the artifact.
+    const dest = (await sb.post('/organizations', { name: 'Acme West' })).body;
+    const move = { network: { id: cams[0].net.id }, organizations: { target: { id: dest.id } } };
+    assert.match((await sb.post(`${O}/networks/moves`, move)).body.result.reason, /custom analytics artifacts/);
     assert.deepEqual((await sb.put(D, { enabled: false, artifactId: null })).body, { enabled: false, artifactId: null, parameters: [{ name: 'detection_threshold', value: 0.5 }] });
     assert.equal((await sb.del(`${A}/1`)).status, 204);
+    assert.equal((await sb.post(`${O}/networks/moves`, move)).body.result.status, 'completed');
     const sw = sb.world.devices.find((d) => d.productType === 'switch');
     assert.equal((await sb.put(`/devices/${sw.serial}/camera/customAnalytics`, {})).status, 400);
   });
@@ -158,8 +163,14 @@ describe('camera analytics, artifacts and onboarding', () => {
     assert.deepEqual((await sb.get(`${S}?networkIds[]=${net}`)).body.map((x) => x.serial), all.filter((x) => x.networkId === net).map((x) => x.serial));
     assert.deepEqual((await sb.put(S, { serial: cams[0].serial, wirelessCredentialsSent: false })).body, { success: true });
     assert.deepEqual((await sb.get(`${S}?serials[]=${cams[0].serial}`)).body, [{ networkId: net, serial: cams[0].serial, status: 'pending onboarding', updatedAt: '2026-09-29T18:30:00.000000Z' }]);
-    await sb.put(S, { serial: cams[0].serial, wirelessCredentialsSent: true });
-    assert.equal((await sb.get(`${S}?serials[]=${cams[0].serial}`)).body[0].status, 'complete');
+    // A camera swapped in starts onboarded, as of its own claim.
+    const spare = sb.world.orgs[0].spares.find((d) => d.productType === 'camera');
+    assert.equal((await sb.post(`${O}/inventory/devices/swaps/bulk`, { swaps: [{ devices: { old: cams[0].serial, new: spare.serial }, afterAction: 'remove from network' }] })).status, 207);
+    const swapped = (await sb.get(`${S}?serials[]=${spare.serial}`)).body[0];
+    assert.deepEqual([swapped.status, swapped.updatedAt], ['complete', new Date(spare.claimedAt * 1000).toISOString().replace('Z', '000Z')]);
+    await sb.put(S, { serial: cams[1].serial, wirelessCredentialsSent: false });
+    await sb.put(S, { serial: cams[1].serial, wirelessCredentialsSent: true });
+    assert.equal((await sb.get(`${S}?serials[]=${cams[1].serial}`)).body[0].status, 'complete');
     assert.match(await errorOf(sb.put(S, { wirelessCredentialsSent: true })), /'serial' is required/);
     assert.match(await errorOf(sb.put(S, { serial: cams[0].serial })), /'wirelessCredentialsSent' is required/);
     const sw = sb.world.devices.find((d) => d.productType === 'switch');

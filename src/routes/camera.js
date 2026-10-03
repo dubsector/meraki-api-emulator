@@ -376,7 +376,7 @@ function checkWireless(b, self) {
   return { ssid: { name: ssid.name ?? cur.name, authMode, psk }, identity: { username, password } };
 }
 
-// The identity password is kept but never sent back, like RADIUS secrets.
+// The spec's answer carries the key and the identity password alike.
 function wirelessJson(p, net) {
   const psk = p.ssid.authMode === 'psk';
   return {
@@ -384,7 +384,7 @@ function wirelessJson(p, net) {
     name: p.name,
     appliedDeviceCount: net.cameras.filter((d) => Object.values(assignedIds(d)).includes(p.id)).length,
     ssid: { name: p.ssid.name, authMode: p.ssid.authMode, encryptionMode: ENCRYPTION[p.ssid.authMode], ...(psk && { psk: p.ssid.psk }) },
-    ...(!psk && { identity: { username: p.identity.username } }),
+    ...(!psk && { identity: { username: p.identity.username, password: p.identity.password } }),
   };
 }
 
