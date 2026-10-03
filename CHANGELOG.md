@@ -2,6 +2,29 @@
 
 Versions follow [semantic versioning](https://semver.org/). While the version starts with `0.`, a new minor version can change responses, IDs or defaults, and a patch version only fixes bugs.
 
+## 0.3.0
+
+The emulator now answers 800 operations (418 reads and 382 writes), up from 521. [ENDPOINTS.md](ENDPOINTS.md) lists them all.
+
+- Policy objects and policy object groups, which firewall rules can name as `OBJ(id)` and `GRP(id)`.
+- Switches: STP, MTU, storm control, the alternate management interface, link aggregations, warm spare, port schedules, the DHCP server policy with ARP inspection trusted servers and warnings, and cloning one switch's settings onto others.
+- Wireless: radio overrides, RF profile assignments, AutoRF, Air Marshal scan results, rules and default policy, Bluetooth settings and clients, billing plans, location scanning and its receivers, MQTT settings, the alternate management interface, SSID profiles, the L2 isolation allowlist, OpenRoaming, AP port profiles, zero touch deployments and RadSec certificate authorities.
+- Cameras: wireless profiles, permission scopes and roles, area and crossing line boundaries with detections, custom analytics and onboarding statuses.
+- Login security, SAML SSO with its IdPs and roles, and organization SNMP.
+- Adaptive policy groups, ACLs, policies and settings, organization-wide firewall rulesets, group policies and their assignments, and client policy views.
+- MX: local and split DNS profiles and records, L3 interfaces, delegated IPv6 prefixes, the VRF setting, Wi-Fi on MX models with a radio, warm spare redundancy views and vMX tokens.
+- Meraki authentication users, NetFlow, traffic analysis, VLAN profiles, branding policies, early access opt-ins, splash themes, Insight, organization cloning and AP auto locate.
+
+Changes to existing responses:
+
+- Wireless networks can have MQTT brokers, so `GET /networks/{networkId}/mqttBrokers` on a wireless network without cameras answers `200` instead of `400`.
+- An SSID splash `themeId` has to be a splash theme of the organization. Any string was stored before.
+- Combining networks is refused while a wireless user and a client VPN user share an email.
+- An MX port update refuses an unknown adaptive policy group `sgt.id`.
+- A network bound to a config template reads multicast settings from the template and refuses writes to them, like STP and MTU. `switchProfiles` entries are refused everywhere.
+- MX L3, inbound, cellular and VPN firewall rules accept policy object references, and a network whose rules name them can't move to another organization.
+- A swapped switch keeps its place in STP priorities and MTU and multicast overrides.
+
 ## 0.2.0
 
 The emulator now answers 521 operations (295 reads and 226 writes), up from 317. [ENDPOINTS.md](ENDPOINTS.md) lists them all.

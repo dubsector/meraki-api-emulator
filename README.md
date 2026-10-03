@@ -29,19 +29,19 @@ curl -H 'X-Cisco-Meraki-API-Key: anything' http://localhost:8765/api/v1/organiza
 With Docker:
 
 ```sh
-docker run --rm -p 8765:8765 ghcr.io/dubsector/meraki-api-emulator:0.2
+docker run --rm -p 8765:8765 ghcr.io/dubsector/meraki-api-emulator:0.3
 ```
 
 The image listens on all interfaces inside the container, and `-p 8765:8765` publishes it on every interface of your machine too. Use `-p 127.0.0.1:8765:8765` to keep it local. Options go after the image name or in environment variables, the same as on the command line (see [Options](#options)):
 
 ```sh
 docker run --rm -p 8765:8765 -e MERAKI_EMULATOR_NOW=2026-01-15T09:00:00Z \
-  ghcr.io/dubsector/meraki-api-emulator:0.2 --fault-rate 0.05
+  ghcr.io/dubsector/meraki-api-emulator:0.3 --fault-rate 0.05
 ```
 
 For another port, change the host side: `-p 9000:8765`. If the port inside the container has to change too, set `PORT` rather than passing `--port`, since the image's health check reads the port from the environment.
 
-Tags follow the release version: `0.2.0` for an exact release, `0.2` for the latest patch of it, and `latest`. While the version starts with `0.`, a new minor version can change responses, so pin `0.2` or an exact version in tests. To build the image yourself, run `docker build -t meraki-api-emulator .` in a clone.
+Tags follow the release version: `0.3.0` for an exact release, `0.3` for the latest patch of it, and `latest`. While the version starts with `0.`, a new minor version can change responses, so pin `0.3` or an exact version in tests. To build the image yourself, run `docker build -t meraki-api-emulator .` in a clone.
 
 The image leaves out npm and npx, which the emulator doesn't need. CI scans each build with [Trivy](https://trivy.dev) and fails on high or critical vulnerabilities that have a fix, and the published image is rescanned weekly, with findings under the repository's Security tab.
 
@@ -52,7 +52,7 @@ Next to an app under test, give the emulator a `meraki.com` name as a network al
 ```yaml
 services:
   meraki:
-    image: ghcr.io/dubsector/meraki-api-emulator:0.2
+    image: ghcr.io/dubsector/meraki-api-emulator:0.3
     environment:
       MERAKI_EMULATOR_NOW: 2026-01-15T09:00:00Z
     networks:
