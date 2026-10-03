@@ -1,11 +1,12 @@
 // AP radio overrides, RF profile assignments and AutoRF (RRM) settings.
 
 import { stored } from '../config.js';
-import { arrayParam, badRequest, paginateItems } from '../http.js';
+import { badRequest, paginateItems } from '../http.js';
 import { RADIO, SETTINGS } from '../sim/rf.js';
 import { iso, MIN } from '../time.js';
 import { byId, bySerial, devOf, filterDevices, orgOf, requireModel } from './common.js';
-import { FIVE_GHZ, SIX_GHZ, apProfile, profileOf, wirelessNet, orgAps } from './wireless.js';
+import { FIVE_GHZ, SIX_GHZ, apProfile, orgAps, profileOf, wirelessNet, wirelessNets } from './wireless.js';
+import { wirelessNetIn } from './wirelesslocation.js';
 
 const BAND_OF = Object.fromEntries(Object.entries(RADIO).map(([band, index]) => [index, band]));
 const CHANNELS = { 2.4: Array.from({ length: 14 }, (_, i) => i + 1), 5: FIVE_GHZ, 6: SIX_GHZ };
@@ -93,8 +94,9 @@ function updateRrm(ctx) {
   }
   if (manual.start === manual.end) throw badRequest('Manual Busy Hour must start and end at different hours');
   const ai = b.ai?.enabled ?? rrm.ai.enabled;
-  const fra = b.fra?.enabled ?? rrm.fra.enabled;
-  if (fra && !ai) throw badRequest('FRA can only be enabled when AI-RRM is enabled');
+  if (b.fra?.enabled && !ai) throw badRequest('FRA can only be enabled when AI-RRM is enabled');
+  // Turning AI-RRM off turns FRA off with it.
+  const fra = ai && (b.fra?.enabled ?? rrm.fra.enabled);
   if (schedule?.mode != null) rrm.busyHour.schedule.mode = schedule.mode;
   rrm.busyHour.schedule.manual = manual;
   if (b.busyHour?.minimizeChanges?.enabled != null) rrm.busyHour.minimizeChanges.enabled = b.busyHour.minimizeChanges.enabled;
@@ -110,11 +112,7 @@ function recalculate(ctx) {
   const ids = ctx.body.networkIds;
   if (!Array.isArray(ids) || !ids.length) throw badRequest("'networkIds' must list at least one network");
   if (ids.length > 15) throw badRequest("'networkIds' is limited to 15 networks");
-  for (const id of ids) {
-    const net = org.networks.find((n) => n.id === id);
-    if (!net) throw badRequest(`Network '${id}' is not in this organization`);
-    if (!net.productTypes.includes('wireless')) throw badRequest(`Network '${id}' has no wireless devices`);
-  }
+  for (const id of ids) wirelessNetIn(org, id);
   // Channels come from the radio sim, so nothing moves; the job just reports when it would end.
   return { estimatedCompletedAt: iso(ctx.now + 5 * MIN) };
 }
@@ -152,8 +150,7 @@ export default [
     handler: (ctx) => {
       const order = ctx.query.get('sortOrder') || 'ascending';
       if (order !== 'ascending' && order !== 'descending') throw badRequest("'sortOrder' must be 'ascending' or 'descending'");
-      const ids = arrayParam(ctx.query, 'networkIds');
-      const nets = orgOf(ctx).networks.filter((n) => n.productTypes.includes('wireless') && (!ids.length || ids.includes(n.id))).sort(byId);
+      const nets = wirelessNets(ctx).sort(byId);
       if (order === 'descending') nets.reverse();
       return paginateItems(ctx, nets, (n) => n.id, { def: 1000, max: 1000 }, rrmJson);
     },

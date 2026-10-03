@@ -8,7 +8,7 @@ import { arrayParam, badRequest, boolParam, intParam, paginate, paginateItems, t
 import { CPU_COUNT, cpuSamples } from '../sim/memory.js';
 import { eachOutage, isDown } from '../sim/outages.js';
 import { presenceIn } from '../sim/presence.js';
-import { RADIO, WIDTH, apChannel, apPower, bssid } from '../sim/rf.js';
+import { RADIO, SETTINGS, apChannel, apPower, apWidth, bssid } from '../sim/rf.js';
 import { buckets, clientUsage } from '../sim/usage.js';
 import { clientLoss } from '../sim/wireless.js';
 import { DAY, HOUR, iso, isoMicro } from '../time.js';
@@ -300,7 +300,7 @@ function ssidStatuses(ctx) {
   const rows = [];
   for (const ap of orgAps(ctx)) {
     const sets = [];
-    const broadcasting = !isDown(ap, ctx.now);
+    const up = !isDown(ap, ctx.now);
     configOf(ap.net).ssids.forEach((s, number) => {
       if (hide && !s.enabled) return;
       for (const band of ap.info.bands) {
@@ -309,7 +309,7 @@ function ssidStatuses(ctx) {
         sets.push({
           bssid: id,
           ssid: { name: s.name, number, enabled: Boolean(s.enabled), advertised: Boolean(s.enabled) && s.visible !== false },
-          radio: { band, channel: apChannel(ap, band), channelWidth: WIDTH[band], power: apPower(ap, band), isBroadcasting: broadcasting, index: RADIO[band] },
+          radio: { band, channel: apChannel(ap, band), channelWidth: apWidth(ap, band), power: apPower(ap, band), isBroadcasting: up && ap.radio?.[SETTINGS[band]]?.enabled !== false, index: RADIO[band] },
         });
       }
     });
