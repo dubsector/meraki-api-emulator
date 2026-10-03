@@ -126,7 +126,7 @@ describe('switch layer 3 routing and multicast', () => {
     assert.match(await errorOf(sb.get(`/networks/${sb.world.orgs[1].networks[0].id}/switch/routing/ospf`)), /product type 'switch'/);
   });
 
-  test('a bound network takes OSPF from its template but sets its own multicast overrides', async () => {
+  test('a bound network takes OSPF and multicast from its template and keeps its rendezvous points', async () => {
     fresh();
     const org = sb.world.orgs[0];
     const austin = org.networks[1];
@@ -135,9 +135,13 @@ describe('switch layer 3 routing and multicast', () => {
     const B = `/networks/${austin.id}/switch/routing`;
     assert.equal((await sb.get(`${B}/ospf`)).body.enabled, false);
     assert.match(await errorOf(sb.put(`${B}/ospf`, { enabled: true })), /bound to a config template/);
+    assert.equal((await sb.get(`${B}/multicast`)).status, 200);
     const [profile] = (await sb.get(`/organizations/${org.id}/configTemplates/${t.id}/switch/profiles`)).body;
     const overrides = [{ switchProfiles: [profile.switchProfileId], igmpSnoopingEnabled: false, floodUnknownMulticastTrafficEnabled: false }];
-    assert.deepEqual((await sb.put(`${B}/multicast`, { overrides })).body.overrides, overrides);
+    assert.match(await errorOf(sb.put(`${B}/multicast`, { overrides })), /bound to a config template/);
+    // Rendezvous points name the network's own interfaces, so they stay writable.
+    assert.equal((await sb.get(`${B}/multicast/rendezvousPoints`)).status, 200);
+    assert.match(await errorOf(sb.post(`${B}/multicast/rendezvousPoints`, { interfaceIp: '192.0.2.2', multicastGroup: 'Any' })), /No layer 3 interface/);
   });
 
   test('multicast settings and overrides', async () => {
@@ -156,7 +160,7 @@ describe('switch layer 3 routing and multicast', () => {
     assert.match(await errorOf(sb.put(M, { overrides: [{ switches: [core.serial], stacks: [stack.id], ...flags }] })), /exactly one of/);
     assert.match(await errorOf(sb.put(M, { overrides: [{ switches: ['Q2XX-0000-0000'], ...flags }] })), /is not in this network/);
     assert.match(await errorOf(sb.put(M, { overrides: [{ switchProfiles: ['1234'], ...flags }] })), /config template/);
-    assert.match(await errorOf(sb.put(M, { overrides: [{ switches: [core.serial], ...flags }, { switches: [core.serial], ...flags }] })), /more than one override/);
+    assert.match(await errorOf(sb.put(M, { overrides: [{ switches: [core.serial], ...flags }, { switches: [core.serial], ...flags }] })), /more than one entry of 'overrides'/);
 
     // A deleted stack drops out of the overrides.
     assert.equal((await sb.del(`/networks/${hq.id}/switch/stacks/${stack.id}`)).status, 204);

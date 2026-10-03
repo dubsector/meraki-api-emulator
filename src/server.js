@@ -68,8 +68,9 @@ export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin,
 
 // Network settings that come from the config template a network is bound to.
 // Warm spare names the network's own MXes, so it stays local, as do switch
-// link aggregations and the alternate management interface.
-const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance(?!\/warmSpare)|wireless|switch\/(?:settings|accessControlLists|accessPolicies|qosRules|dscpToCosMappings|routing\/ospf|stp|mtu|stormControl|dhcpServerPolicy|portSchedules)|groupPolicies|syslogServers|devices\/syslog|snmp|alerts|webhooks\/(?:httpServers|payloadTemplates)|settings)\b/;
+// link aggregations, the alternate management interface and multicast
+// rendezvous points.
+const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance(?!\/warmSpare)|wireless|switch\/(?:settings|accessControlLists|accessPolicies|qosRules|dscpToCosMappings|routing\/(?:ospf|multicast(?!\/rendezvousPoints))|stp|mtu|stormControl|dhcpServerPolicy|portSchedules)|groupPolicies|syslogServers|devices\/syslog|snmp|alerts|webhooks\/(?:httpServers|payloadTemplates)|settings)\b/;
 
 // One entry per path template, holding a route per method.
 function compile(routes) {

@@ -154,6 +154,25 @@ describe('device provisioning', () => {
     assert.equal((await sb.get(`/organizations/${org.id}/inventory/devices/swaps/bulk/1`)).status, 404);
   });
 
+  test('a swapped switch keeps its STP priority and MTU and multicast overrides', async () => {
+    fresh();
+    const aus = byCode('AUS');
+    const sw = aus.switches[0];
+    const oldSerial = sw.serial;
+    const S = `/networks/${aus.id}/switch`;
+    const flags = { igmpSnoopingEnabled: false, floodUnknownMulticastTrafficEnabled: false };
+    assert.equal((await sb.put(`${S}/stp`, { stpBridgePriority: [{ switches: [oldSerial], stpPriority: 4096 }] })).status, 200);
+    assert.equal((await sb.put(`${S}/mtu`, { overrides: [{ switches: [oldSerial], mtuSize: 1500 }] })).status, 200);
+    assert.equal((await sb.put(`${S}/routing/multicast`, { overrides: [{ switches: [oldSerial], ...flags }] })).status, 200);
+    const spare = org.spares.find((s) => s.model === sw.model);
+    const r = await sb.post(`/organizations/${org.id}/inventory/devices/swaps/bulk`, { swaps: [{ devices: { old: oldSerial, new: spare.serial }, afterAction: 'remove from network' }] });
+    assert.equal(r.status, 207, JSON.stringify(r.body));
+    assert.equal((await sb.get(`/organizations/${org.id}/inventory/devices/swaps/bulk/${r.body.jobId}`)).body.swaps[0].status, 'complete');
+    assert.deepEqual((await sb.get(`${S}/stp`)).body.stpBridgePriority, [{ switches: [spare.serial], stpPriority: 4096 }]);
+    assert.deepEqual((await sb.get(`${S}/mtu`)).body.overrides, [{ switches: [spare.serial], mtuSize: 1500 }]);
+    assert.deepEqual((await sb.get(`${S}/routing/multicast`)).body.overrides, [{ switches: [spare.serial], ...flags }]);
+  });
+
   test('swaps that cannot happen fail on their own', async () => {
     fresh();
     const aus = byCode('AUS');

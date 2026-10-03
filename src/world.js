@@ -663,6 +663,15 @@ export function removeDevice(world, dev) {
   dropCaches(org);
 }
 
+// Switch settings that list switches by serial: STP priorities, MTU and
+// multicast overrides. A swapped switch keeps its place in them.
+const SERIAL_LISTS = [['switchStp', 'stpBridgePriority'], ['switchMtu', 'overrides'], ['switchMulticast', 'overrides']];
+
+function renameSwitch(net, from, to) {
+  const c = net.template ? net.template.config : net.config;
+  for (const [key, list] of SERIAL_LISTS) for (const e of c?.[key]?.[list] ?? []) if (e.switches) e.switches = e.switches.map((s) => (s === from ? to : s));
+}
+
 // The new device takes the old one's place with all its settings and links.
 // The old one goes back to inventory, or leaves it and frees its license.
 export function swapDevice(world, dev, spare, afterAction) {
@@ -676,6 +685,7 @@ export function swapDevice(world, dev, spare, afterAction) {
   Object.assign(dev, { serial: spare.serial, mac: spare.mac, model: spare.model, info: MODELS[spare.model], orderNumber: spare.orderNumber, claimedAt: spare.claimedAt });
   delete dev.memoryCache; // sized to the old model's RAM
   world.deviceBySerial.set(dev.serial, dev);
+  if (dev.productType === 'switch') renameSwitch(dev.net, old.serial, dev.serial);
   for (const l of org.licenses || []) if (l.deviceSerial === dev.serial) l.networkId = dev.net.id;
   if (dev.productType === 'wireless') for (const c of dev.net.clients) if (c.ap === dev && !dev.info.bands.includes(c.band)) c.band = '5';
   dropCaches(org);
