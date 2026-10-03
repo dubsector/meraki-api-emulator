@@ -1801,7 +1801,58 @@ def mxinterfaces():
         check("getOrganizationApplianceRoutingVrfsSettings and update", before == {"enabled": False} and after == a.getOrganizationApplianceRoutingVrfsSettings(org) == {"enabled": True}, after)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces]
+@scenario
+def mxwireless():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        a = d.appliance
+        org = acme(d.organizations.getOrganizations())
+        nets = {x["name"]: x["id"] for x in d.organizations.getOrganizationNetworks(org)}
+        hq = nets["HQ - San Francisco"]
+        mx = next(x["serial"] for x in d.networks.getNetworkDevices(hq) if x["model"].startswith("MX"))
+
+        d.organizations.claimIntoOrganizationInventory(org, orders=[ACME_ORDER])
+        spare = next(r["serial"] for r in d.organizations.getOrganizationInventoryDevices(org, orderNumbers=[ACME_ORDER]) if r["model"] == "MX250")
+        d.networks.claimNetworkDevices(hq, [spare])
+        r = a.updateNetworkApplianceDevicesRedundancy(hq, True, mode="active-passive", designations=[{"serial": mx, "priority": 1}, {"serial": spare, "priority": 2}], uplink={"mode": "virtual", "interfaces": [{"name": "wan1", "addresses": [{"address": "198.51.100.250"}]}, {"name": "wan2", "addresses": [{"address": "203.0.113.250"}]}]})
+        ws = a.getNetworkApplianceWarmSpare(hq)
+        check("updateNetworkApplianceDevicesRedundancy matches the warm spare", r["enabled"] and [x["serial"] for x in r["designations"]] == [mx, spare] and ws["spareSerial"] == spare and ws["wan1"]["ip"] == "198.51.100.250", (r, ws))
+        r = a.createNetworkApplianceDevicesRedundancySwap(hq)
+        check("createNetworkApplianceDevicesRedundancySwap", r["designations"][0]["serial"] == spare and a.getNetworkApplianceWarmSpare(hq)["primarySerial"] == spare, r)
+        rows = a.getOrganizationApplianceDevicesRedundancyByNetwork(org, total_pages="all", perPage=5)
+        check(f"getOrganizationApplianceDevicesRedundancyByNetwork perPage=5, all pages ({len(rows)} networks)", len(rows) == 5 and next(x for x in rows if x["networkId"] == hq) == r, rows)
+
+        # No seeded MX has a radio, so the Wi-Fi routes answer 400 on them.
+        for name, call in [
+            ("getDeviceApplianceRadioSettings", lambda: a.getDeviceApplianceRadioSettings(mx)),
+            ("updateDeviceApplianceRadioSettings", lambda: a.updateDeviceApplianceRadioSettings(mx, rfProfileId=None)),
+            ("getNetworkApplianceRfProfiles", lambda: a.getNetworkApplianceRfProfiles(hq)),
+            ("createNetworkApplianceRfProfile", lambda: a.createNetworkApplianceRfProfile(hq, "Office")),
+            ("getNetworkApplianceRfProfile", lambda: a.getNetworkApplianceRfProfile(hq, "1234")),
+            ("updateNetworkApplianceRfProfile", lambda: a.updateNetworkApplianceRfProfile(hq, "1234", name="x")),
+            ("deleteNetworkApplianceRfProfile", lambda: a.deleteNetworkApplianceRfProfile(hq, "1234")),
+            ("getNetworkApplianceSsids", lambda: a.getNetworkApplianceSsids(hq)),
+            ("getNetworkApplianceSsid", lambda: a.getNetworkApplianceSsid(hq, "1")),
+            ("updateNetworkApplianceSsid", lambda: a.updateNetworkApplianceSsid(hq, "1", enabled=True)),
+        ]:
+            try:
+                call()
+                check(f"{name} on an MX without a radio raises", False)
+            except meraki.APIError as e:
+                check(f"{name} on an MX without a radio raises 400", e.status == 400 and "radio" in str(e.message), (e.status, e.message))
+
+        try:
+            a.createDeviceApplianceVmxAuthenticationToken(mx)
+            check("createDeviceApplianceVmxAuthenticationToken on an MX250 raises", False)
+        except meraki.APIError as e:
+            check("createDeviceApplianceVmxAuthenticationToken on an MX250 raises 400", e.status == 400, e.status)
+        nid = d.organizations.createOrganizationNetwork(org, "Cloud", ["appliance"])["id"]
+        vmx = d.networks.vmxNetworkDevicesClaim(nid, "small")["serial"]
+        t = a.createDeviceApplianceVmxAuthenticationToken(vmx)
+        check("createDeviceApplianceVmxAuthenticationToken", len(t["token"]) == 46 and t["expiresAt"] == (EVENTS_NOW + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"), t)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
