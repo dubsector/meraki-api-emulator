@@ -14,13 +14,17 @@ const PROFILES = '/networks/{networkId}/camera/qualityRetentionProfiles';
 const PROFILE = `${PROFILES}/{qualityRetentionProfileId}`;
 const BROKERS = '/networks/{networkId}/mqttBrokers';
 const BROKER = `${BROKERS}/{mqttBrokerId}`;
+const WIRELESS = '/networks/{networkId}/camera/wirelessProfiles';
 const MAX_PROFILES = 100;
+const MAX_WIRELESS = 100;
+const SLOTS = ['primary', 'secondary', 'backup'];
+const ENCRYPTION = { psk: 'wpa', '8021x-radius': 'wpa-eap' };
 const MAX_BROKERS = 100;
 const RETENTION_DAYS = 30; // what a camera with no profile cap keeps
 const LINK_TTL = 30 * MIN;
 const MAX_CLIP = 5 * MIN;
 const SECURITY_MODES = ['none', 'tls'];
-const MISSING = { qualityRetentionProfileId: '578149602163689000', mqttBrokerId: '578149602163689001', status: 404 };
+const MISSING = { qualityRetentionProfileId: '578149602163689000', mqttBrokerId: '578149602163689001', wirelessProfileId: '578149602163689002', status: 404 };
 
 // Profile videoSettings key and supported video per camera model.
 const VIDEO = {
@@ -56,6 +60,7 @@ const settingsOf = (dev) =>
     mqttBrokerId: null,
     audioDetection: false,
     detectionModelId: DETECTION_MODELS[0].id,
+    wirelessProfiles: { primary: null, secondary: null, backup: null },
   });
 
 // A profile or broker that was deleted, or belongs to a network the camera
@@ -325,6 +330,90 @@ const brokers = collection({
   missing: MISSING,
 });
 
+// ── Camera wireless profiles ──
+
+const wirelessOf = (net) => (net.cameraWirelessProfiles ??= { created: 0, list: [] });
+
+// Assigned IDs resolve on read, so a deleted profile drops out of its slot.
+function assignedIds(dev) {
+  const ids = settingsOf(dev).wirelessProfiles;
+  const list = wirelessOf(dev.net).list;
+  return Object.fromEntries(SLOTS.map((k) => [k, list.some((p) => p.id === ids[k]) ? ids[k] : null]));
+}
+
+function updateAssigned(ctx) {
+  const dev = cameraOf(ctx);
+  const ids = ctx.body.ids;
+  if (ids == null) throw badRequest("'ids' is required");
+  const list = wirelessOf(dev.net).list;
+  for (const k of SLOTS) {
+    if (ids[k] != null && !list.some((p) => p.id === ids[k])) throw badRequest(`Camera wireless profile ${ids[k]} does not exist in this network`);
+  }
+  const given = SLOTS.map((k) => ids[k]).filter((id) => id != null);
+  if (new Set(given).size < given.length) throw badRequest('A wireless profile can only be assigned to one slot');
+  settingsOf(dev).wirelessProfiles = Object.fromEntries(SLOTS.map((k) => [k, ids[k] ?? null]));
+  return { ids: assignedIds(dev) };
+}
+
+// Works out the profile's SSID after the body: the auth mode and encryption
+// mode must agree, PSK mode needs a key and 802.1X mode an identity.
+function checkWireless(b, self) {
+  const ssid = b.ssid ?? {};
+  const cur = self?.ssid ?? {};
+  if (!self && (ssid.name == null || !ssid.name.trim())) throw badRequest("'ssid.name' is required");
+  if (self && ssid.name != null && !ssid.name.trim()) throw badRequest("'ssid.name' must not be empty");
+  if (ssid.encryptionMode != null && !Object.values(ENCRYPTION).includes(ssid.encryptionMode)) throw badRequest("'ssid.encryptionMode' must be one of: wpa, wpa-eap");
+  const byEncryption = Object.keys(ENCRYPTION).find((m) => ENCRYPTION[m] === ssid.encryptionMode);
+  const authMode = ssid.authMode ?? byEncryption ?? cur.authMode ?? 'psk';
+  if (ssid.encryptionMode != null && ssid.encryptionMode !== ENCRYPTION[authMode]) throw badRequest(`'ssid.encryptionMode' must be '${ENCRYPTION[authMode]}' when 'ssid.authMode' is '${authMode}'`);
+  const psk = ssid.psk ?? cur.psk ?? null;
+  if (ssid.psk != null && (ssid.psk.length < 8 || ssid.psk.length > 63)) throw badRequest("'ssid.psk' must be between 8 and 63 characters");
+  const id = b.identity ?? {};
+  const username = id.username ?? self?.identity.username ?? null;
+  const password = id.password ?? self?.identity.password ?? null;
+  if (authMode === 'psk' && !psk) throw badRequest("'ssid.psk' is required when 'ssid.authMode' is 'psk'");
+  if (authMode === '8021x-radius' && (!username || !password)) throw badRequest("'identity.username' and 'identity.password' are required when 'ssid.authMode' is '8021x-radius'");
+  return { ssid: { name: ssid.name ?? cur.name, authMode, psk }, identity: { username, password } };
+}
+
+// The identity password is kept but never sent back, like RADIUS secrets.
+function wirelessJson(p, net) {
+  const psk = p.ssid.authMode === 'psk';
+  return {
+    id: p.id,
+    name: p.name,
+    appliedDeviceCount: net.cameras.filter((d) => Object.values(assignedIds(d)).includes(p.id)).length,
+    ssid: { name: p.ssid.name, authMode: p.ssid.authMode, encryptionMode: ENCRYPTION[p.ssid.authMode], ...(psk && { psk: p.ssid.psk }) },
+    ...(!psk && { identity: { username: p.identity.username } }),
+  };
+}
+
+const wirelessProfiles = collection({
+  ops: {
+    list: 'getNetworkCameraWirelessProfiles',
+    create: 'createNetworkCameraWirelessProfile',
+    get: 'getNetworkCameraWirelessProfile',
+    update: 'updateNetworkCameraWirelessProfile',
+    delete: 'deleteNetworkCameraWirelessProfile',
+  },
+  path: WIRELESS,
+  param: 'wirelessProfileId',
+  parent: cameraNet,
+  store: wirelessOf,
+  what: 'camera wireless profile',
+  kind: 'cameraWirelessProfile',
+  max: MAX_WIRELESS,
+  required: ['name', 'ssid'],
+  check: (ctx, net, b, self) => checkWireless(b, self),
+  blank: () => ({ name: null, ssid: null, identity: null }),
+  apply: (p, b, net, ctx, checked) => {
+    if (b.name != null) p.name = b.name;
+    Object.assign(p, checked);
+  },
+  json: wirelessJson,
+  missing: MISSING,
+});
+
 const clipSample = (world, now) => `startTimestamp=${iso(now - 10 * MIN)}&endTimestamp=${iso(now - 8 * MIN)}`;
 
 export default [
@@ -357,4 +446,8 @@ export default [
   ...profiles.routes,
   { op: 'getNetworkCameraSchedules', path: '/networks/{networkId}/camera/schedules', handler: (ctx) => schedulesOf(ctx, cameraNet(ctx)) },
   ...brokers.routes,
+  { op: 'getDeviceCameraWirelessProfiles', path: `${DEV}/wirelessProfiles`, handler: (ctx) => ({ ids: assignedIds(cameraOf(ctx)) }) },
+  { op: 'updateDeviceCameraWirelessProfiles', method: 'PUT', path: `${DEV}/wirelessProfiles`, handler: updateAssigned },
+  // The spec answers a create with 200.
+  ...wirelessProfiles.routes.map((r) => (r.method === 'POST' ? { ...r, status: 200 } : r)),
 ];
