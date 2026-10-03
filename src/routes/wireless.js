@@ -14,6 +14,7 @@ import { DAY, HOUR, iso, isoMicro } from '../time.js';
 import { merge } from '../validate.js';
 import { checkGroupId } from './adaptivepolicy.js';
 import { bySerial, devOf, netOf, orgOf, requireModel, requireProduct, round } from './common.js';
+import { themeIn } from './splash.js';
 
 export const BANDS = ['2.4', '5', '6'];
 const MB = 1024;
@@ -160,6 +161,9 @@ function splashSettings(net, number) {
     selfRegistration: { enabled: false, authorizationType: 'admin' },
   });
 }
+
+// A deleted splash theme reads as none.
+const splashJson = (net, s) => (s.themeId == null || themeIn(net.org, s.themeId) ? s : { ...s, themeId: null });
 
 // Fields that belong to other auth or IP assignment modes are dropped after the
 // merge (see shapeSsid). A new name also renames the SSID the simulated clients use.
@@ -519,7 +523,7 @@ export default [
     sample: { number: '1' },
     handler: (ctx) => {
       const net = wirelessNet(ctx);
-      return splashSettings(net, ssidOf(net, ctx).number);
+      return splashJson(net, splashSettings(net, ssidOf(net, ctx).number));
     },
   },
   {
@@ -529,7 +533,8 @@ export default [
     handler: (ctx) => {
       const net = wirelessNet(ctx);
       const { ssidNumber, ...patch } = ctx.body;
-      return merge(splashSettings(net, ssidOf(net, ctx).number), patch);
+      if (patch.themeId != null && !themeIn(net.org, patch.themeId)) throw badRequest("'themeId' must be the ID of a splash theme in this organization");
+      return splashJson(net, merge(splashSettings(net, ssidOf(net, ctx).number), patch));
     },
   },
   {

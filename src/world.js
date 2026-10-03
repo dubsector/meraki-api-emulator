@@ -775,8 +775,8 @@ function splitAdaptivePolicy(org, net, parts) {
 
 // Points what names a network at its new ID, or drops it when toId is null:
 // admin and SAML role privileges, network groups, camera roles, networks with
-// adaptive policy enabled, firewall rule VLANs, group policy VLAN assignments,
-// DNS profile assignments and spokes' VPN hubs.
+// adaptive policy enabled, early access opt-ins, branding policies, firewall rule
+// VLANs, group policy VLAN assignments, DNS profile assignments and spokes' VPN hubs.
 function repoint(org, fromId, toId) {
   const swap = (list, idOf, make) => {
     const i = list.findIndex((x) => idOf(x) === fromId);
@@ -790,6 +790,8 @@ function repoint(org, fromId, toId) {
   for (const g of org.networkGroups?.list ?? []) g.networkIds = swap(g.networkIds, (id) => id, () => toId);
   for (const p of org.vpnPeers?.list ?? []) if (p.networkIds) p.networkIds = swap(p.networkIds, (id) => id, () => toId);
   if (org.adaptivePolicySettings) org.adaptivePolicySettings.enabledNetworks = swap(org.adaptivePolicySettings.enabledNetworks, (id) => id, () => toId);
+  for (const o of org.earlyAccessOptIns?.list ?? []) o.networkIds = swap(o.networkIds, (id) => id, () => toId);
+  for (const p of org.brandingPolicies?.list ?? []) if (p.appliesTo === 'All admins of networks...') p.values = swap(p.values, (id) => id, () => toId);
   repointWireless(org, fromId, toId);
   repointCamera(org, fromId, toId);
   repointFirewallRules(org, fromId, toId);
