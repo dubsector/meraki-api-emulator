@@ -752,6 +752,16 @@ function repointGroupPolicies(org, fromId, toId) {
   a.vlans = a.vlans.flatMap((r) => (r.networkId !== fromId ? [r] : toId && !taken.has(r.vlanId) ? [Object.assign(r, { networkId: toId })] : []));
 }
 
+// Adaptive policy on a split network stays on for every part whose devices tag
+// traffic: switches, access points and appliances.
+function splitAdaptivePolicy(org, net, parts) {
+  const s = org.adaptivePolicySettings;
+  const i = s ? s.enabledNetworks.indexOf(net.id) : -1;
+  if (i < 0) return;
+  const ids = parts.filter((p) => ['switch', 'wireless', 'appliance'].includes(p.productTypes[0])).map((p) => p.id);
+  s.enabledNetworks.splice(i, 1, ...ids);
+}
+
 // Points what names a network at its new ID, or drops it when toId is null:
 // admin and SAML role privileges, network groups, camera roles, networks with
 // adaptive policy enabled, firewall rule VLANs, group policy VLAN assignments
@@ -933,6 +943,7 @@ export function splitNetwork(world, net) {
   net.deleted = true;
   if (wl) repointWireless(org, net.id, wl.id);
   if (cam) repointCamera(org, net.id, cam.id);
+  splitAdaptivePolicy(org, net, parts);
   repoint(org, net.id, main.id);
   dropCaches(org);
   return parts;

@@ -401,7 +401,7 @@ function cloneEntry(list, srcList, src, dst, values, withStacks) {
 // The source's ports as the target takes them. Schedules and access policies
 // only carry within one network.
 function clonedPort(src, srcPort, dst, dstPort) {
-  const { portId, linkNegotiationCapabilities, schedule, ...c } = portConfig(src.net, src, srcPort);
+  const { portId, linkNegotiationCapabilities, schedule, adaptivePolicyGroup, ...c } = portConfig(src.net, src, srcPort);
   const speeds = portConfig(dst.net, dst, dstPort).linkNegotiationCapabilities;
   if (!speeds.includes(c.linkNegotiation)) c.linkNegotiation = 'Auto negotiate';
   if (src.net !== dst.net) {

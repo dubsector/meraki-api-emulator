@@ -252,7 +252,7 @@ function checkRule(org, b, r) {
   if (b.rulesetId != null && !rulesetsOf(org).list.some((s) => s.rulesetId === String(b.rulesetId))) throw badRequest(`Firewall ruleset ${b.rulesetId} does not exist in this organization`);
   inRange(b.priority, 1, MAX_PRIORITY, 'priority');
   const rulesetId = b.rulesetId != null ? String(b.rulesetId) : r?.rulesetId;
-  if (!r && rulesOf(org).list.filter((x) => x.rulesetId === rulesetId).length >= MAX_RULES) throw badRequest(`Firewall rulesets are limited to ${MAX_RULES} rules in the emulator`);
+  if (rulesetId !== r?.rulesetId && rulesOf(org).list.filter((x) => x.rulesetId === rulesetId).length >= MAX_RULES) throw badRequest(`Firewall rulesets are limited to ${MAX_RULES} rules in the emulator`);
   return {
     sources: b.sources != null ? checkBloc(org, b.sources, 'sources') : null,
     destinations: b.destinations != null ? checkBloc(org, b.destinations, 'destinations') : null,

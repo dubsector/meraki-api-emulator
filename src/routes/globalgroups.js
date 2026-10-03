@@ -106,9 +106,11 @@ function resolveVlans(org, list) {
   return list.map((x, i) => {
     const id = x.interfaceId;
     if (typeof id !== 'string' || !id) throw badRequest(`'vlans[${i}].interfaceId' is required`);
-    const found = all.find((v) => named(v, id));
-    if (!found) throw badRequest(`'vlans[${i}].interfaceId' names ${id}, which is not an appliance VLAN in this organization`);
-    return found;
+    const found = all.filter((v) => named(v, id));
+    if (!found.length) throw badRequest(`'vlans[${i}].interfaceId' names ${id}, which is not an appliance VLAN in this organization`);
+    // Networks bound to one template (or copied from one network) share interface IDs.
+    if (found.length > 1) throw badRequest(`'vlans[${i}].interfaceId' ${id} is a VLAN of more than one network; name it as <networkId>_vlan_<vlanId>`);
+    return found[0];
   });
 }
 
