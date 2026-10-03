@@ -8,6 +8,9 @@ export const MODELS = {
   MX75: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 1000, lan: [3, 12], ram: 4096 },
   MX68: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 600, lan: [3, 12], ram: 2048 },
   MX67: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 450, lan: [2, 5], ram: 2048 },
+  // W models have a Wi-Fi radio. None is seeded.
+  MX68W: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 600, lan: [3, 12], ram: 2048, radio: true },
+  MX67W: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 450, lan: [2, 5], ram: 2048, radio: true },
   // Virtual MXs have no LAN ports; they only come from claim/vmx.
   'VMX-S': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 200, lan: [], ram: 2048 },
   'VMX-M': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 500, lan: [], ram: 4096 },

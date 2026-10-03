@@ -219,4 +219,81 @@ describe('MX firewall, NAT and warm spare', () => {
     assert.equal((await ok(sb.put(`${N}/warmSpare`, { enabled: true, spareSerial: spare }))).spareSerial, spare);
     assert.equal((await ok(sb.post(`${N}/warmSpare/swap`))).primarySerial, spare);
   });
+  test('redundancy is the warm spare in another shape and both views agree', async () => {
+    fresh();
+    const R = `${N}/devices/redundancy`;
+    const byNet = async () => (await collect(sb.get, `/organizations/${org.id}/appliance/devices/redundancy/byNetwork?perPage=5`)).find((x) => x.networkId === hq.id);
+    const primary = hq.mx.serial;
+    const off = { networkId: hq.id, name: hq.name, enabled: false, mode: 'disabled', designations: [{ serial: primary, priority: 1 }], uplink: { mode: 'public', interfaces: [], sharing: { enabled: false, vlanId: null, byInterface: [] } } };
+    assert.deepEqual(await byNet(), off);
+    assert.match(await errorOf(sb.post(`${R}/swap`)), /not enabled/);
+    assert.match(await errorOf(sb.put(R, {})), /enabled/);
+    assert.match(await errorOf(sb.put(R, { enabled: true })), /designations.*spare/);
+    assert.match(await errorOf(sb.put(R, { enabled: true, mode: 'disabled' })), /mode/);
+    assert.match(await errorOf(sb.put(R, { enabled: false, mode: 'active-passive' })), /mode/);
+    const spare = await claimSpare();
+    assert.match(await errorOf(sb.put(R, { enabled: true, designations: [{ serial: primary, priority: 1 }] })), /two appliances/);
+    assert.match(await errorOf(sb.put(R, { enabled: true, designations: [{ serial: primary, priority: 1 }, { serial: primary, priority: 2 }] })), /different/);
+    assert.match(await errorOf(sb.put(R, { enabled: true, designations: [{ serial: primary, priority: 1 }, { serial: spare, priority: 1 }] })), /priority 1/);
+    assert.match(await errorOf(sb.put(R, { enabled: true, designations: [{ serial: primary, priority: 1 }, { serial: london.mx.serial, priority: 2 }] })), /not an MX/);
+    assert.match(await errorOf(sb.put(R, { enabled: true, uplink: { mode: 'virtual', interfaces: [{ name: 'wan3', addresses: [{ address: '198.51.100.250' }] }] } })), /wan1, wan2/);
+    assert.match(await errorOf(sb.put(R, { enabled: true, uplink: { sharing: { enabled: true } } })), /vlanId/);
+    assert.match(await errorOf(sb.put(R, { enabled: true, uplink: { sharing: { vlanId: '5000' } } })), /4094/);
+    assert.equal((await ok(sb.get(`${N}/warmSpare`))).enabled, false);
+
+    // Designations can name the spare as primary, which is a swap.
+    const set = await ok(
+      sb.put(R, {
+        enabled: true,
+        mode: 'active-passive',
+        designations: [{ serial: spare, priority: 1 }, { serial: primary, priority: 2 }],
+        uplink: {
+          mode: 'virtual',
+          interfaces: [
+            { name: 'wan1', addresses: [{ address: '198.51.100.250', subnet: '198.51.100.0/24' }] },
+            { name: 'wan2', addresses: [{ address: '203.0.113.250' }] },
+          ],
+          sharing: { enabled: true, vlanId: '100', byInterface: [{ name: 'wan1', parent: 'primary' }] },
+        },
+      }),
+    );
+    assert.deepEqual(set.designations, [{ serial: spare, priority: 1 }, { serial: primary, priority: 2 }]);
+    assert.deepEqual(set.uplink.interfaces, [
+      { name: 'wan1', addresses: [{ address: '198.51.100.250', subnet: '198.51.100.0/24' }] },
+      { name: 'wan2', addresses: [{ address: '203.0.113.250', subnet: '203.0.113.0/24' }] },
+    ]);
+    assert.deepEqual(set.uplink.sharing, { enabled: true, vlanId: '100', byInterface: [{ name: 'wan1', parent: 'primary' }] });
+    assert.deepEqual(await byNet(), set);
+    assert.deepEqual(await ok(sb.get(`${N}/warmSpare`)), {
+      enabled: true,
+      primarySerial: spare,
+      spareSerial: primary,
+      uplinkMode: 'virtual',
+      wan1: { ip: '198.51.100.250', subnet: '198.51.100.0/24' },
+      wan2: { ip: '203.0.113.250', subnet: '203.0.113.0/24' },
+    });
+
+    const swapped = await ok(sb.post(`${R}/swap`));
+    assert.deepEqual(swapped.designations, [{ serial: primary, priority: 1 }, { serial: spare, priority: 2 }]);
+    assert.equal((await ok(sb.get(`${N}/warmSpare`))).primarySerial, primary);
+    await ok(sb.post(`${N}/warmSpare/swap`));
+    assert.deepEqual((await byNet()).designations, set.designations);
+
+    // The old endpoint turning it off shows in the new one, and back.
+    await ok(sb.put(`${N}/warmSpare`, { enabled: false }));
+    assert.deepEqual({ ...(await byNet()), designations: null }, { ...off, designations: null, uplink: { ...off.uplink, sharing: set.uplink.sharing } });
+    const active = await ok(sb.put(R, { enabled: true, mode: 'active-active', designations: [{ serial: primary, priority: 1 }, { serial: spare, priority: 2 }] }));
+    assert.deepEqual([active.mode, active.uplink.mode], ['active-active', 'public']);
+    assert.equal((await ok(sb.get(`${N}/warmSpare`))).spareSerial, spare);
+  });
+
+  test('redundancy writes stay with a network bound to a template', async () => {
+    fresh();
+    const spare = await claimSpare();
+    const t = await ok(sb.post(`/organizations/${org.id}/configTemplates`, { name: 'From HQ', copyFromNetworkId: hq.id }), 201);
+    await ok(sb.post(`/networks/${hq.id}/bind`, { configTemplateId: t.id }));
+    const set = await ok(sb.put(`${N}/devices/redundancy`, { enabled: true, designations: [{ serial: hq.mx.serial, priority: 1 }, { serial: spare, priority: 2 }] }));
+    assert.equal(set.enabled, true);
+    assert.equal((await ok(sb.post(`${N}/devices/redundancy/swap`))).designations[0].serial, spare);
+  });
 });

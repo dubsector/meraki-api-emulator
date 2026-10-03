@@ -1,5 +1,6 @@
 // MX firewall settings, cellular firewall rules, 1:many NAT, static multicast
-// forwarding, uplink NAT, connectivity monitoring destinations and warm spare.
+// forwarding, uplink NAT, connectivity monitoring destinations and warm spare
+// (also shown as redundancy).
 // Each is a network setting built from its default on first read. None of the
 // MXes has a cellular uplink, so the cellular rules are stored and never used.
 
@@ -209,17 +210,19 @@ function checkVirtualIps(mx, b) {
   });
 }
 
-function updateWarmSpare(ctx) {
-  const net = mxNet(ctx);
-  const b = ctx.body;
-  const { ws, primary, spare } = roles(net);
+// Checks every field before changing the roles. `chosen` names both roles
+// (the redundancy designations); otherwise the primary stays and spareSerial
+// picks the spare.
+function applyWarmSpare(ctx, net, b, chosen) {
+  const { ws, primary: current, spare } = roles(net);
+  const primary = chosen?.primary ?? current;
   if (!b.enabled) {
     Object.assign(ws, { enabled: false, primary, spare: null, uplinkMode: null, virtualIp1: null, virtualIp2: null });
-    return warmSpareJson(net);
+    return;
   }
   if (!primary) throw badRequest('Warm spare needs an MX in this network');
-  let next = spare;
-  if (b.spareSerial != null) {
+  let next = chosen ? chosen.spare : spare;
+  if (!chosen && b.spareSerial != null) {
     next = ctx.world.deviceBySerial.get(b.spareSerial);
     if (!inNet(net, next)) throw badRequest(`'spareSerial' ${b.spareSerial} is not an MX in this network`);
     if (next === primary) throw badRequest("'spareSerial' must not be the primary appliance");
@@ -231,15 +234,127 @@ function updateWarmSpare(ctx) {
   const ips = { virtualIp1: b.virtualIp1 ?? ws.virtualIp1, virtualIp2: b.virtualIp2 ?? ws.virtualIp2 };
   if (uplinkMode === 'virtual') checkVirtualIps(net.mx, ips);
   Object.assign(ws, { enabled: true, primary, spare: next, uplinkMode, ...(uplinkMode === 'virtual' ? ips : { virtualIp1: null, virtualIp2: null }) });
+}
+
+function updateWarmSpare(ctx) {
+  const net = mxNet(ctx);
+  applyWarmSpare(ctx, net, ctx.body);
   return warmSpareJson(net);
+}
+
+function swapRoles(net) {
+  const { ws, primary, spare } = roles(net);
+  if (!ws.enabled || !spare) throw badRequest('Warm spare is not enabled on this network');
+  Object.assign(ws, { primary: spare, spare: primary });
 }
 
 function swapWarmSpare(ctx) {
   const net = mxNet(ctx);
-  const { ws, primary, spare } = roles(net);
-  if (!ws.enabled || !spare) throw badRequest('Warm spare is not enabled on this network');
-  Object.assign(ws, { primary: spare, spare: primary });
+  swapRoles(net);
   return warmSpareJson(net);
+}
+
+// ── Redundancy: the same warm spare, as the newer endpoints name it ──
+
+const HA_MODES = ['active-passive', 'active-active'];
+const SHARING_OFF = { enabled: false, vlanId: null, byInterface: [] };
+
+function redundancyJson(net) {
+  const { ws, primary, spare } = roles(net);
+  const on = ws.enabled && !!spare;
+  const designations = (on ? [primary, spare] : [primary]).filter(Boolean).map((d, i) => ({ serial: d.serial, priority: i + 1 }));
+  const interfaces = on && ws.uplinkMode === 'virtual' ? net.mx.uplinks.slice(0, 2).map((u, i) => ({ name: u.interface, addresses: [{ address: ws[`virtualIp${i + 1}`], subnet: wanSubnet(u) }] })) : [];
+  const sharing = ws.sharing ?? SHARING_OFF;
+  return {
+    networkId: net.id,
+    name: net.name,
+    enabled: on,
+    mode: on ? (ws.mode ?? 'active-passive') : 'disabled',
+    designations,
+    uplink: { mode: on ? ws.uplinkMode : 'public', interfaces, sharing: { enabled: sharing.enabled, vlanId: sharing.vlanId, byInterface: sharing.byInterface.map((x) => ({ ...x })) } },
+  };
+}
+
+// Designations name both MXes: priority 1 is the primary, 2 the spare.
+function checkDesignations(ctx, net, list) {
+  if (list.length !== 2) throw badRequest("'designations' must list two appliances, priorities 1 and 2");
+  const by = {};
+  for (const d of list) {
+    if (d.priority !== 1 && d.priority !== 2) throw badRequest("'designations.priority' must be 1 (primary) or 2 (spare)");
+    if (by[d.priority]) throw badRequest(`'designations' lists priority ${d.priority} more than once`);
+    const dev = d.serial == null ? null : ctx.world.deviceBySerial.get(d.serial);
+    if (!inNet(net, dev)) throw badRequest(`'designations.serial' ${d.serial} is not an MX in this network`);
+    by[d.priority] = dev;
+  }
+  if (by[1] === by[2]) throw badRequest("'designations' must name two different appliances");
+  return { primary: by[1], spare: by[2] };
+}
+
+// One virtual IP per WAN interface; the subnet, when given, must be the WAN's.
+function checkInterfaces(net, list, ips) {
+  const uplinks = net.mx?.uplinks.slice(0, 2) ?? [];
+  const seen = new Set();
+  for (const x of list) {
+    const i = uplinks.findIndex((u) => u.interface === x.name);
+    if (i < 0) throw badRequest(`'uplink.interfaces.name' must be one of ${uplinks.map((u) => u.interface).join(', ') || 'the MX WAN interfaces'}`);
+    if (seen.has(x.name)) throw badRequest(`'uplink.interfaces' lists ${x.name} more than once`);
+    seen.add(x.name);
+    const a = x.addresses ?? [];
+    if (a.length !== 1 || a[0]?.address == null) throw badRequest(`'uplink.interfaces.addresses' must hold one virtual IP for ${x.name}`);
+    if (a[0].subnet != null && a[0].subnet !== wanSubnet(uplinks[i])) throw badRequest(`'uplink.interfaces.addresses.subnet' must be ${x.name}'s subnet ${wanSubnet(uplinks[i])}`);
+    ips[`virtualIp${i + 1}`] = a[0].address;
+  }
+}
+
+function checkSharing(net, s, old) {
+  const out = { ...old, byInterface: old.byInterface.map((x) => ({ ...x })) };
+  if (s.enabled != null) out.enabled = s.enabled;
+  if (s.vlanId != null) {
+    const n = Number(s.vlanId);
+    if (!/^\d+$/.test(s.vlanId) || n < 1 || n > 4094) throw badRequest("'uplink.sharing.vlanId' must be a VLAN ID from 1 to 4094");
+    out.vlanId = String(n);
+  }
+  if (s.byInterface != null) {
+    const names = net.mx?.uplinks.slice(0, 2).map((u) => u.interface) ?? [];
+    const seen = new Set();
+    for (const x of s.byInterface) {
+      if (!names.includes(x.name)) throw badRequest(`'uplink.sharing.byInterface.name' must be one of ${names.join(', ') || 'the MX WAN interfaces'}`);
+      if (seen.has(x.name)) throw badRequest(`'uplink.sharing.byInterface' lists ${x.name} more than once`);
+      seen.add(x.name);
+      if (x.parent !== 'primary' && x.parent !== 'secondary') throw badRequest("'uplink.sharing.byInterface.parent' must be primary or secondary");
+    }
+    out.byInterface = s.byInterface.map((x) => ({ name: x.name, parent: x.parent }));
+  }
+  if (out.enabled && out.vlanId == null) throw badRequest("'uplink.sharing.vlanId' is required when uplink sharing is enabled");
+  return out;
+}
+
+function updateRedundancy(ctx) {
+  const net = mxNet(ctx);
+  const b = ctx.body;
+  if (typeof b.enabled !== 'boolean') throw badRequest("'enabled' must be true or false");
+  if (b.mode != null && (b.mode === 'disabled') === b.enabled) throw badRequest(b.enabled ? "'mode' must be active-passive or active-active when warm spare is enabled" : "'mode' must be disabled when warm spare is not enabled");
+  const ws = warmSpareOf(net);
+  const chosen = b.designations != null && b.enabled ? checkDesignations(ctx, net, b.designations) : null;
+  const ips = { virtualIp1: null, virtualIp2: null };
+  if (b.uplink?.interfaces != null) checkInterfaces(net, b.uplink.interfaces, ips);
+  const sharing = b.uplink?.sharing != null ? checkSharing(net, b.uplink.sharing, ws.sharing ?? SHARING_OFF) : ws.sharing;
+  if (b.enabled && !chosen && !roles(net).spare) throw badRequest("'designations' must name a spare (priority 2) to enable warm spare");
+  applyWarmSpare(ctx, net, { enabled: b.enabled, uplinkMode: b.uplink?.mode, ...ips }, chosen);
+  if (b.enabled && HA_MODES.includes(b.mode)) ws.mode = b.mode;
+  if (sharing) ws.sharing = sharing;
+  return redundancyJson(net);
+}
+
+function swapRedundancy(ctx) {
+  const net = mxNet(ctx);
+  swapRoles(net);
+  return redundancyJson(net);
+}
+
+function redundancyByNetwork(ctx) {
+  const nets = mxNets(orgOf(ctx), []);
+  return paginate(ctx, nets, (n) => n.id, { def: 50, min: 5, max: 1000 }).map(redundancyJson);
 }
 
 export default [
@@ -268,4 +383,7 @@ export default [
   { op: 'getNetworkApplianceWarmSpare', path: `${BASE}/warmSpare`, handler: (ctx) => warmSpareJson(mxNet(ctx)) },
   { op: 'updateNetworkApplianceWarmSpare', method: 'PUT', path: `${BASE}/warmSpare`, handler: updateWarmSpare },
   { op: 'swapNetworkApplianceWarmSpare', method: 'POST', path: `${BASE}/warmSpare/swap`, status: 200, handler: swapWarmSpare },
+  { op: 'updateNetworkApplianceDevicesRedundancy', method: 'PUT', path: `${BASE}/devices/redundancy`, handler: updateRedundancy },
+  { op: 'createNetworkApplianceDevicesRedundancySwap', method: 'POST', path: `${BASE}/devices/redundancy/swap`, status: 200, handler: swapRedundancy },
+  { op: 'getOrganizationApplianceDevicesRedundancyByNetwork', path: '/organizations/{organizationId}/appliance/devices/redundancy/byNetwork', handler: redundancyByNetwork },
 ];
