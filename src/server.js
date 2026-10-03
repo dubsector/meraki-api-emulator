@@ -22,6 +22,7 @@ import appliance from './routes/appliance.js';
 import shaping from './routes/shaping.js';
 import firewall from './routes/firewall.js';
 import vpn from './routes/vpn.js';
+import dns from './routes/dns.js';
 import clients from './routes/clients.js';
 import devices from './routes/devices.js';
 import firmware from './routes/firmware.js';
@@ -75,7 +76,7 @@ const GLUED_URL = new RegExp(`^${API_PREFIX}https?://`, 'i');
 export const SDK_HINT = 'This path has a full URL appended to the base URL. The Meraki Python SDK sends that when paging from a host outside meraki.com: use base_url="http://emulator.meraki.com/api/v1" with requests_proxy set to the emulator (see the README)';
 export const CONNECT_HINT = 'The emulator speaks plain HTTP, use an http:// base URL';
 
-export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...orgSecurity, ...licenses, ...templates, ...policyObjects, ...globalFirewall, ...globalGroups, ...adaptivePolicy, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...clients, ...networkwide, ...firmware, ...floorplans, ...appliance, ...firewall, ...vpn, ...shaping, ...switches, ...switchports, ...stacks, ...routing, ...switchPolicies, ...switchSettings, ...switchDhcp, ...wireless, ...wirelessstats, ...orgwireless, ...wirelessRadio, ...wirelessLocation, ...airMarshal, ...ssids, ...ssidProfiles, ...wirelessDevices, ...devices, ...camera, ...cameraRoles, ...cameraAnalytics, ...livetools, ...webhooks, ...actionBatches, ...identities].map((r) => ({ method: 'GET', ...r }));
+export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...orgSecurity, ...licenses, ...templates, ...policyObjects, ...globalFirewall, ...globalGroups, ...adaptivePolicy, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...clients, ...networkwide, ...firmware, ...floorplans, ...appliance, ...firewall, ...vpn, ...dns, ...shaping, ...switches, ...switchports, ...stacks, ...routing, ...switchPolicies, ...switchSettings, ...switchDhcp, ...wireless, ...wirelessstats, ...orgwireless, ...wirelessRadio, ...wirelessLocation, ...airMarshal, ...ssids, ...ssidProfiles, ...wirelessDevices, ...devices, ...camera, ...cameraRoles, ...cameraAnalytics, ...livetools, ...webhooks, ...actionBatches, ...identities].map((r) => ({ method: 'GET', ...r }));
 
 // Network settings that come from the config template a network is bound to.
 // Warm spare names the network's own MXes, so it stays local, as do switch

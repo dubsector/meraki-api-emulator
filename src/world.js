@@ -752,6 +752,17 @@ function repointGroupPolicies(org, fromId, toId) {
   a.vlans = a.vlans.flatMap((r) => (r.networkId !== fromId ? [r] : toId && !taken.has(r.vlanId) ? [Object.assign(r, { networkId: toId })] : []));
 }
 
+// MX DNS profile assignments. A network takes one profile of each kind, so a
+// row that would give the target a second one is dropped.
+function repointDns(org, fromId, toId) {
+  for (const k of ['applianceDnsLocalAssignments', 'applianceDnsSplitAssignments']) {
+    const a = org[k];
+    if (!a) continue;
+    const taken = a.list.some((r) => r.networkId === toId);
+    a.list = a.list.flatMap((r) => (r.networkId !== fromId ? [r] : toId && !taken ? [Object.assign(r, { networkId: toId })] : []));
+  }
+}
+
 // Adaptive policy on a split network stays on for every part whose devices tag
 // traffic: switches, access points and appliances.
 function splitAdaptivePolicy(org, net, parts) {
@@ -764,8 +775,8 @@ function splitAdaptivePolicy(org, net, parts) {
 
 // Points what names a network at its new ID, or drops it when toId is null:
 // admin and SAML role privileges, network groups, camera roles, networks with
-// adaptive policy enabled, firewall rule VLANs, group policy VLAN assignments
-// and spokes' VPN hubs.
+// adaptive policy enabled, firewall rule VLANs, group policy VLAN assignments,
+// DNS profile assignments and spokes' VPN hubs.
 function repoint(org, fromId, toId) {
   const swap = (list, idOf, make) => {
     const i = list.findIndex((x) => idOf(x) === fromId);
@@ -783,6 +794,7 @@ function repoint(org, fromId, toId) {
   repointCamera(org, fromId, toId);
   repointFirewallRules(org, fromId, toId);
   repointGroupPolicies(org, fromId, toId);
+  repointDns(org, fromId, toId);
   for (const n of org.networks) {
     const s2s = n.config?.siteToSite;
     if (!s2s?.hubs.length) continue;
