@@ -723,6 +723,8 @@ function repoint(org, fromId, toId) {
   for (const a of org.admins) a.networks = swap(a.networks, (n) => n.id, (n) => ({ ...n, id: toId }));
   for (const g of org.networkGroups?.list ?? []) g.networkIds = swap(g.networkIds, (id) => id, () => toId);
   for (const p of org.vpnPeers?.list ?? []) if (p.networkIds) p.networkIds = swap(p.networkIds, (id) => id, () => toId);
+  const rx = org.wirelessScanningReceivers;
+  if (rx) rx.list = rx.list.flatMap((r) => (r.networkId !== fromId ? [r] : toId ? [Object.assign(r, { networkId: toId })] : []));
   for (const n of org.networks) {
     const s2s = n.config?.siteToSite;
     if (!s2s?.hubs.length) continue;
@@ -758,7 +760,7 @@ export function moveNetwork(world, net, dest) {
 
 // Settings kept on a network outside its config, since they name its own
 // devices or items. They go with the product they belong to.
-const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', mqttBrokers: 'camera' };
+const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', mqttBrokers: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless' };
 
 // Merges networks with different product types into one. Each product's
 // devices and settings come from the network that had it; network-wide

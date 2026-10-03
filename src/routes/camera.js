@@ -273,7 +273,7 @@ const profiles = collection({
 // Brokers serve cameras (MV Sense) and sensors.
 function brokerNet(ctx) {
   const net = netOf(ctx);
-  if (!net.productTypes.some((p) => p === 'camera' || p === 'sensor')) throw badRequest("This endpoint requires a network with product type 'camera' or 'sensor'");
+  if (!net.productTypes.some((p) => p === 'camera' || p === 'sensor' || p === 'wireless')) throw badRequest("This endpoint requires a network with product type 'camera', 'sensor' or 'wireless'");
   return net;
 }
 

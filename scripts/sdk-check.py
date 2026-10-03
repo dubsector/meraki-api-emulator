@@ -1311,7 +1311,65 @@ def wirelessradio():
         check("getOrganizationWirelessAirMarshalSettingsByNetwork", len(by) == 5, by)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio]
+@scenario
+def wirelesslocation():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o = d.organizations
+        w = d.wireless
+        org = acme(o.getOrganizations())
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        hq, austin = nets["HQ - San Francisco"], nets["Branch - Austin"]
+        ap = sorted(x["serial"] for x in o.getOrganizationDevices(org, networkIds=[hq], productTypes=["wireless"]))[0]
+
+        bt = w.updateNetworkWirelessBluetoothSettings(hq, scanningEnabled=True, majorMinorAssignmentMode="Non-unique", major=7, minor=2)
+        check("updateNetworkWirelessBluetoothSettings", bt["scanningEnabled"] and bt["major"] == 7, bt)
+        check("getNetworkWirelessBluetoothSettings", w.getNetworkWirelessBluetoothSettings(hq) == bt, bt)
+        dev = w.updateDeviceWirelessBluetoothSettings(ap, minor=40)
+        check("updateDeviceWirelessBluetoothSettings", dev == {"uuid": bt["uuid"], "major": 7, "minor": 40}, dev)
+        check("getDeviceWirelessBluetoothSettings", w.getDeviceWirelessBluetoothSettings(ap) == dev, dev)
+        clients = d.networks.getNetworkBluetoothClients(hq, total_pages=-1, perPage=5)
+        check("getNetworkBluetoothClients", clients == [], clients)
+        try:
+            d.networks.getNetworkBluetoothClient(hq, "1284392014819")
+            check("getNetworkBluetoothClient", False, "no 404")
+        except meraki.APIError as e:
+            check("getNetworkBluetoothClient", e.status == 404, e.status)
+
+        entry = {"serial": ap, "alternateManagementIp": "10.9.0.5", "subnetMask": "255.255.255.0", "gateway": "10.9.0.1", "dns1": "8.8.8.8", "dns2": "8.8.4.4"}
+        ami = w.updateNetworkWirelessAlternateManagementInterface(hq, enabled=True, vlanId=100, protocols=["radius", "syslog"], accessPoints=[entry])
+        check("updateNetworkWirelessAlternateManagementInterface", ami["accessPoints"] == [entry], ami)
+        check("getNetworkWirelessAlternateManagementInterface", w.getNetworkWirelessAlternateManagementInterface(hq) == ami, ami)
+        v6 = {"protocol": "ipv6", "assignmentMode": "static", "address": "2001:db8:3c4d:15::1", "gateway": "fe80::1", "prefix": "2001:db8:3c4d:15::/64", "nameservers": {"addresses": ["2001:4860:4860::8888"]}}
+        r = w.updateDeviceWirelessAlternateManagementInterfaceIpv6(ap, addresses=[v6])
+        check("updateDeviceWirelessAlternateManagementInterfaceIpv6", r == {"addresses": [v6]}, r)
+
+        bill = w.updateNetworkWirelessBilling(hq, currency="EUR", plans=[{"price": 5, "bandwidthLimits": {"limitUp": 1000, "limitDown": 2000}, "timeLimit": "1 hour"}])
+        check("updateNetworkWirelessBilling", bill["currency"] == "EUR" and bill["plans"][0]["id"] == "1", bill)
+        check("getNetworkWirelessBilling", w.getNetworkWirelessBilling(hq) == bill, bill)
+
+        scan = w.updateNetworkWirelessLocationScanning(hq, enabled=True, api={"enabled": True})
+        check("updateNetworkWirelessLocationScanning", scan["api"]["enabled"] and len(scan["api"]["validator"]["string"]) == 40, scan)
+        rows = w.getOrganizationWirelessLocationScanningByNetwork(org, total_pages=-1, perPage=3)["items"]
+        check("getOrganizationWirelessLocationScanningByNetwork", len(rows) == 5 and {"networkId": hq, "name": "HQ - San Francisco", **scan} in rows, len(rows))
+        rx = [w.createOrganizationWirelessLocationScanningReceiver(org, {"id": n}, f"https://rx{i}.example.com", "3", {"type": "Wi-Fi"}, "secret") for i, n in enumerate([hq, austin, hq, austin])]
+        check("createOrganizationWirelessLocationScanningReceiver", rx[0]["network"]["id"] == hq and "sharedSecret" not in rx[0], rx[0])
+        u = w.updateOrganizationWirelessLocationScanningReceiver(org, rx[0]["receiverId"], radio={"type": "Bluetooth"})
+        check("updateOrganizationWirelessLocationScanningReceiver", u["radio"]["type"] == "Bluetooth" and u["url"] == rx[0]["url"], u)
+        listed = w.getOrganizationWirelessLocationScanningReceivers(org, total_pages=-1, perPage=3)["items"]
+        check("getOrganizationWirelessLocationScanningReceivers", [x["receiverId"] for x in listed] == [x["receiverId"] for x in rx], listed)
+        w.deleteOrganizationWirelessLocationScanningReceiver(org, rx[0]["receiverId"])
+        left = w.getOrganizationWirelessLocationScanningReceivers(org, networkIds=[hq])["items"]
+        check("deleteOrganizationWirelessLocationScanningReceiver", [x["receiverId"] for x in left] == [rx[2]["receiverId"]], left)
+
+        broker = d.networks.createNetworkMqttBroker(austin, "Hub", "mqtt.example.com", 1883)
+        m = w.updateOrganizationWirelessMqttSettings(org, {"id": austin}, {"enabled": True, "topic": "meraki", "broker": {"name": "Hub"}}, ble={"enabled": True, "type": "ibeacon"})
+        check("updateOrganizationWirelessMqttSettings", m["mqtt"]["broker"] == {"id": broker["id"], "name": "Hub"} and m["ble"]["type"] == "ibeacon", m)
+        rows = w.getOrganizationWirelessMqttSettings(org, total_pages=-1, perPage=3)["items"]
+        check("getOrganizationWirelessMqttSettings", len(rows) == 5 and m in rows, len(rows))
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

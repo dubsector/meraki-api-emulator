@@ -128,14 +128,14 @@ function amiJson(net) {
 }
 
 // A dotted mask with its ones first, like 255.255.255.0.
-function isMask(v) {
+export function isMask(v) {
   const n = parseIp(v);
   if (n == null) return false;
   const inv = 2 ** 32 - 1 - n;
   return ((inv + 1) & inv) === 0 && n !== 0;
 }
 
-const prefixOf = (mask) => 32 - Math.log2(2 ** 32 - parseIp(mask));
+export const prefixOf = (mask) => 32 - Math.log2(2 ** 32 - parseIp(mask));
 
 // When the MX holds the VLAN, addresses have to sit in its subnet.
 function checkSwitches(net, list, vlanId) {
