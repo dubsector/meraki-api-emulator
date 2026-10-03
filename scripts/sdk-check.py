@@ -1723,7 +1723,47 @@ def globalgroups():
         check("deleteOrganizationPoliciesGlobalGroupPoliciesFirewallRulesetsAssignment", o.getOrganizationPoliciesGlobalGroupPoliciesFirewallRulesetsAssignments(org)["items"] == [])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups]
+@scenario
+def dns():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        a = d.appliance
+        org = acme(d.organizations.getOrganizations())
+        nets = {x["name"]: x["id"] for x in d.organizations.getOrganizationNetworks(org)}
+        hq, austin = nets["HQ - San Francisco"], nets["Branch - Austin"]
+
+        p = a.createOrganizationApplianceDnsLocalProfile(org, "Default")
+        q = a.createOrganizationApplianceDnsLocalProfile(org, "Lab")
+        q = a.updateOrganizationApplianceDnsLocalProfile(org, q["profileId"], "Lab 2")
+        check("createOrganizationApplianceDnsLocalProfile, update, then list", a.getOrganizationApplianceDnsLocalProfiles(org) == [p, q], q)
+        check("getOrganizationApplianceDnsLocalProfiles filters by profileIds", a.getOrganizationApplianceDnsLocalProfiles(org, profileIds=[q["profileId"]]) == [q])
+        r = a.createOrganizationApplianceDnsLocalRecord(org, "www.test.com", "10.1.1.10", {"id": p["profileId"]})
+        r = a.updateOrganizationApplianceDnsLocalRecord(org, r["recordId"], address="10.1.1.11")
+        check("createOrganizationApplianceDnsLocalRecord, update, then list", a.getOrganizationApplianceDnsLocalRecords(org, profileIds=[p["profileId"]]) == [r] and r["address"] == "10.1.1.11", r)
+        a.deleteOrganizationApplianceDnsLocalRecord(org, r["recordId"])
+        check("deleteOrganizationApplianceDnsLocalRecord", a.getOrganizationApplianceDnsLocalRecords(org) == [])
+
+        made = a.bulkOrganizationApplianceDnsLocalProfilesAssignmentsCreate(org, [{"network": {"id": hq}, "profile": {"id": p["profileId"]}}, {"network": {"id": austin}, "profile": {"id": q["profileId"]}}])["items"]
+        listed = a.getOrganizationApplianceDnsLocalProfilesAssignments(org)
+        check("bulkOrganizationApplianceDnsLocalProfilesAssignmentsCreate, then list", listed["items"] == made and listed["meta"]["counts"]["items"]["total"] == 2, listed)
+        check("getOrganizationApplianceDnsLocalProfilesAssignments filters by networkIds", a.getOrganizationApplianceDnsLocalProfilesAssignments(org, networkIds=[austin])["items"] == made[1:])
+        gone = a.createOrganizationApplianceDnsLocalProfilesAssignmentsBulkDelete(org, [{"assignmentId": made[0]["assignmentId"]}])["items"]
+        check("createOrganizationApplianceDnsLocalProfilesAssignmentsBulkDelete", gone == made[:1] and a.getOrganizationApplianceDnsLocalProfilesAssignments(org)["items"] == made[1:], gone)
+        a.deleteOrganizationApplianceDnsLocalProfile(org, p["profileId"])
+        check("deleteOrganizationApplianceDnsLocalProfile", a.getOrganizationApplianceDnsLocalProfiles(org) == [q])
+
+        s = a.createOrganizationApplianceDnsSplitProfile(org, "Corp", ["*.corp.example.com"], {"addresses": ["10.0.0.53"]})
+        s = a.updateOrganizationApplianceDnsSplitProfile(org, s["profileId"], hostnames=["*.corp.example.com", "intranet.example.com"])
+        check("createOrganizationApplianceDnsSplitProfile, update, then list", a.getOrganizationApplianceDnsSplitProfiles(org) == [s] and len(s["hostnames"]) == 2, s)
+        made = a.createOrganizationApplianceDnsSplitProfilesAssignmentsBulkCreate(org, [{"network": {"id": hq}, "profile": {"id": s["profileId"]}}])["items"]
+        check("createOrganizationApplianceDnsSplitProfilesAssignmentsBulkCreate, then list", a.getOrganizationApplianceDnsSplitProfilesAssignments(org, profileIds=[s["profileId"]])["items"] == made, made)
+        a.createOrganizationApplianceDnsSplitProfilesAssignmentsBulkDelete(org, [{"assignmentId": made[0]["assignmentId"]}])
+        check("createOrganizationApplianceDnsSplitProfilesAssignmentsBulkDelete", a.getOrganizationApplianceDnsSplitProfilesAssignments(org)["items"] == [])
+        a.deleteOrganizationApplianceDnsSplitProfile(org, s["profileId"])
+        check("deleteOrganizationApplianceDnsSplitProfile", a.getOrganizationApplianceDnsSplitProfiles(org) == [])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
