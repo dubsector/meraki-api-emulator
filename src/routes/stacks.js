@@ -6,6 +6,7 @@ import { DEVICE_OUI } from '../catalog.js';
 import { badRequest, notFound } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { netOf, requireProduct } from './common.js';
+import { warmSparePair } from './switchsettings.js';
 import { applyRoute, createIface, createRoute, deleteIface, deleteRoute, dhcpJson, ifaceJson, ifaceOf, listIfaces, newL3, routeJson, routeOf, seriesOf, stackRouter, updateDhcp, updateIface } from './routing.js';
 
 const LIST = '/networks/{networkId}/switch/stacks';
@@ -58,6 +59,7 @@ function checkMembers(net, store, serials, self) {
     const dev = net.switches.find((s) => s.serial === serial);
     if (!dev) throw badRequest(`Switch '${serial}' is not in this network`);
     if (!seriesOf(dev)) throw badRequest(`${dev.model} switches do not support stacking`);
+    if (warmSparePair(dev)) throw badRequest(`Switch '${serial}' is in a warm spare pair; disable warm spare before adding it to a stack`);
     if (dev.switchRouting?.interfaces.list.length) throw badRequest(`Delete the layer 3 interfaces on switch '${serial}' before adding it to a stack`);
     const other = store.list.find((s) => s !== self && s.members.includes(dev));
     if (other) throw badRequest(`Switch '${serial}' is already in stack '${other.name}'`);
