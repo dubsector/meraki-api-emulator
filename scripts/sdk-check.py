@@ -1852,7 +1852,51 @@ def mxwireless():
         check("createDeviceApplianceVmxAuthenticationToken", len(t["token"]) == 46 and t["expiresAt"] == (EVENTS_NOW + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"), t)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless]
+@scenario
+def authusers():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        n = d.networks
+        org = acme(d.organizations.getOrganizations())
+        nets = {x["name"]: x["id"] for x in d.organizations.getOrganizationNetworks(org)}
+        hq = nets["HQ - San Francisco"]
+
+        d.wireless.updateNetworkWirelessSsid(hq, "1", splashPage="Password-protected with Meraki RADIUS")
+        u = n.createNetworkMerakiAuthUser(hq, "guest@example.com", [{"ssidNumber": 1, "expiresAt": "Never"}], name="Guest", password="secret", accountType="Guest")
+        check("createNetworkMerakiAuthUser", u["id"] == "Z3Vlc3RAZXhhbXBsZS5jb20=" and u["authorizations"][0]["authorizedZone"] == "Acme-Guest" and "password" not in u, u)
+        v = n.createNetworkMerakiAuthUser(hq, "vpn@example.com", [{"expiresAt": "Never"}], name="VPN", password="secret", accountType="Client VPN")
+        check("getNetworkMerakiAuthUsers", [x["email"] for x in n.getNetworkMerakiAuthUsers(hq)] == ["guest@example.com", "vpn@example.com"])
+        r = n.updateNetworkMerakiAuthUser(hq, u["id"], name="Visitor")
+        check("updateNetworkMerakiAuthUser and getNetworkMerakiAuthUser", r["name"] == "Visitor" and n.getNetworkMerakiAuthUser(hq, u["id"]) == r, r)
+        rows = n.getNetworkSplashLoginAttempts(hq, timespan=604800)
+        check(f"getNetworkSplashLoginAttempts ({len(rows)} attempts)", rows and all(x["login"] == "guest@example.com" and x["name"] == "Visitor" for x in rows), rows[:2])
+        check("getNetworkSplashLoginAttempts by SSID", n.getNetworkSplashLoginAttempts(hq, ssidNumber=0, timespan=604800) == [])
+        n.deleteNetworkMerakiAuthUser(hq, v["id"], delete=True)
+        check("deleteNetworkMerakiAuthUser", [x["id"] for x in n.getNetworkMerakiAuthUsers(hq)] == [u["id"]])
+
+        r = n.updateNetworkNetflow(hq, reportingEnabled=True, collectorIp="192.0.2.10", collectorPort=2055)
+        check("updateNetworkNetflow and getNetworkNetflow", r["collectorPort"] == 2055 and n.getNetworkNetflow(hq) == r, r)
+        items = [{"name": "Web", "type": "host", "value": "example.com"}, {"name": "Range", "type": "ipRange", "value": "10.1.0.0/16:80"}]
+        r = n.updateNetworkTrafficAnalysis(hq, mode="basic", customPieChartItems=items)
+        check("updateNetworkTrafficAnalysis and getNetworkTrafficAnalysis", r == {"mode": "basic", "customPieChartItems": items} and n.getNetworkTrafficAnalysis(hq) == r, r)
+
+        p = n.createNetworkVlanProfile(hq, "Office", [{"name": "voice", "vlanId": "20"}], [{"name": "users", "vlanIds": "30-39"}], "Office")
+        check("createNetworkVlanProfile", p["iname"] == "Office" and not p["isDefault"], p)
+        r = n.updateNetworkVlanProfile(hq, "Office", "Office floors", [{"name": "voice", "vlanId": "21"}], [])
+        check("updateNetworkVlanProfile and getNetworkVlanProfile", r["vlanNames"][0]["vlanId"] == "21" and n.getNetworkVlanProfile(hq, "Office") == r, r)
+        check("getNetworkVlanProfiles", [x["iname"] for x in n.getNetworkVlanProfiles(hq)] == ["Default", "Office"])
+        devs = n.getNetworkVlanProfilesAssignmentsByDevice(hq, total_pages="all", perPage=3)
+        sw = next(x["serial"] for x in devs if x["productType"] == "switch")
+        r = n.reassignNetworkVlanProfilesAssignments(hq, [sw], [], vlanProfile={"iname": "Office"})
+        after = n.getNetworkVlanProfilesAssignmentsByDevice(hq, total_pages="all", perPage=3)
+        check(f"getNetworkVlanProfilesAssignmentsByDevice perPage=3, all pages ({len(devs)} devices)", len(devs) == 13 and [x["serial"] for x in after] == [x["serial"] for x in devs], len(devs))
+        check("reassignNetworkVlanProfilesAssignments", r["serials"] == [sw] and next(x for x in after if x["serial"] == sw)["vlanProfile"]["iname"] == "Office", r)
+        n.reassignNetworkVlanProfilesAssignments(hq, [sw], [])
+        n.deleteNetworkVlanProfile(hq, "Office")
+        check("deleteNetworkVlanProfile", [x["iname"] for x in n.getNetworkVlanProfiles(hq)] == ["Default"])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

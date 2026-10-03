@@ -830,7 +830,7 @@ export function moveNetwork(world, net, dest) {
 
 // Settings kept on a network outside its config, since they name its own
 // devices or items. They go with the product they belong to.
-const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', cameraWirelessProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless', wirelessPortProfiles: 'wireless' };
+const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', cameraWirelessProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless', wirelessPortProfiles: 'wireless', wirelessMerakiAuthUsers: 'wireless', applianceMerakiAuthUsers: 'appliance' };
 
 // MQTT brokers serve cameras, sensors and wireless MQTT alike, which name them
 // by ID: a combined network takes every network's brokers and each part of a
