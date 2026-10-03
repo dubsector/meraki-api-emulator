@@ -284,6 +284,8 @@ After adding a route, give it the `op` name from the official spec and run `npm 
 
 Endpoints that report traffic should total it with `clientUsage`, `clientsUsage` or `networkTotals` from `src/sim/usage.js`. They keep daily totals per client, plus hourly totals for days a window only partly covers (up to 40 days, enough for per-day histories split at local midnight). Walking `eachSlot` directly costs time in proportion to the window and the number of clients. `npm run bench` times every sample URL and the longest timespan each route accepts, so run it after adding an endpoint to catch a slow one.
 
+`npm run fuzz` sends broken bodies to every write route and junk query values to every GET, reads every sample URL after each write route's bodies, and fails on any `5xx`. A `PUT` starts from what its `GET` answers, so each body has one broken field. It takes about five minutes, and CI runs it on every pull request. `--only <regex>` limits it to matching operation IDs.
+
 ## License
 
 MIT

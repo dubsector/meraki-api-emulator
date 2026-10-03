@@ -23,6 +23,7 @@
     "docs": "node scripts/endpoints.js",
     "check-spec": "node scripts/check-spec.js",
     "bench": "node scripts/bench.js",
+    "fuzz": "node scripts/fuzz.js",
     "schemas": "node scripts/schemas.js"
   },
   "engines": {
