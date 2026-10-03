@@ -162,6 +162,7 @@ describe('MX traffic shaping and SD-WAN', () => {
     assert.match(await errorOf(sb.put(`${C}/${a.customPerformanceClassId}`, { name: 'Voice' })), /already exists/);
     assert.match(await errorOf(sb.post(C, { name: 'Bulk', maxLossPercentage: 101 })), /between 0 and 100/);
     assert.match(await errorOf(sb.post(C, {})), /'name' is required/);
+    assert.match(await errorOf(sb.post(C, { name: null })), /'name' is required/);
     assert.equal((await sb.get(`${C}/1`)).status, 404);
 
     // A class in use can't be deleted until the rule using it goes.

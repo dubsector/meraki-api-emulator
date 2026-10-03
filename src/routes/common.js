@@ -90,3 +90,86 @@ export function filterDevices(q, devices) {
 export const bySerial = (a, b) => (a.serial < b.serial ? -1 : a.serial > b.serial ? 1 : 0);
 export const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 export const round = (v, d = 0) => Math.round(v * 10 ** d) / 10 ** d;
+
+// A { created, list } store of named items with the usual routes: list, create,
+// get, update and delete. Every check runs before anything changes, so a refused
+// write leaves the store as it was. Options:
+//   ops       { list, create, get, update, delete }: the op IDs; leave one out to
+//             write that route by hand
+//   path      the collection's path; `param` names the item's path parameter
+//   parent    (ctx) => the network or organization, after its own checks
+//   store     (parent) => its { created, list } store
+//   what      the item in messages ('MQTT broker'); `plural` if not what + 's'
+//   kind      the newId kind; `key` the items' ID field (default 'id')
+//   max       the most items a parent can hold
+//   required  body fields a create must have (null counts as missing)
+//   unique    false when names may repeat; `scope` is 'network' or 'organization'
+//   check     (ctx, parent, body, self) => other body checks; self is null on create
+//   blank     (ctx, parent) => a new item's fields before the body is applied
+//   apply     (item, body, parent) => copies the body onto an item
+//   json      (item, parent) => the item as the API returns it
+//   inUse     (item, parent) => why it can't be deleted, or nothing
+//   missing   the get route's sample (an unknown ID and status 404)
+export function collection(c) {
+  const { what, key = 'id', scope = 'network' } = c;
+  const plural = c.plural ?? `${what}s`;
+  const item = `${c.path}/{${c.param}}`;
+  const parents = scope === 'network' ? 'Networks' : 'Organizations';
+  const storeOf = (ctx) => {
+    const parent = c.parent(ctx);
+    return { parent, store: c.store(parent) };
+  };
+  const find = (ctx) => {
+    const { parent, store } = storeOf(ctx);
+    const found = store.list.find((x) => x[key] === ctx.params[c.param]);
+    if (!found) throw notFound(what[0].toUpperCase() + what.slice(1));
+    return { parent, store, item: found };
+  };
+  const checkBody = (ctx, parent, store, b, self) => {
+    if (c.unique !== false && b.name != null) {
+      if (!b.name.trim()) throw badRequest("'name' must not be empty");
+      if (store.list.some((x) => x !== self && x.name === b.name)) throw badRequest(`${/^[aeiou]/i.test(what) ? 'An' : 'A'} ${what} named '${b.name}' already exists in this ${scope}`);
+    }
+    c.check?.(ctx, parent, b, self);
+  };
+  const handlers = {
+    list: (ctx) => {
+      const { parent, store } = storeOf(ctx);
+      return store.list.map((x) => c.json(x, parent));
+    },
+    create: (ctx) => {
+      const { parent, store } = storeOf(ctx);
+      const b = ctx.body;
+      if (store.list.length >= c.max) throw badRequest(`${parents} are limited to ${c.max} ${plural} in the emulator`);
+      for (const k of c.required ?? []) if (b[k] == null) throw badRequest(`'${k}' is required`);
+      checkBody(ctx, parent, store, b, null);
+      const x = { [key]: null, ...c.blank(ctx, parent) };
+      c.apply(x, b, parent);
+      x[key] = newId(ctx, store, c.kind, parent.id, key);
+      store.list.push(x);
+      return c.json(x, parent);
+    },
+    get: (ctx) => {
+      const { parent, item: x } = find(ctx);
+      return c.json(x, parent);
+    },
+    update: (ctx) => {
+      const { parent, store, item: x } = find(ctx);
+      checkBody(ctx, parent, store, ctx.body, x);
+      c.apply(x, ctx.body, parent);
+      return c.json(x, parent);
+    },
+    delete: (ctx) => {
+      const { parent, store, item: x } = find(ctx);
+      const reason = c.inUse?.(x, parent);
+      if (reason) throw badRequest(reason);
+      store.list.splice(store.list.indexOf(x), 1);
+    },
+  };
+  const shape = { list: ['GET', c.path], create: ['POST', c.path], get: ['GET', item], update: ['PUT', item], delete: ['DELETE', item] };
+  const routes = Object.entries(c.ops).map(([name, op]) => {
+    const [method, path] = shape[name];
+    return { op, method, path, handler: handlers[name], ...(name === 'get' && c.missing ? { sample: c.missing } : {}) };
+  });
+  return { routes, find, storeOf };
+}

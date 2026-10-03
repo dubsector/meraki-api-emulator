@@ -7,7 +7,7 @@ import { L7_CATEGORIES } from '../catalog.js';
 import { stored } from '../config.js';
 import { arrayParam, badRequest, notFound, paginate } from '../http.js';
 import { isAddress, isHostname, isPort } from '../validate.js';
-import { limit, mxNet, mxNets, netOf, newId, orgOf } from './common.js';
+import { collection, limit, mxNet, mxNets, netOf, orgOf } from './common.js';
 
 const BASE = '/networks/{networkId}/appliance/trafficShaping';
 const CLASSES = `${BASE}/customPerformanceClasses`;
@@ -148,18 +148,7 @@ function updateRules(ctx) {
 
 // ── Custom performance classes ──
 
-function classOf(ctx) {
-  const net = mxNet(ctx);
-  const cls = classesOf(net).list.find((c) => c.id === ctx.params.customPerformanceClassId);
-  if (!cls) throw notFound('Custom performance class');
-  return { net, cls };
-}
-
-function checkClass(list, b, self) {
-  if (b.name != null) {
-    if (!b.name.trim()) throw badRequest("'name' must not be empty");
-    if (list.some((c) => c !== self && c.name === b.name)) throw badRequest(`A custom performance class named '${b.name}' already exists in this network`);
-  }
+function checkClass(b) {
   for (const [k, [min, max]] of Object.entries(CLASS_RANGES)) {
     if (b[k] != null && (b[k] < min || b[k] > max)) throw badRequest(`'${k}' must be between ${min} and ${max}`);
   }
@@ -171,36 +160,37 @@ function applyClass(c, b) {
 
 const classJson = (c) => ({ name: c.name, customPerformanceClassId: c.id, maxLatency: c.maxLatency, maxJitter: c.maxJitter, maxLossPercentage: c.maxLossPercentage });
 
-function createClass(ctx) {
-  const net = mxNet(ctx);
-  const store = classesOf(net);
-  if (store.list.length >= MAX_CLASSES) throw badRequest(`Networks are limited to ${MAX_CLASSES} custom performance classes in the emulator`);
-  checkClass(store.list, ctx.body, null);
-  const c = { id: null, name: ctx.body.name, ...CLASS_DEFAULTS };
-  applyClass(c, ctx.body);
-  c.id = newId(ctx, store, 'performanceClass', net.id);
-  store.list.push(c);
-  return classJson(c);
-}
-
-function updateClass(ctx) {
-  const { net, cls } = classOf(ctx);
-  checkClass(classesOf(net).list, ctx.body, cls);
-  applyClass(cls, ctx.body);
-  return classJson(cls);
-}
-
 const usesClass = (p, id) => p.performanceClass?.type === 'custom' && p.performanceClass.customPerformanceClassId === id;
 
-function deleteClass(ctx) {
-  const { net, cls } = classOf(ctx);
+function classInUse(cls, net) {
   const s = selectionOf(net);
-  if ([...s.wanTrafficUplinkPreferences, ...s.vpnTrafficUplinkPreferences].some((p) => usesClass(p, cls.id))) {
-    throw badRequest(`Custom performance class ${cls.id} is used by an uplink preference rule`);
-  }
-  const list = classesOf(net).list;
-  list.splice(list.indexOf(cls), 1);
+  if ([...s.wanTrafficUplinkPreferences, ...s.vpnTrafficUplinkPreferences].some((p) => usesClass(p, cls.id))) return `Custom performance class ${cls.id} is used by an uplink preference rule`;
 }
+
+const classes = collection({
+  ops: {
+    list: 'getNetworkApplianceTrafficShapingCustomPerformanceClasses',
+    create: 'createNetworkApplianceTrafficShapingCustomPerformanceClass',
+    get: 'getNetworkApplianceTrafficShapingCustomPerformanceClass',
+    update: 'updateNetworkApplianceTrafficShapingCustomPerformanceClass',
+    delete: 'deleteNetworkApplianceTrafficShapingCustomPerformanceClass',
+  },
+  path: CLASSES,
+  param: 'customPerformanceClassId',
+  parent: mxNet,
+  store: classesOf,
+  what: 'custom performance class',
+  plural: 'custom performance classes',
+  kind: 'performanceClass',
+  max: MAX_CLASSES,
+  required: ['name'],
+  check: (ctx, net, b) => checkClass(b),
+  blank: () => ({ name: null, ...CLASS_DEFAULTS }),
+  apply: applyClass,
+  json: classJson,
+  inUse: classInUse,
+  missing: MISSING,
+});
 
 // ── Uplink preferences ──
 
@@ -372,11 +362,7 @@ export default [
   },
   { op: 'getNetworkApplianceTrafficShapingUplinkSelection', path: `${BASE}/uplinkSelection`, handler: (ctx) => selectionJson(mxNet(ctx)) },
   { op: 'updateNetworkApplianceTrafficShapingUplinkSelection', method: 'PUT', path: `${BASE}/uplinkSelection`, handler: updateSelection },
-  { op: 'getNetworkApplianceTrafficShapingCustomPerformanceClasses', path: CLASSES, handler: (ctx) => classesOf(mxNet(ctx)).list.map(classJson) },
-  { op: 'createNetworkApplianceTrafficShapingCustomPerformanceClass', method: 'POST', path: CLASSES, handler: createClass },
-  { op: 'getNetworkApplianceTrafficShapingCustomPerformanceClass', path: CLASS, sample: MISSING, handler: (ctx) => classJson(classOf(ctx).cls) },
-  { op: 'updateNetworkApplianceTrafficShapingCustomPerformanceClass', method: 'PUT', path: CLASS, handler: updateClass },
-  { op: 'deleteNetworkApplianceTrafficShapingCustomPerformanceClass', method: 'DELETE', path: CLASS, handler: deleteClass },
+  ...classes.routes,
   { op: 'updateNetworkApplianceTrafficShapingVpnExclusions', method: 'PUT', path: `${BASE}/vpnExclusions`, handler: updateExclusions },
   { op: 'getOrganizationApplianceTrafficShapingVpnExclusionsByNetwork', path: '/organizations/{organizationId}/appliance/trafficShaping/vpnExclusions/byNetwork', handler: exclusionsByNetwork },
   { op: 'updateNetworkApplianceSdwanInternetPolicies', method: 'PUT', path: '/networks/{networkId}/appliance/sdwan/internetPolicies', handler: updateInternetPolicies },

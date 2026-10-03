@@ -7,7 +7,7 @@ import { badRequest, intParam, notFound } from '../http.js';
 import { Rand, derive, hashStr } from '../rng.js';
 import { DAY, MIN, iso, parseTime } from '../time.js';
 import { isDown } from '../sim/outages.js';
-import { devOf, netOf, newId, requireModel, requireProduct } from './common.js';
+import { collection, devOf, netOf, requireModel, requireProduct } from './common.js';
 
 const DEV = '/devices/{serial}/camera';
 const PROFILES = '/networks/{networkId}/camera/qualityRetentionProfiles';
@@ -208,21 +208,7 @@ function schedulesOf(ctx, net) {
   return SCHEDULES.map((name) => ({ id: r.digits(18), name }));
 }
 
-function profileOf(ctx) {
-  const net = cameraNet(ctx);
-  const profile = profilesOf(net).list.find((p) => p.id === ctx.params.qualityRetentionProfileId);
-  if (!profile) throw notFound('Quality retention profile');
-  return { net, profile };
-}
-
-function checkName(list, name, self, what) {
-  if (!name.trim()) throw badRequest("'name' must not be empty");
-  if (list.some((x) => x !== self && x.name === name)) throw badRequest(`A ${what} named '${name}' already exists in this network`);
-}
-
-// Checks every field of a profile body before anything changes.
-function checkProfile(ctx, net, store, b, self) {
-  if (b.name != null) checkName(store.list, b.name, self, 'quality retention profile');
+function checkProfile(ctx, net, b) {
   if (b.maxRetentionDays != null && (b.maxRetentionDays < 1 || b.maxRetentionDays > 90)) throw badRequest("'maxRetentionDays' must be between 1 and 90");
   if (b.motionDetectorVersion != null && ![1, 2].includes(b.motionDetectorVersion)) throw badRequest("'motionDetectorVersion' must be 1 or 2");
   if (b.scheduleId != null && !schedulesOf(ctx, net).some((s) => s.id === b.scheduleId)) throw badRequest(`Schedule ${b.scheduleId} does not exist in this network`);
@@ -240,7 +226,7 @@ function applyProfile(p, b) {
   }
 }
 
-function profileJson(net, p) {
+function profileJson(p, net) {
   return {
     id: p.id,
     networkId: net.id,
@@ -258,33 +244,29 @@ function profileJson(net, p) {
   };
 }
 
-function createProfile(ctx) {
-  const net = cameraNet(ctx);
-  const store = profilesOf(net);
-  const b = ctx.body;
-  if (store.list.length >= MAX_PROFILES) throw badRequest(`Networks are limited to ${MAX_PROFILES} quality retention profiles in the emulator`);
-  if (b.name == null) throw badRequest("'name' is required");
-  checkProfile(ctx, net, store, b, null);
-  const p = { id: null, name: b.name, motionBasedRetentionEnabled: false, restrictedBandwidthModeEnabled: false, audioRecordingEnabled: false, cloudArchiveEnabled: false, maxRetentionDays: null, scheduleId: null, motionDetectorVersion: 2, smartRetention: false, videoSettings: {} };
-  applyProfile(p, b);
-  p.id = newId(ctx, store, 'cameraProfile', net.id);
-  store.list.push(p);
-  return profileJson(net, p);
-}
-
-function updateProfile(ctx) {
-  const { net, profile } = profileOf(ctx);
-  checkProfile(ctx, net, profilesOf(net), ctx.body, profile);
-  applyProfile(profile, ctx.body);
-  return profileJson(net, profile);
-}
-
-// Cameras using it go back to their own settings.
-function deleteProfile(ctx) {
-  const { net, profile } = profileOf(ctx);
-  const list = profilesOf(net).list;
-  list.splice(list.indexOf(profile), 1);
-}
+// Deleting one sends the cameras using it back to their own settings.
+const profiles = collection({
+  ops: {
+    list: 'getNetworkCameraQualityRetentionProfiles',
+    create: 'createNetworkCameraQualityRetentionProfile',
+    get: 'getNetworkCameraQualityRetentionProfile',
+    update: 'updateNetworkCameraQualityRetentionProfile',
+    delete: 'deleteNetworkCameraQualityRetentionProfile',
+  },
+  path: PROFILES,
+  param: 'qualityRetentionProfileId',
+  parent: cameraNet,
+  store: profilesOf,
+  what: 'quality retention profile',
+  kind: 'cameraProfile',
+  max: MAX_PROFILES,
+  required: ['name'],
+  check: (ctx, net, b) => checkProfile(ctx, net, b),
+  blank: () => ({ name: null, motionBasedRetentionEnabled: false, restrictedBandwidthModeEnabled: false, audioRecordingEnabled: false, cloudArchiveEnabled: false, maxRetentionDays: null, scheduleId: null, motionDetectorVersion: 2, smartRetention: false, videoSettings: {} }),
+  apply: applyProfile,
+  json: profileJson,
+  missing: MISSING,
+});
 
 // ── MQTT brokers ──
 
@@ -293,13 +275,6 @@ function brokerNet(ctx) {
   const net = netOf(ctx);
   if (!net.productTypes.some((p) => p === 'camera' || p === 'sensor')) throw badRequest("This endpoint requires a network with product type 'camera' or 'sensor'");
   return net;
-}
-
-function brokerOf(ctx) {
-  const net = brokerNet(ctx);
-  const broker = brokersOf(net).list.find((b) => b.id === ctx.params.mqttBrokerId);
-  if (!broker) throw notFound('MQTT broker');
-  return { net, broker };
 }
 
 // The CA certificate and password are kept but never sent back.
@@ -314,8 +289,7 @@ function brokerJson(b) {
   };
 }
 
-function checkBroker(store, b, self) {
-  if (b.name != null) checkName(store.list, b.name, self, 'MQTT broker');
+function checkBroker(b) {
   if (b.host != null && !/^[^\s/]+$/.test(b.host)) throw badRequest("'host' must be a host name or IP address");
   if (b.port != null && (b.port < 1 || b.port > 65535)) throw badRequest("'port' must be between 1 and 65535");
   const mode = b.security?.mode;
@@ -333,33 +307,23 @@ function applyBroker(x, b) {
   if (auth.password !== undefined) x.password = auth.password;
 }
 
-function createBroker(ctx) {
-  const net = brokerNet(ctx);
-  const store = brokersOf(net);
-  const b = ctx.body;
-  if (store.list.length >= MAX_BROKERS) throw badRequest(`Networks are limited to ${MAX_BROKERS} MQTT brokers in the emulator`);
-  for (const k of ['name', 'host', 'port']) if (b[k] == null) throw badRequest(`'${k}' is required`);
-  checkBroker(store, b, null);
-  const x = { id: null, name: null, host: null, port: null, mode: 'none', caCertificate: null, verifyHostnames: true, username: null, password: null };
-  applyBroker(x, b);
-  x.id = newId(ctx, store, 'mqttBroker', net.id);
-  store.list.push(x);
-  return brokerJson(x);
-}
-
-function updateBroker(ctx) {
-  const { net, broker } = brokerOf(ctx);
-  checkBroker(brokersOf(net), ctx.body, broker);
-  applyBroker(broker, ctx.body);
-  return brokerJson(broker);
-}
-
-// Cameras sending to it stop publishing.
-function deleteBroker(ctx) {
-  const { net, broker } = brokerOf(ctx);
-  const list = brokersOf(net).list;
-  list.splice(list.indexOf(broker), 1);
-}
+// Deleting one stops the cameras sending to it.
+const brokers = collection({
+  ops: { list: 'getNetworkMqttBrokers', create: 'createNetworkMqttBroker', get: 'getNetworkMqttBroker', update: 'updateNetworkMqttBroker', delete: 'deleteNetworkMqttBroker' },
+  path: BROKERS,
+  param: 'mqttBrokerId',
+  parent: brokerNet,
+  store: brokersOf,
+  what: 'MQTT broker',
+  kind: 'mqttBroker',
+  max: MAX_BROKERS,
+  required: ['name', 'host', 'port'],
+  check: (ctx, net, b) => checkBroker(b),
+  blank: () => ({ name: null, host: null, port: null, mode: 'none', caCertificate: null, verifyHostnames: true, username: null, password: null }),
+  apply: applyBroker,
+  json: brokerJson,
+  missing: MISSING,
+});
 
 const clipSample = (world, now) => `startTimestamp=${iso(now - 10 * MIN)}&endTimestamp=${iso(now - 8 * MIN)}`;
 
@@ -390,30 +354,7 @@ export default [
   { op: 'getDeviceCameraVideoLink', path: `${DEV}/videoLink`, handler: videoLink },
   { op: 'generateDeviceCameraSnapshot', method: 'POST', path: `${DEV}/generateSnapshot`, status: 202, logged: false, handler: snapshot },
   { op: 'clipDeviceCamera', path: `${DEV}/clip`, status: 202, sample: { query: clipSample }, handler: clip },
-  {
-    op: 'getNetworkCameraQualityRetentionProfiles',
-    path: PROFILES,
-    handler: (ctx) => {
-      const net = cameraNet(ctx);
-      return profilesOf(net).list.map((p) => profileJson(net, p));
-    },
-  },
-  { op: 'createNetworkCameraQualityRetentionProfile', method: 'POST', path: PROFILES, handler: createProfile },
-  {
-    op: 'getNetworkCameraQualityRetentionProfile',
-    path: PROFILE,
-    sample: MISSING,
-    handler: (ctx) => {
-      const { net, profile } = profileOf(ctx);
-      return profileJson(net, profile);
-    },
-  },
-  { op: 'updateNetworkCameraQualityRetentionProfile', method: 'PUT', path: PROFILE, handler: updateProfile },
-  { op: 'deleteNetworkCameraQualityRetentionProfile', method: 'DELETE', path: PROFILE, handler: deleteProfile },
+  ...profiles.routes,
   { op: 'getNetworkCameraSchedules', path: '/networks/{networkId}/camera/schedules', handler: (ctx) => schedulesOf(ctx, cameraNet(ctx)) },
-  { op: 'getNetworkMqttBrokers', path: BROKERS, handler: (ctx) => brokersOf(brokerNet(ctx)).list.map(brokerJson) },
-  { op: 'createNetworkMqttBroker', method: 'POST', path: BROKERS, handler: createBroker },
-  { op: 'getNetworkMqttBroker', path: BROKER, sample: MISSING, handler: (ctx) => brokerJson(brokerOf(ctx).broker) },
-  { op: 'updateNetworkMqttBroker', method: 'PUT', path: BROKER, handler: updateBroker },
-  { op: 'deleteNetworkMqttBroker', method: 'DELETE', path: BROKER, handler: deleteBroker },
+  ...brokers.routes,
 ];
