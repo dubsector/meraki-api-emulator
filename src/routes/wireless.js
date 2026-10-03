@@ -8,7 +8,7 @@ import { hashStr } from '../rng.js';
 import { connectFailure, failureTime } from '../sim/events.js';
 import { isDown } from '../sim/outages.js';
 import { START, eachSession, presenceIn } from '../sim/presence.js';
-import { RADIO, WIDTH, apChannel, apPower, bssid, channelUtilization, clientSignal } from '../sim/rf.js';
+import { RADIO, SETTINGS, apChannel, apPower, apWidth, bssid, channelUtilization, clientSignal } from '../sim/rf.js';
 import { clientUsage } from '../sim/usage.js';
 import { DAY, HOUR, iso, isoMicro } from '../time.js';
 import { merge } from '../validate.js';
@@ -17,8 +17,8 @@ import { bySerial, devOf, netOf, orgOf, requireModel, requireProduct, round } fr
 export const BANDS = ['2.4', '5', '6'];
 const MB = 1024;
 const REGULATORY = { 'Europe/London': ['ETSI', 'GB'], 'America/Toronto': ['ISED', 'CA'] };
-const FIVE_GHZ = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165];
-const SIX_GHZ = Array.from({ length: 59 }, (_, i) => 1 + i * 4);
+export const FIVE_GHZ = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165];
+export const SIX_GHZ = Array.from({ length: 59 }, (_, i) => 1 + i * 4);
 
 export function wirelessNet(ctx) {
   const net = netOf(ctx);
@@ -77,18 +77,18 @@ function profileId(net, i) {
 }
 
 // Every wireless network starts with the two basic profiles.
-function profilesOf(net) {
+export function profilesOf(net) {
   return stored(net, 'rfProfiles', () => [rfProfile(net, profileId(net, 0), 'Basic Indoor Profile', true), rfProfile(net, profileId(net, 1), 'Basic Outdoor Profile', false)]);
 }
 
-function profileOf(net, id) {
+export function profileOf(net, id) {
   const p = profilesOf(net).find((x) => x.id === id);
   if (!p) throw notFound('RF profile');
   return p;
 }
 
 // An AP uses the profile set on its radio, else the default; MR78s are outdoor APs.
-function apProfile(ap) {
+export function apProfile(ap) {
   const list = profilesOf(ap.net);
   return list.find((p) => p.id === ap.radio?.rfProfileId) ?? list.find((p) => (ap.model === 'MR78' ? p.isOutdoorDefault : p.isIndoorDefault)) ?? list[0];
 }
@@ -193,10 +193,10 @@ function wirelessStatus(ap, now) {
         band: `${band} GHz`,
         bssid: bssid(ap, band, number),
         channel: apChannel(ap, band),
-        channelWidth: `${WIDTH[band]} MHz`,
+        channelWidth: `${apWidth(ap, band)} MHz`,
         power: `${apPower(ap, band)} dBm`,
         visible: s.visible !== false,
-        broadcasting: !isDown(ap, now),
+        broadcasting: !isDown(ap, now) && ap.radio?.[SETTINGS[band]]?.enabled !== false,
       });
     }
   });
@@ -208,7 +208,7 @@ function radioSettings(ap) {
     serial: ap.serial,
     rfProfileId: apProfile(ap).id,
     twoFourGhzSettings: { channel: apChannel(ap, '2.4'), targetPower: apPower(ap, '2.4') },
-    fiveGhzSettings: { channel: apChannel(ap, '5'), channelWidth: ap.radio?.fiveGhzSettings?.channelWidth ?? WIDTH[5], targetPower: apPower(ap, '5') },
+    fiveGhzSettings: { channel: apChannel(ap, '5'), channelWidth: apWidth(ap, '5'), targetPower: apPower(ap, '5') },
   };
 }
 
