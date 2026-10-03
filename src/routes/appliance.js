@@ -255,11 +255,18 @@ function createVlan(ctx) {
   return v;
 }
 
+// Fixed IP assignments are keyed by MAC, so a PUT replaces them whole, as it
+// does a list. Merging them would keep every reservation ever made.
+function withFixedIps(next, fixed) {
+  if (fixed !== undefined) next.fixedIpAssignments = structuredClone(fixed ?? {});
+  return next;
+}
+
 function updateVlan(ctx) {
   const c = vlansOf(ctx);
   const v = vlanOf(c, ctx.params.vlanId);
-  const { id, ...patch } = ctx.body;
-  const next = merge(structuredClone(v), patch);
+  const { id, fixedIpAssignments, ...patch } = ctx.body;
+  const next = withFixedIps(merge(structuredClone(v), patch), fixedIpAssignments);
   checkAddressing(next, c.vlans.filter((o) => o !== v), c);
   const vpn = c.siteToSite.subnets.find((s) => s.localSubnet === v.subnet);
   if (vpn) vpn.localSubnet = next.subnet;
@@ -604,7 +611,8 @@ export default [
     handler: (ctx) => {
       const c = mxConfig(ctx);
       const r = routeOf(c, ctx.params.staticRouteId);
-      const next = merge(structuredClone(r), ctx.body);
+      const { fixedIpAssignments, ...patch } = ctx.body;
+      const next = withFixedIps(merge(structuredClone(r), patch), fixedIpAssignments);
       checkRoute(c, next);
       return Object.assign(r, next);
     },

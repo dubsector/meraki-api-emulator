@@ -141,6 +141,21 @@ describe('writes', () => {
     assert.ok(!(await sb.get(vpn)).body.subnets.some((s) => s.localSubnet === '10.1.70.0/24'));
   });
 
+  test('a PUT replaces fixed IP assignments whole', async () => {
+    fresh();
+    const vlan = `/networks/${hq.id}/appliance/vlans/5`;
+    const seeded = (await sb.get(vlan)).body.fixedIpAssignments;
+    assert.equal(Object.keys(seeded).length, 1);
+    const printer = { '00:11:22:33:44:55': { ip: '10.1.5.50', name: 'Printer' } };
+    assert.deepEqual((await sb.put(vlan, { fixedIpAssignments: { ...seeded, ...printer } })).body.fixedIpAssignments, { ...seeded, ...printer });
+    assert.deepEqual((await sb.put(vlan, { fixedIpAssignments: printer })).body.fixedIpAssignments, printer);
+    assert.deepEqual((await sb.put(vlan, { name: 'Servers' })).body.fixedIpAssignments, printer, 'left out, it stays');
+    assert.deepEqual((await sb.put(vlan, { fixedIpAssignments: {} })).body.fixedIpAssignments, {});
+    const route = `/networks/${hq.id}/appliance/staticRoutes/${(await sb.get(`/networks/${hq.id}/appliance/staticRoutes`)).body[0].id}`;
+    assert.deepEqual((await sb.put(route, { fixedIpAssignments: printer })).body.fixedIpAssignments, printer);
+    assert.deepEqual((await sb.put(route, { fixedIpAssignments: null })).body.fixedIpAssignments, {});
+  });
+
   test('the default firewall rule stays last and is never duplicated', async () => {
     fresh();
     const path = `/networks/${hq.id}/appliance/firewall/l3FirewallRules`;
