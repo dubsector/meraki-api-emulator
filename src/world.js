@@ -734,9 +734,18 @@ function repointCamera(org, fromId, toId) {
   }
 }
 
+// Organization-wide firewall rules naming a network's appliance VLANs.
+function repointFirewallRules(org, fromId, toId) {
+  for (const r of org.globalFirewallRules?.list ?? []) {
+    for (const c of [r.sources.criteria, r.destinations.criteria]) {
+      if (c?.applianceVlans) c.applianceVlans = c.applianceVlans.flatMap((x) => (x.networkId !== fromId ? [x] : toId ? [{ ...x, networkId: toId }] : []));
+    }
+  }
+}
+
 // Points what names a network at its new ID, or drops it when toId is null:
 // admin and SAML role privileges, network groups, camera roles, networks with
-// adaptive policy enabled and spokes' VPN hubs.
+// adaptive policy enabled, firewall rule VLANs and spokes' VPN hubs.
 function repoint(org, fromId, toId) {
   const swap = (list, idOf, make) => {
     const i = list.findIndex((x) => idOf(x) === fromId);
@@ -752,6 +761,7 @@ function repoint(org, fromId, toId) {
   if (org.adaptivePolicySettings) org.adaptivePolicySettings.enabledNetworks = swap(org.adaptivePolicySettings.enabledNetworks, (id) => id, () => toId);
   repointWireless(org, fromId, toId);
   repointCamera(org, fromId, toId);
+  repointFirewallRules(org, fromId, toId);
   for (const n of org.networks) {
     const s2s = n.config?.siteToSite;
     if (!s2s?.hubs.length) continue;

@@ -8,6 +8,7 @@ import { Rand, hashStr } from '../rng.js';
 import { iso } from '../time.js';
 import { isAddress, isHostname, parseCidr } from '../validate.js';
 import { collection, orgOf } from './common.js';
+import { firewallRuleNaming } from './globalfirewall.js';
 
 const OBJECTS = '/organizations/{organizationId}/policyObjects';
 const GROUPS = `${OBJECTS}/groups`;
@@ -72,13 +73,17 @@ function usage(org) {
 
 export const usesPolicyObjects = (net) => ruleLists(settingsOf(net)).some((rules) => refsIn(rules).length > 0);
 
-// Why a reference can't go away: rules of a network, a template or the VPN.
+// Why a reference can't go away: rules of a network, a template, the VPN or
+// the organization-wide firewall.
 function inUse(org, ref, what) {
   const net = org.networks.find((n) => ruleLists(settingsOf(n)).some((rules) => refsIn(rules).includes(ref)));
   if (net) return `${what} is used by firewall rules in network ${net.id}`;
   const template = org.configTemplates?.list.find((t) => ruleLists(t.config).some((rules) => refsIn(rules).includes(ref)));
   if (template) return `${what} is used by firewall rules in config template ${template.id}`;
   if (refsIn(org.vpnFirewallRules?.rules ?? []).includes(ref)) return `${what} is used by the organization's site-to-site VPN firewall rules`;
+  const m = REF.exec(ref);
+  const reason = firewallRuleNaming(org, m[1] === 'OBJ' ? 'object' : 'group', m[2]);
+  if (reason) return `${what} ${reason}`;
 }
 
 const networksOf = (org, ids) => org.networks.filter((n) => ids.has(n.id)).map((n) => n.id);
