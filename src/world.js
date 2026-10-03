@@ -743,9 +743,19 @@ function repointFirewallRules(org, fromId, toId) {
   }
 }
 
+// Organization-wide group policy VLAN assignments. A row that would repeat one
+// already on the target network is dropped.
+function repointGroupPolicies(org, fromId, toId) {
+  const a = org.globalGroupPolicyAssignments;
+  if (!a) return;
+  const taken = new Set(a.vlans.filter((r) => r.networkId === toId).map((r) => r.vlanId));
+  a.vlans = a.vlans.flatMap((r) => (r.networkId !== fromId ? [r] : toId && !taken.has(r.vlanId) ? [Object.assign(r, { networkId: toId })] : []));
+}
+
 // Points what names a network at its new ID, or drops it when toId is null:
 // admin and SAML role privileges, network groups, camera roles, networks with
-// adaptive policy enabled, firewall rule VLANs and spokes' VPN hubs.
+// adaptive policy enabled, firewall rule VLANs, group policy VLAN assignments
+// and spokes' VPN hubs.
 function repoint(org, fromId, toId) {
   const swap = (list, idOf, make) => {
     const i = list.findIndex((x) => idOf(x) === fromId);
@@ -762,6 +772,7 @@ function repoint(org, fromId, toId) {
   repointWireless(org, fromId, toId);
   repointCamera(org, fromId, toId);
   repointFirewallRules(org, fromId, toId);
+  repointGroupPolicies(org, fromId, toId);
   for (const n of org.networks) {
     const s2s = n.config?.siteToSite;
     if (!s2s?.hubs.length) continue;

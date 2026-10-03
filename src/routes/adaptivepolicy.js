@@ -132,13 +132,16 @@ const groups = collection({
   missing: MISSING,
 });
 
-// Policies from or to the group go with it, and ports and SSIDs drop it.
+// Policies from or to the group go with it, and ports, SSIDs and
+// organization-wide group policies drop it.
 function deleteGroup(ctx) {
   const { parent: org, store: s, item: g } = groups.find(ctx);
   if (g.isDefaultGroup) throw badRequest(`The ${g.name} group is a default group and cannot be deleted`);
   s.list.splice(s.list.indexOf(g), 1);
   const p = policiesOf(org);
   p.list = p.list.filter((x) => x.sourceGroupId !== g.groupId && x.destinationGroupId !== g.groupId);
+  const a = org.globalGroupPolicyAssignments;
+  if (a) a.groups = a.groups.filter((x) => x.groupId !== g.groupId);
   for (const c of holders(org)) if (c.adaptivePolicyGroupId === g.groupId) delete c.adaptivePolicyGroupId;
 }
 
