@@ -13,7 +13,7 @@ import { addNetwork, addOrganization, removeOrganization } from '../world.js';
 import { byId, bySerial, filterDevices, orgOf, round } from './common.js';
 import { managementInterface } from './networkwide.js';
 
-const MAX_ORGS = 100;
+export const MAX_ORGS = 100;
 const MAX_NETWORKS = 500;
 
 function createNetwork(ctx) {

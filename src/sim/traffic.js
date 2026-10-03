@@ -17,6 +17,13 @@ const SERIES = {
   switch: [WD_SENT, WD_RECV],
 };
 
+// Each application's share of a network's received and sent bytes on a day.
+export function appWeights(net, guestShare, day) {
+  const weights = APPS.map((a) => (a.weight * (1 - guestShare) + a.guest * guestShare) * lognoise(derive(net.key, a.application), day, 0.25));
+  const upWeights = weights.map((w, i) => w * (UPLOAD[APPS[i].application] ?? 1));
+  return { weights, upWeights, wSum: weights.reduce((x, y) => x + y, 0), upSum: upWeights.reduce((x, y) => x + y, 0) };
+}
+
 export function trafficRows(net, t0, t1, deviceType = 'combined') {
   const [sent, recv] = networkTotals(net, t0, t1, SERIES[deviceType] || SERIES.combined);
   const guests = net.clients.filter((c) => c.kindName === 'guest');
@@ -32,12 +39,7 @@ export function trafficRows(net, t0, t1, deviceType = 'combined') {
     }
   }
 
-  const day = Math.floor(t1 / DAY);
-  const weights = APPS.map((a) => (a.weight * (1 - guestShare) + a.guest * guestShare) * lognoise(derive(net.key, a.application), day, 0.25));
-  const upWeights = weights.map((w, i) => w * (UPLOAD[APPS[i].application] ?? 1));
-  const wSum = weights.reduce((x, y) => x + y, 0);
-  const upSum = upWeights.reduce((x, y) => x + y, 0);
-
+  const { weights, upWeights, wSum, upSum } = appWeights(net, guestShare, Math.floor(t1 / DAY));
   return APPS.map((a, i) => {
     const share = weights[i] / wSum;
     const s = (sent * upWeights[i]) / upSum;
