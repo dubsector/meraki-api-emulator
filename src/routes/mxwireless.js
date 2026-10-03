@@ -25,6 +25,11 @@ const TOKEN_LIFE = HOUR;
 
 const hasRadio = (dev) => !!dev && !!MODELS[dev.model]?.radio;
 
+// Samples use Lab - Ottawa's MX68W in Acme Test Lab, the seeded MX with a radio.
+const wifiLab = (world) => world.orgs[1].networks.find((n) => hasRadio(n.mx));
+const NET_SAMPLE = { org: 1, networkId: (world) => wifiLab(world).id };
+const DEVICE_SAMPLE = { org: 1, serial: (world) => wifiLab(world).mx.serial };
+
 function radioDevice(ctx) {
   const dev = devOf(ctx);
   requireModel(dev, 'appliance');
@@ -102,7 +107,7 @@ const profiles = collection({
     const dev = profileUser(x, net);
     return dev && `RF profile ${x.id} is assigned to appliance ${dev.serial}`;
   },
-  missing: { rfProfileId: '1234', status: 400 },
+  missing: { ...NET_SAMPLE, rfProfileId: '1234', status: 404 },
 });
 
 // ── Device radio settings ──
@@ -190,10 +195,12 @@ function updateSsid(ctx) {
   const encryptionMode = b.encryptionMode ?? s.encryptionMode;
   if (b.name != null && !String(b.name).trim()) throw badRequest("'name' must not be empty");
   if (!AUTH_MODES.includes(authMode)) throw badRequest(`'authMode' must be one of ${AUTH_MODES.join(', ')}`);
+  // Without VLANs the read shows VLAN 1, the single LAN, so that alone is taken back.
+  const singleLan = !configOf(net).vlansEnabled;
   if (b.defaultVlanId != null) {
     const c = configOf(net);
-    if (!c.vlansEnabled) throw badRequest("'defaultVlanId' is only valid when VLANs are enabled on this network");
-    if (!c.vlans.some((v) => v.id === String(b.defaultVlanId))) throw badRequest(`VLAN ${b.defaultVlanId} does not exist in this network`);
+    if (singleLan && String(b.defaultVlanId) !== '1') throw badRequest("'defaultVlanId' is only valid when VLANs are enabled on this network");
+    if (!singleLan && !c.vlans.some((v) => v.id === String(b.defaultVlanId))) throw badRequest(`VLAN ${b.defaultVlanId} does not exist in this network`);
   }
   if (b.psk != null && authMode !== 'psk') throw badRequest("'psk' is only valid when authMode is psk");
   if (b.encryptionMode != null && authMode !== 'psk') throw badRequest("'encryptionMode' is only valid when authMode is psk");
@@ -214,7 +221,7 @@ function updateSsid(ctx) {
   }
   if (authMode === '8021x-radius' && !servers.length) throw badRequest("'radiusServers' is required when authMode is 8021x-radius");
   for (const k of ['name', 'enabled', 'visible', 'authMode', 'encryptionMode', 'wpaEncryptionMode']) if (b[k] != null) s[k] = b[k];
-  if (b.defaultVlanId != null) s.defaultVlanId = b.defaultVlanId;
+  if (b.defaultVlanId != null && !singleLan) s.defaultVlanId = b.defaultVlanId;
   s.psk = psk;
   if (b.radiusServers != null) s.radiusServers = servers.map((r) => ({ host: r.host, port: r.port ?? 1812, secret: r.secret ?? null }));
   if (b.dhcpEnforcedDeauthentication?.enabled != null) s.dhcpEnforcedDeauthentication.enabled = b.dhcpEnforcedDeauthentication.enabled;
@@ -234,20 +241,20 @@ function vmxToken(ctx) {
 }
 
 export default [
-  { op: 'getDeviceApplianceRadioSettings', path: '/devices/{serial}/appliance/radio/settings', sample: { serial: 'appliance', status: 400 }, handler: (ctx) => radioJson(radioDevice(ctx)) },
-  { op: 'updateDeviceApplianceRadioSettings', method: 'PUT', path: '/devices/{serial}/appliance/radio/settings', sample: { serial: 'appliance' }, handler: updateRadio },
+  { op: 'getDeviceApplianceRadioSettings', path: '/devices/{serial}/appliance/radio/settings', sample: DEVICE_SAMPLE, handler: (ctx) => radioJson(radioDevice(ctx)) },
+  { op: 'updateDeviceApplianceRadioSettings', method: 'PUT', path: '/devices/{serial}/appliance/radio/settings', sample: DEVICE_SAMPLE, handler: updateRadio },
   { op: 'createDeviceApplianceVmxAuthenticationToken', method: 'POST', path: '/devices/{serial}/appliance/vmx/authenticationToken', sample: { serial: 'appliance' }, handler: vmxToken },
   {
     op: 'getNetworkApplianceRfProfiles',
     path: '/networks/{networkId}/appliance/rfProfiles',
-    sample: { status: 400 },
+    sample: NET_SAMPLE,
     handler: (ctx) => {
       const net = wifiNet(ctx);
       return { assigned: profilesOf(net).list.map((x) => profileJson(x, net)) };
     },
   },
-  ...profiles.routes,
-  { op: 'getNetworkApplianceSsids', path: '/networks/{networkId}/appliance/ssids', sample: { status: 400 }, handler: (ctx) => { const net = wifiNet(ctx); return ssidsOf(net).map((s) => ssidJson(net, s)); } },
-  { op: 'getNetworkApplianceSsid', path: '/networks/{networkId}/appliance/ssids/{number}', sample: { number: '1', status: 400 }, handler: (ctx) => { const net = wifiNet(ctx); return ssidJson(net, ssidOf(net, ctx.params.number)); } },
-  { op: 'updateNetworkApplianceSsid', method: 'PUT', path: '/networks/{networkId}/appliance/ssids/{number}', sample: { number: '1' }, handler: updateSsid },
+  ...profiles.routes.map((r) => (r.sample ? r : { ...r, sample: NET_SAMPLE })),
+  { op: 'getNetworkApplianceSsids', path: '/networks/{networkId}/appliance/ssids', sample: NET_SAMPLE, handler: (ctx) => { const net = wifiNet(ctx); return ssidsOf(net).map((s) => ssidJson(net, s)); } },
+  { op: 'getNetworkApplianceSsid', path: '/networks/{networkId}/appliance/ssids/{number}', sample: { ...NET_SAMPLE, number: '1' }, handler: (ctx) => { const net = wifiNet(ctx); return ssidJson(net, ssidOf(net, ctx.params.number)); } },
+  { op: 'updateNetworkApplianceSsid', method: 'PUT', path: '/networks/{networkId}/appliance/ssids/{number}', sample: { ...NET_SAMPLE, number: '1' }, handler: updateSsid },
 ];

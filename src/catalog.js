@@ -8,7 +8,7 @@ export const MODELS = {
   MX75: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 1000, lan: [3, 12], ram: 4096 },
   MX68: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 600, lan: [3, 12], ram: 2048 },
   MX67: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 450, lan: [2, 5], ram: 2048 },
-  // W models have a Wi-Fi radio. None is seeded.
+  // W models have a Wi-Fi radio. Lab - Ottawa has the MX68W.
   MX68W: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 600, lan: [3, 12], ram: 2048, radio: true },
   MX67W: { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 450, lan: [2, 5], ram: 2048, radio: true },
   // Virtual MXs have no LAN ports; they only come from claim/vmx.
@@ -168,6 +168,17 @@ export const ORGS = [
         clients: { laptop: 6, phone: 5, iot: 8 },
       },
     ],
+  },
+];
+
+// Acme Test Lab networks built after everything above, one Rand stream each,
+// so Acme Corporation's IDs and spares never move. Append new ones at the end:
+// inserting one shifts nothing, but reordering changes their site numbers.
+export const LAB_NETWORKS = [
+  {
+    code: 'OTT', name: 'Lab - Ottawa', kind: 'office', tz: 'America/Toronto', address: 'Ottawa, ON, Canada', lat: 45.4215, lng: -75.6972, tags: ['lab'],
+    mx: { model: 'MX68W', wan: ['cable'] },
+    clients: {},
   },
 ];
 

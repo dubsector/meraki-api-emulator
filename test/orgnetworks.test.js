@@ -159,7 +159,7 @@ describe('network groups, moves and combining', () => {
     assert.equal((await sb.get(`/networks/${net.id}/devices`)).body.length, toronto.devices.length);
     assert.equal((await sb.get(`/networks/${net.id}/clients?timespan=2592000&perPage=1000`)).body.length, clients);
     assert.equal((await sb.get(`/networks/${net.id}/wireless/ssids/0`)).body.name, toronto.config.ssids[0].name);
-    assert.equal((await sb.get(`/organizations/${lab.id}/licenses`)).body.filter((l) => l.networkId === net.id).length, lab.devices.length);
+    assert.equal((await sb.get(`/organizations/${lab.id}/licenses`)).body.filter((l) => l.networkId === net.id).length, lab.devices.filter((d) => d.net.id === net.id).length);
 
     // Naming the combined network adds the others to it and keeps its ID.
     const cam = (await sb.post(L, { name: 'Toronto Cameras', productTypes: ['camera'] })).body;

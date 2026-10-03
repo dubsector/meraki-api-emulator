@@ -49,6 +49,7 @@ const CONDITIONAL = [
   [/\.securePort\.configOverrides\./, 'getDeviceSwitchPortsStatuses', 'an active Secure Port'],
   [/\.(wlanIdentifier|enterpriseAdminAccess|radiusCalledStationId|radiusAuthenticationNasId|gre|campusGateway|localAuthFallback|namedVlans|wifiPersonalNetworkEnabled|security)$/, /WirelessSsids?$/, 'Meraki admins, enterprise admins, EoGRE, campus gateways, named VLANs or WPA3'],
   [/\.(localAuth|psk|radiusAccountingServers|walledGardenRanges|oauth|adminSplashUrl|splashTimeout|walledGardenEnabled|adultContentFilteringEnabled|dnsRewrite)$/, /WirelessSsids?$/, 'other auth, splash or IP assignment modes'],
+  [/\.(radiusServers|encryptionMode|wpaEncryptionMode)$/, /^getNetworkApplianceSsids?$/, 'PSK or RADIUS auth modes; the seeded MX SSIDs are open'],
   [/^\.policiesBySsid$/, 'getNetworkClientPolicy', 'per-SSID policies (the sample has a group policy)'],
   [/^\.products\.(cellularGateway|sensor|wirelessController|campusGateway|secureConnect)$|\.nextUpgrade\.(toVersion\.|strategy|predownload)/, 'getNetworkFirmwareUpgrades', 'other products, or a scheduled upgrade'],
   [/^\.products\.(switch|switchCatalyst)$/, 'getNetworkFirmwareUpgradesStagedEvents', 'a staged upgrade event (networks start with none), or Catalyst switches'],
