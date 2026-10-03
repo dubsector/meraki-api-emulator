@@ -37,7 +37,7 @@ export const stackRouter = (net, stack) => ({ net, l3: stack, what: 'stack', par
 
 const switchRouter = (dev) => ({ net: dev.net, l3: (dev.switchRouting ??= newL3()), what: 'switch', parent: dev.serial, kinds: ['switchInterface', 'switchStaticRoute'], serial: dev.serial, dev });
 
-const stacksOf = (net) => (net.switchStacks?.list ?? []).map((s) => ({ id: s.id, name: s.name, members: s.members.filter((d) => net.switches.includes(d)) }));
+export const stacksOf = (net) => (net.switchStacks?.list ?? []).map((s) => ({ id: s.id, name: s.name, members: s.members.filter((d) => net.switches.includes(d)) }));
 const stackHolding = (dev) => (dev.net.switchStacks?.list ?? []).find((s) => s.members.includes(dev));
 
 // Every stack, and every lone switch with layer 3 state, in the network.
@@ -341,50 +341,65 @@ function updateOspf(ctx) {
 
 const multicastDefaults = () => ({ defaultSettings: { igmpSnoopingEnabled: true, floodUnknownMulticastTrafficEnabled: true }, overrides: [] });
 export const multicastOf = (net) => stored(net, 'switchMulticast', multicastDefaults);
-const profilesOf = (net) => net.template?.profiles ?? [];
 
-// Switches, stacks and profiles that left the network drop out of their override.
-function multicastJson(net) {
-  const m = multicastOf(net);
+// Switches and stacks that left the network drop out of an entry, and an entry
+// left with none of them drops out of the list. STP, MTU and multicast share it.
+export function liveEntries(net, entries, rest) {
   const stackIds = stacksOf(net).map((s) => s.id);
-  const keep = { switches: (s) => net.switches.some((d) => d.serial === s), stacks: (id) => stackIds.includes(id), switchProfiles: (id) => profilesOf(net).some((p) => p.switchProfileId === id) };
-  const overrides = [];
-  for (const o of m.overrides) {
-    const [key, ids] = Object.entries(o).find(([k]) => k in keep);
-    const left = ids.filter(keep[key]);
-    if (left.length) overrides.push({ [key]: left, igmpSnoopingEnabled: o.igmpSnoopingEnabled, floodUnknownMulticastTrafficEnabled: o.floodUnknownMulticastTrafficEnabled });
+  const keep = { switches: (s) => net.switches.some((d) => d.serial === s), stacks: (id) => stackIds.includes(id) };
+  const out = [];
+  for (const e of entries) {
+    const lists = {};
+    for (const k of Object.keys(keep)) if (e[k]) lists[k] = e[k].filter(keep[k]);
+    if (Object.values(lists).some((l) => l.length)) out.push({ ...lists, ...rest(e) });
   }
-  return { defaultSettings: { ...m.defaultSettings }, overrides };
+  return out;
 }
 
-function checkOverride(net, o, i, seen) {
-  const lists = ['switches', 'stacks', 'switchProfiles'].filter((k) => o[k]?.length);
-  if (lists.length !== 1) throw badRequest(`'overrides[${i}]' needs exactly one of 'switches', 'stacks' or 'switchProfiles'`);
-  const [key] = lists;
-  const bound = !!net.template;
-  if (bound !== (key === 'switchProfiles')) throw badRequest(bound ? "A network bound to a config template takes 'switchProfiles' overrides only" : "'switchProfiles' only applies to networks bound to a config template");
+// Each switch or stack sits in one entry, and a stacked switch is listed by its
+// stack where the setting takes stacks. Switch profiles belong to template
+// networks, which network IDs never name here. `one` allows one list per entry.
+export function checkEntries(net, entries, keys, what, max, one = false) {
+  const seen = new Set();
   const stacks = stacksOf(net);
-  for (const id of o[key]) {
-    if (seen.has(id)) throw badRequest(`'${id}' is in more than one override`);
-    seen.add(id);
-    if (key === 'switches') {
-      const dev = net.switches.find((d) => d.serial === id);
-      if (!dev) throw badRequest(`Switch '${id}' is not in this network`);
-      const stack = stacks.find((s) => s.members.includes(dev));
-      if (stack) throw badRequest(`Switch '${id}' is in stack '${stack.name}', so list the stack instead`);
-    } else if (key === 'stacks') {
-      if (!stacks.some((s) => s.id === id)) throw badRequest(`Switch stack '${id}' does not exist in this network`);
-    } else if (!profilesOf(net).some((p) => p.switchProfileId === id)) throw badRequest(`Switch profile '${id}' is not in this network's config template`);
-  }
-  return { [key]: [...o[key]], igmpSnoopingEnabled: o.igmpSnoopingEnabled, floodUnknownMulticastTrafficEnabled: o.floodUnknownMulticastTrafficEnabled };
+  const names = keys.map((k) => `'${k}'`).join(one ? ' or ' : ', ');
+  limit(entries, max, what);
+  return entries.map((e, i) => {
+    const at = `${what}[${i}]`;
+    if (e.switchProfiles?.length) throw badRequest("'switchProfiles' only applies to config template networks");
+    const given = keys.filter((k) => e[k]?.length);
+    if (!given.length || (one && given.length > 1)) throw badRequest(`'${at}' needs ${one ? 'exactly' : 'at least'} one of ${names}`);
+    const out = {};
+    for (const k of given) {
+      for (const id of e[k]) {
+        if (typeof id !== 'string') throw badRequest(`'${at}.${k}' must be a list of strings`);
+        if (seen.has(id)) throw badRequest(`'${id}' is in more than one entry of '${what}'`);
+        seen.add(id);
+        if (k === 'switches') {
+          const dev = net.switches.find((d) => d.serial === id);
+          if (!dev) throw badRequest(`Switch '${id}' is not in this network`);
+          const stack = keys.includes('stacks') && stacks.find((s) => s.members.includes(dev));
+          if (stack) throw badRequest(`Switch '${id}' is in stack '${stack.name}', so list the stack instead`);
+        } else if (!stacks.some((s) => s.id === id)) throw badRequest(`Switch stack '${id}' does not exist in this network`);
+      }
+      out[k] = [...e[k]];
+    }
+    return out;
+  });
+}
+
+const multicastValues = (o) => ({ igmpSnoopingEnabled: o.igmpSnoopingEnabled, floodUnknownMulticastTrafficEnabled: o.floodUnknownMulticastTrafficEnabled });
+
+function multicastJson(net) {
+  const m = multicastOf(net);
+  return { defaultSettings: { ...m.defaultSettings }, overrides: liveEntries(net, m.overrides, multicastValues) };
 }
 
 function updateMulticast(ctx) {
   const net = switchNet(ctx);
   const m = multicastOf(net);
   const b = ctx.body;
-  const seen = new Set();
-  const overrides = b.overrides ? limit(b.overrides, MAX_ITEMS, 'Multicast overrides').map((o, i) => checkOverride(net, o, i, seen)) : null;
+  const overrides = b.overrides ? checkEntries(net, b.overrides, ['switches', 'stacks'], 'overrides', MAX_ITEMS, true).map((e, i) => ({ ...e, ...multicastValues(b.overrides[i]) })) : null;
   if (b.defaultSettings) for (const k of ['igmpSnoopingEnabled', 'floodUnknownMulticastTrafficEnabled']) if (b.defaultSettings[k] != null) m.defaultSettings[k] = b.defaultSettings[k];
   if (overrides) m.overrides = overrides;
   return multicastJson(net);

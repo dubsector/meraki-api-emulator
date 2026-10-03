@@ -105,10 +105,11 @@ export const round = (v, d = 0) => Math.round(v * 10 ** d) / 10 ** d;
 //   max       the most items a parent can hold
 //   required  body fields a create must have (null counts as missing)
 //   unique    false when names may repeat; `scope` is 'network' or 'organization'
-//   check     (ctx, parent, body, self) => other body checks; self is null on create
+//   check     (ctx, parent, body, self) => other body checks; self is null on
+//             create. What it returns goes to apply as `checked`
 //   blank     (ctx, parent) => a new item's fields before the body is applied
-//   apply     (item, body, parent, ctx) => copies the body onto an item, which
-//             already has its ID
+//   apply     (item, body, parent, ctx, checked) => copies the body onto an
+//             item, which already has its ID
 //   json      (item, parent) => the item as the API returns it
 //   inUse     (item, parent) => why it can't be deleted, or nothing
 //   missing   the get route's sample (an unknown ID and status 404)
@@ -132,7 +133,7 @@ export function collection(c) {
       if (!b.name.trim()) throw badRequest("'name' must not be empty");
       if (store.list.some((x) => x !== self && x.name === b.name)) throw badRequest(`${/^[aeiou]/i.test(what) ? 'An' : 'A'} ${what} named '${b.name}' already exists in this ${scope}`);
     }
-    c.check?.(ctx, parent, b, self);
+    return c.check?.(ctx, parent, b, self);
   };
   const handlers = {
     list: (ctx) => {
@@ -144,9 +145,9 @@ export function collection(c) {
       const b = ctx.body;
       if (store.list.length >= c.max) throw badRequest(`${parents} are limited to ${c.max} ${plural} in the emulator`);
       for (const k of c.required ?? []) if (b[k] == null) throw badRequest(`'${k}' is required`);
-      checkBody(ctx, parent, store, b, null);
+      const checked = checkBody(ctx, parent, store, b, null);
       const x = { [key]: c.nextId ? c.nextId(ctx, store, parent) : newId(ctx, store, c.kind, parent.id, key), ...c.blank(ctx, parent) };
-      c.apply(x, b, parent, ctx);
+      c.apply(x, b, parent, ctx, checked);
       store.list.push(x);
       return c.json(x, parent);
     },
@@ -156,8 +157,8 @@ export function collection(c) {
     },
     update: (ctx) => {
       const { parent, store, item: x } = find(ctx);
-      checkBody(ctx, parent, store, ctx.body, x);
-      c.apply(x, ctx.body, parent, ctx);
+      const checked = checkBody(ctx, parent, store, ctx.body, x);
+      c.apply(x, ctx.body, parent, ctx, checked);
       return c.json(x, parent);
     },
     delete: (ctx) => {

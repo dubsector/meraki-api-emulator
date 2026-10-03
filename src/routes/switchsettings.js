@@ -8,7 +8,7 @@ import { badRequest } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { inRange, ipInCidr, parseIp } from '../validate.js';
 import { collection, devOf, limit, netOf, orgOf, requireModel, requireProduct } from './common.js';
-import { multicastOf, seriesOf } from './routing.js';
+import { checkEntries, liveEntries, multicastOf, seriesOf, stacksOf } from './routing.js';
 import { CUSTOM_POLICY, boundProfile, portConfig } from './switch.js';
 
 const NET = '/networks/{networkId}/switch';
@@ -29,53 +29,7 @@ function switchNet(ctx) {
   return net;
 }
 
-const stacksOf = (net) => (net.switchStacks?.list ?? []).map((s) => ({ id: s.id, name: s.name, members: s.members.filter((d) => net.switches.includes(d)) }));
-const profilesOf = (net) => net.template?.profiles ?? [];
 const switchIn = (net, serial) => net.switches.find((d) => d.serial === serial);
-
-// Switches, stacks and profiles that left the network drop out of an entry,
-// and an entry left with none of them drops out of the list.
-function liveEntries(net, entries, rest) {
-  const stackIds = stacksOf(net).map((s) => s.id);
-  const keep = { switches: (s) => !!switchIn(net, s), stacks: (id) => stackIds.includes(id), switchProfiles: (id) => profilesOf(net).some((p) => p.switchProfileId === id) };
-  const out = [];
-  for (const e of entries) {
-    const lists = {};
-    for (const k of Object.keys(keep)) if (e[k]) lists[k] = e[k].filter(keep[k]);
-    if (Object.values(lists).some((l) => l.length)) out.push({ ...lists, ...rest(e) });
-  }
-  return out;
-}
-
-// Each switch, stack or profile sits in one entry. A stacked switch is listed by
-// its stack where the setting takes stacks; profiles only apply to template networks.
-function checkEntries(net, entries, keys, what) {
-  const seen = new Set();
-  const stacks = stacksOf(net);
-  limit(entries, MAX_ENTRIES, what);
-  return entries.map((e, i) => {
-    const at = `${what}[${i}]`;
-    if (!keys.some((k) => e[k]?.length)) throw badRequest(`'${at}' needs at least one of ${keys.map((k) => `'${k}'`).join(', ')}`);
-    if (e.switchProfiles?.length) throw badRequest("'switchProfiles' only applies to config template networks");
-    const out = {};
-    for (const k of keys) {
-      if (!e[k]?.length) continue;
-      for (const id of e[k]) {
-        if (typeof id !== 'string') throw badRequest(`'${at}.${k}' must be a list of strings`);
-        if (seen.has(id)) throw badRequest(`'${id}' is in more than one entry of '${what}'`);
-        seen.add(id);
-        if (k === 'switches') {
-          const dev = switchIn(net, id);
-          if (!dev) throw badRequest(`Switch '${id}' is not in this network`);
-          const stack = keys.includes('stacks') && stacks.find((s) => s.members.includes(dev));
-          if (stack) throw badRequest(`Switch '${id}' is in stack '${stack.name}', so list the stack instead`);
-        } else if (k === 'stacks' && !stacks.some((s) => s.id === id)) throw badRequest(`Switch stack '${id}' does not exist in this network`);
-      }
-      out[k] = [...e[k]];
-    }
-    return out;
-  });
-}
 
 // ── STP ──
 
@@ -91,7 +45,7 @@ function updateStp(ctx) {
   const b = ctx.body;
   let entries = null;
   if (b.stpBridgePriority) {
-    entries = checkEntries(net, b.stpBridgePriority, ['switches', 'stacks', 'switchProfiles'], 'stpBridgePriority');
+    entries = checkEntries(net, b.stpBridgePriority, ['switches', 'stacks'], 'stpBridgePriority', MAX_ENTRIES);
     b.stpBridgePriority.forEach((e, i) => {
       const p = e.stpPriority;
       if (!Number.isInteger(p) || p < 0 || p > 61440 || p % 4096) throw badRequest(`'stpBridgePriority[${i}].stpPriority' must be a multiple of 4096 from 0 to 61440`);
@@ -119,7 +73,7 @@ function updateMtu(ctx) {
   inRange(b.defaultMtuSize, MTU_MIN, MTU_MAX, 'defaultMtuSize');
   let overrides = null;
   if (b.overrides) {
-    overrides = checkEntries(net, b.overrides, ['switches', 'switchProfiles'], 'overrides');
+    overrides = checkEntries(net, b.overrides, ['switches'], 'overrides', MAX_ENTRIES);
     b.overrides.forEach((o, i) => {
       if (o.mtuSize == null) throw badRequest(`'overrides[${i}].mtuSize' is required`);
       inRange(o.mtuSize, MTU_MIN, MTU_MAX, `overrides[${i}].mtuSize`);
@@ -301,8 +255,8 @@ const linkAggregations = collection({
   unique: false,
   check: (ctx, net, b, self) => portsOf(net, b, self),
   blank: () => ({ ports: [] }),
-  apply: (g, b, net) => {
-    g.ports = portsOf(net, b, g);
+  apply: (g, b, net, ctx, ports) => {
+    g.ports = ports;
   },
   json: (g) => ({ id: g.id, switchPorts: g.ports.map((p) => ({ serial: p.dev.serial, portId: p.portId })) }),
 });
@@ -351,8 +305,8 @@ const portSchedules = collection({
   required: ['name'],
   check: (ctx, net, b, self) => scheduleDays(b, self),
   blank: () => ({ name: null, portSchedule: {} }),
-  apply: (s, b) => {
-    s.portSchedule = scheduleDays(b, s.name == null ? null : s);
+  apply: (s, b, net, ctx, days) => {
+    s.portSchedule = days;
     if (b.name != null) s.name = b.name;
   },
   json: (s, net) => ({ id: s.id, networkId: net.id, name: s.name, portSchedule: structuredClone(s.portSchedule) }),
@@ -375,7 +329,6 @@ export function warmSparePair(dev) {
   const primary = net.switches.find((p) => p !== dev && p.switchWarmSpare?.spare === dev && live(p));
   return primary ? { primary, spare: dev } : null;
 }
-
 
 function warmSpareJson(dev) {
   const pair = warmSparePair(dev);
@@ -437,7 +390,7 @@ function cloneEntry(list, srcList, src, dst, values, withStacks) {
   const from = srcList.find((e) => e.switches?.includes(src.serial) || (srcStack && e.stacks?.includes(srcStack.id)));
   const out = list
     .map((e) => (e.switches ? { ...e, switches: e.switches.filter((s) => s !== dst.serial) } : { ...e }))
-    .filter((e) => ['switches', 'stacks', 'switchProfiles'].some((k) => e[k]?.length));
+    .filter((e) => e.switches?.length || e.stacks?.length);
   if (!from) return out;
   const same = out.find((e) => e.switches?.length && values.every((k) => e[k] === from[k]));
   if (same) same.switches.push(dst.serial);
