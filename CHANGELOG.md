@@ -2,6 +2,19 @@
 
 Versions follow [semantic versioning](https://semver.org/). While the version starts with `0.`, a new minor version can change responses, IDs or defaults, and a patch version only fixes bugs.
 
+## 0.3.1
+
+Bug fixes. The emulator still answers 800 operations.
+
+- A null `tags` on a network or device, or a null `tags` or network privileges on an admin, clears the list. It was stored as is, so the reads that filter on it answered `500`, and a live tool or action batch callback built from that device or network stopped the server. A callback whose payload can't be built is now marked `failed` instead. A null network `name` or `timeZone` is ignored.
+- Deleting a network removes it from its spokes' hubs, admin and SAML role privileges, network groups and other organization settings. A spoke left with no hub reads mode `none`.
+- A `PUT` replaces a VLAN's or static route's `fixedIpAssignments` whole, so reservations can be removed.
+- MX and SSID L7 rules take `value` as an object or bare ID for applications and categories, and as a list of country codes for the country types, so the seeded rules can be sent back.
+- Each part of a split keeps only its own product's syslog roles. A server left with no roles is dropped.
+- A null `payloadTemplate` on a new webhook HTTP server gets Meraki (included) instead of a `500`.
+- Body checks drop inherited names like `toString` and `valueOf` with the other unknown fields.
+- `npm run fuzz` and a new CI job send broken bodies and query values to every route and fail on any `5xx`.
+
 ## 0.3.0
 
 The emulator now answers 800 operations (418 reads and 382 writes), up from 521. [ENDPOINTS.md](ENDPOINTS.md) lists them all.
