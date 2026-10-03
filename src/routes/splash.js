@@ -120,7 +120,7 @@ function createAsset(ctx) {
   const org = orgOf(ctx);
   const store = themesOf(org);
   const id = ctx.params.themeIdentifier;
-  const t = themeIn(org, id) ?? store.list.find((x) => x.name === id);
+  const t = themeIn(org, id) ?? allThemes(org).find((x) => x.name === id);
   if (!t) throw notFound('Splash theme');
   if (isSystem(t)) throw badRequest('System splash themes cannot be changed');
   const { name, content } = ctx.body;

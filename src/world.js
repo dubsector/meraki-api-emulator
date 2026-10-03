@@ -866,6 +866,12 @@ export function combineNetworks(world, org, nets, { name, enrollmentString }) {
     }
   }
   for (const [k, v] of Object.entries(configs.get(first))) if (!(k in config)) config[k] = v;
+  // VLAN profiles serve switches and APs alike: the switch network's come first,
+  // then the wireless network's other inames, so APs keep the profiles they name.
+  const vlanOwners = [...new Set([owner('switch'), owner('wireless')])].filter(Boolean);
+  const profiles = vlanOwners.flatMap((n) => configs.get(n).switchVlanProfiles?.list ?? []);
+  const inames = new Set();
+  if (profiles.length) config.switchVlanProfiles = { list: profiles.filter((p) => !inames.has(p.iname.toLowerCase()) && inames.add(p.iname.toLowerCase())) };
 
   const plans = { created: 0, list: [], jobsCreated: 0, jobs: [] };
   const firmware = { window: first.firmware?.window ?? null, timezone: first.firmware?.timezone ?? null, products: {}, rollbacks: first.firmware?.rollbacks ?? 0 };

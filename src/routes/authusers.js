@@ -26,6 +26,21 @@ const storeOf = (net, type) => (net[storeKey(type)] ??= { list: [] });
 const byCreated = (a, b) => a.createdAt - b.createdAt || (a.email < b.email ? -1 : 1);
 const usersOf = (net) => [...(net.wirelessMerakiAuthUsers?.list ?? []), ...(net.applianceMerakiAuthUsers?.list ?? [])].sort(byCreated);
 
+// Why networks can't combine: a wireless user and a client VPN user with one
+// email would share an ID. Null when they can.
+export function authUserClash(nets) {
+  const seen = new Map();
+  for (const n of nets) {
+    for (const u of [...(n.wirelessMerakiAuthUsers?.list ?? []), ...(n.applianceMerakiAuthUsers?.list ?? [])]) {
+      const email = u.email.toLowerCase();
+      const other = seen.get(email);
+      if (other && other !== n) return `Networks ${other.id} and ${n.id} both have a Meraki auth user with email '${u.email}'; delete one of them first`;
+      seen.set(email, n);
+    }
+  }
+  return null;
+}
+
 // The ID is the email address in base64, as the real API's are.
 const userId = (email) => Buffer.from(email).toString('base64');
 

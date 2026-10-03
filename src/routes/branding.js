@@ -32,15 +32,24 @@ function nextPolicyId(ctx, store, org) {
 
 const isNetOrTemplate = (org, id) => org.networks.some((n) => n.id === id) || (org.configTemplates?.list ?? []).some((t) => t.id === id);
 
+// Admins, networks and templates that left the organization drop out of values.
+function liveValues(org, appliesTo, values) {
+  if (appliesTo === 'Specific admins...') return values.filter((v) => org.admins.some((x) => x.id === v));
+  if (appliesTo === 'All admins of networks...') return values.filter((v) => isNetOrTemplate(org, v));
+  return values;
+}
+
 // Works out the admin settings and logo before anything changes. A new appliesTo
-// without values starts with an empty list.
+// without values starts with an empty list; an update leaving them out keeps
+// the ones still in the organization.
 function checkPolicy(ctx, org, b, self) {
   const a = b.adminSettings ?? {};
   const appliesTo = a.appliesTo ?? self?.appliesTo ?? 'All admins';
-  const values = a.values ?? (appliesTo === self?.appliesTo ? self.values : []);
+  const kept = a.values == null && appliesTo === self?.appliesTo;
+  const values = a.values ?? (kept ? liveValues(org, appliesTo, self.values) : []);
   const kind = NEEDS_VALUES[appliesTo];
   if (!kind && values.length) throw badRequest(`'adminSettings.values' only applies when 'adminSettings.appliesTo' is one of: ${Object.keys(NEEDS_VALUES).join(', ')}`);
-  if (kind && !values.length) throw badRequest(`'adminSettings.values' must list ${kind} when 'adminSettings.appliesTo' is '${appliesTo}'`);
+  if (kind && !values.length && !kept) throw badRequest(`'adminSettings.values' must list ${kind} when 'adminSettings.appliesTo' is '${appliesTo}'`);
   for (const v of values) {
     if (!String(v).trim()) throw badRequest("'adminSettings.values' must not hold empty strings");
     if (appliesTo === 'Specific admins...' && !org.admins.some((x) => x.id === v)) throw badRequest(`'adminSettings.values' names an admin that is not in this organization: ${v}`);
@@ -68,10 +77,8 @@ function applyPolicy(p, b, org, ctx, checked) {
   Object.assign(p, checked);
 }
 
-// Admins, networks and templates that left the organization drop out of values.
 function policyJson(p, org, ctx) {
-  const values =
-    p.appliesTo === 'Specific admins...' ? p.values.filter((v) => org.admins.some((x) => x.id === v)) : p.appliesTo === 'All admins of networks...' ? p.values.filter((v) => isNetOrTemplate(org, v)) : p.values;
+  const values = liveValues(org, p.appliesTo, p.values);
   const image = p.logo ? { preview: { url: `https://meraki-na.s3.amazonaws.com/org-assets/${org.id}/${p.logo.hash}.${p.logo.format}`, expiresAt: iso(ctx.now + 3600) } } : null;
   return {
     brandingPolicyId: p.brandingPolicyId,
