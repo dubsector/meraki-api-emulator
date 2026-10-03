@@ -10,7 +10,7 @@ import { badRequest, notFound } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { merge, validTimeZone } from '../validate.js';
 import { netOf, orgOf } from './common.js';
-import { checkPortBody, checkPortPolicy, portConfig, portDefaults } from './switch.js';
+import { checkPortBody, checkPortPolicy, portConfig, portDefaults, withSchedule } from './switch.js';
 
 const LIST = '/organizations/{organizationId}/configTemplates';
 const TEMPLATE = `${LIST}/{configTemplateId}`;
@@ -48,9 +48,9 @@ const profileJson = (p) => ({ switchProfileId: p.switchProfileId, name: p.name, 
 
 // A profile port is a switch port without a switch: its model's defaults, and
 // whatever was written on top. The PoE extras aren't template settings.
-function portJson(profile, port) {
+function portJson(template, profile, port) {
   const { perpetualPoe, fastPoe, ...base } = portDefaults({ model: profile.model, info: MODELS[profile.model] }, port);
-  return port.config ? merge(base, port.config) : base;
+  return withSchedule(template.config, port.config ? merge(base, port.config) : base);
 }
 
 function newProfile(ctx, template, model, ports) {
@@ -190,7 +190,7 @@ export default [
     sample: { ...MISSING, profileId: '1' },
     handler: (ctx) => {
       const profile = profileOf(ctx);
-      return profile.ports.map((p) => portJson(profile, p));
+      return profile.ports.map((p) => portJson(templateOf(ctx).template, profile, p));
     },
   },
   {
@@ -199,7 +199,7 @@ export default [
     sample: { ...MISSING, profileId: '1', portId: '1' },
     handler: (ctx) => {
       const { profile, port } = portOf(ctx);
-      return portJson(profile, port);
+      return portJson(templateOf(ctx).template, profile, port);
     },
   },
   {
@@ -210,10 +210,10 @@ export default [
       const { template } = templateOf(ctx);
       const { profile, port } = portOf(ctx);
       checkPortBody({ model: profile.model, info: MODELS[profile.model] }, port, ctx.body);
-      checkPortPolicy(template.config, portJson(profile, port), ctx.body);
+      checkPortPolicy(template.config, portJson(template, profile, port), ctx.body);
       const { portId, ...patch } = ctx.body;
       port.config = merge(port.config || {}, patch);
-      return portJson(profile, port);
+      return portJson(template, profile, port);
     },
   },
   { op: 'bindNetwork', method: 'POST', path: '/networks/{networkId}/bind', status: 200, handler: bind },

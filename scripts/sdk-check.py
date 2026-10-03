@@ -1216,7 +1216,51 @@ def switchsettings():
         check("getDeviceSwitchWarmSpare after disabling", off == s.getDeviceSwitchWarmSpare(f2) and not off["enabled"], off)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings]
+@scenario
+def switchdhcp():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o = d.organizations
+        s = d.switch
+        org = acme(o.getOrganizations())
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        hq = nets["HQ - San Francisco"]
+        sw = o.getOrganizationDevices(org, networkIds=[hq], productTypes=["switch"])
+        f2, f3 = sorted(x["serial"] for x in sw if x["model"] == "MS250-48FP")
+
+        p = s.updateNetworkSwitchDhcpServerPolicy(hq, defaultPolicy="block", allowedServers=["00:50:56:00:00:01"], arpInspection={"enabled": True})
+        check("updateNetworkSwitchDhcpServerPolicy", s.getNetworkSwitchDhcpServerPolicy(hq) == p and p["defaultPolicy"] == "block" and len(p["alwaysAllowedServers"]) == 4, p)
+        made = [s.createNetworkSwitchDhcpServerPolicyArpInspectionTrustedServer(hq, f"00:11:22:33:44:{n:02x}", 100, {"address": f"10.0.0.{n}"}) for n in range(1, 6)]
+        listed = s.getNetworkSwitchDhcpServerPolicyArpInspectionTrustedServers(hq, total_pages=-1, perPage=3)
+        check("createNetworkSwitchDhcpServerPolicyArpInspectionTrustedServer", listed == made, listed)
+        t = s.updateNetworkSwitchDhcpServerPolicyArpInspectionTrustedServer(hq, made[0]["trustedServerId"], vlan=200)
+        check("updateNetworkSwitchDhcpServerPolicyArpInspectionTrustedServer", t["vlan"] == 200 and t["mac"] == made[0]["mac"], t)
+        s.deleteNetworkSwitchDhcpServerPolicyArpInspectionTrustedServer(hq, made[0]["trustedServerId"])
+        check("deleteNetworkSwitchDhcpServerPolicyArpInspectionTrustedServer", len(s.getNetworkSwitchDhcpServerPolicyArpInspectionTrustedServers(hq, total_pages=-1)) == 4)
+        warn = s.getNetworkSwitchDhcpServerPolicyArpInspectionWarningsByDevice(hq, total_pages=-1)
+        check("getNetworkSwitchDhcpServerPolicyArpInspectionWarningsByDevice", [w["serial"] for w in warn] == [f2, f3] and not warn[0]["hasTrustedPort"], warn)
+
+        sched = s.createNetworkSwitchPortSchedule(hq, "Weekdays", portSchedule={"saturday": {"active": False}, "monday": {"from": "9:00", "to": "17:00"}})
+        check("createNetworkSwitchPortSchedule", s.getNetworkSwitchPortSchedules(hq) == [sched] and sched["portSchedule"]["sunday"]["active"], sched)
+        sched = s.updateNetworkSwitchPortSchedule(hq, sched["id"], name="Office")
+        check("updateNetworkSwitchPortSchedule", sched["name"] == "Office" and sched["portSchedule"]["monday"]["to"] == "17:00", sched)
+        port = s.updateDeviceSwitchPort(f2, "10", portScheduleId=sched["id"], name="Desk")
+        check("updateDeviceSwitchPort with a schedule", port["schedule"] == {"id": sched["id"], "name": "Office"}, port)
+        c = s.cloneOrganizationSwitchDevices(org, f2, [f3])
+        cloned = s.getDeviceSwitchPort(f3, "10")
+        check("cloneOrganizationSwitchDevices", c == {"sourceSerial": f2, "targetSerials": [f3]} and cloned["name"] == "Desk" and cloned["portScheduleId"] == sched["id"], cloned)
+        try:
+            s.deleteNetworkSwitchPortSchedule(hq, sched["id"])
+            check("deleteNetworkSwitchPortSchedule refuses a schedule in use", False, "no error")
+        except meraki.APIError as e:
+            check("deleteNetworkSwitchPortSchedule refuses a schedule in use", e.status == 400, e.message)
+        for serial in (f2, f3):
+            s.updateDeviceSwitchPort(serial, "10", portScheduleId=None)
+        s.deleteNetworkSwitchPortSchedule(hq, sched["id"])
+        check("deleteNetworkSwitchPortSchedule", s.getNetworkSwitchPortSchedules(hq) == [])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

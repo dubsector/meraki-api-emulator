@@ -1,18 +1,22 @@
 // Network-wide switch settings: STP, MTU, storm control, the alternate
-// management interface and link aggregations, plus a routing switch's warm
-// spare. None of them change what the sim reports.
+// management interface, link aggregations and port schedules, plus a routing
+// switch's warm spare and cloning one switch onto others. None of them change
+// what the sim reports.
 
 import { configOf, stored } from '../config.js';
 import { badRequest } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { inRange, ipInCidr, parseIp } from '../validate.js';
-import { collection, devOf, limit, netOf, requireModel, requireProduct } from './common.js';
-import { seriesOf } from './routing.js';
-import { boundProfile } from './switch.js';
+import { collection, devOf, limit, netOf, orgOf, requireModel, requireProduct } from './common.js';
+import { multicastOf, seriesOf } from './routing.js';
+import { CUSTOM_POLICY, boundProfile, portConfig } from './switch.js';
 
 const NET = '/networks/{networkId}/switch';
 const MAX_ENTRIES = 64;
 const MAX_AGGREGATIONS = 64;
+const MAX_SCHEDULES = 64;
+const MAX_MULTICAST = 128;
+const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const MTU_MIN = 1280;
 const MTU_MAX = 9578;
 const PROTOCOLS = ['radius', 'snmp', 'syslog'];
@@ -303,6 +307,61 @@ const linkAggregations = collection({
   json: (g) => ({ id: g.id, switchPorts: g.ports.map((p) => ({ serial: p.dev.serial, portId: p.portId })) }),
 });
 
+// ── Port schedules ──
+
+// Kept in config like access policies, so ports check against the same store
+// (switch.js checkPortPolicy). Times are 'H:MM' or 'HH:MM' on the half hour.
+const schedulesOf = (net) => stored(net, 'switchPortSchedules', () => ({ created: 0, list: [] }));
+const fullDay = () => ({ active: true, from: '00:00', to: '24:00' });
+
+function minutes(v, at) {
+  const m = typeof v === 'string' && /^(\d{1,2}):(\d{2})$/.exec(v);
+  const n = m ? Number(m[1]) * 60 + Number(m[2]) : NaN;
+  if (!(n >= 0 && n <= 1440) || Number(m[2]) >= 60) throw badRequest(`'${at}' must be a time from '00:00' to '24:00'`);
+  if (n % 30) throw badRequest(`'${at}' must be on a 30 minute boundary`);
+  return n;
+}
+
+// The days a write leaves, each given day merged over what it had.
+function scheduleDays(b, self) {
+  const days = {};
+  for (const d of DAYS) {
+    const given = b.portSchedule?.[d];
+    const day = { ...(self?.portSchedule[d] ?? fullDay()) };
+    if (given) for (const k of ['active', 'from', 'to']) if (given[k] != null) day[k] = given[k];
+    if (minutes(day.from, `portSchedule.${d}.from`) >= minutes(day.to, `portSchedule.${d}.to`)) throw badRequest(`'portSchedule.${d}.from' must be earlier than 'portSchedule.${d}.to'`);
+    days[d] = day;
+  }
+  return days;
+}
+
+function scheduleUsers(net, id) {
+  return net.switches.filter((sw) => !boundProfile(sw)).flatMap((sw) => sw.ports.filter((p) => p.config?.portScheduleId === id).map((p) => `${sw.serial}/${p.portId}`));
+}
+
+const portSchedules = collection({
+  ops: { list: 'getNetworkSwitchPortSchedules', create: 'createNetworkSwitchPortSchedule', update: 'updateNetworkSwitchPortSchedule', delete: 'deleteNetworkSwitchPortSchedule' },
+  path: `${NET}/portSchedules`,
+  param: 'portScheduleId',
+  parent: switchNet,
+  store: schedulesOf,
+  what: 'port schedule',
+  kind: 'portSchedule',
+  max: MAX_SCHEDULES,
+  required: ['name'],
+  check: (ctx, net, b, self) => scheduleDays(b, self),
+  blank: () => ({ name: null, portSchedule: {} }),
+  apply: (s, b) => {
+    s.portSchedule = scheduleDays(b, s.name == null ? null : s);
+    if (b.name != null) s.name = b.name;
+  },
+  json: (s, net) => ({ id: s.id, networkId: net.id, name: s.name, portSchedule: structuredClone(s.portSchedule) }),
+  inUse: (s, net) => {
+    const ports = scheduleUsers(net, s.id);
+    if (ports.length) return `Port schedule '${s.name}' is used by ${ports.length === 1 ? 'port' : 'ports'} ${ports.slice(0, 5).join(', ')}${ports.length > 5 ? ' and others' : ''}`;
+  },
+});
+
 // ── Warm spare ──
 
 // Kept on the primary as a device reference. The pair only counts while both
@@ -358,6 +417,114 @@ function updateWarmSpare(ctx) {
   return warmSpareJson(dev);
 }
 
+// ── Clone ──
+
+const familyOf = (dev) => dev.model.split('-')[0];
+
+function orgSwitch(org, serial, what) {
+  const dev = typeof serial === 'string' ? org.devices.find((d) => d.serial === serial) : null;
+  if (!dev || dev.productType !== 'switch' || !dev.net) throw badRequest(`${what} '${serial}' is not a switch in a network of this organization`);
+  if (dev.net.template) throw badRequest(`${what} '${serial}' is in a network bound to a config template`);
+  return dev;
+}
+
+const stackOf = (dev) => stacksOf(dev.net).find((s) => s.members.includes(dev));
+
+// Moves a target into the entry holding the source (by serial or by its stack),
+// or out of every entry when the source has none. Returns the new list.
+function cloneEntry(list, srcList, src, dst, values, withStacks) {
+  const srcStack = withStacks && stackOf(src);
+  const from = srcList.find((e) => e.switches?.includes(src.serial) || (srcStack && e.stacks?.includes(srcStack.id)));
+  const out = list
+    .map((e) => (e.switches ? { ...e, switches: e.switches.filter((s) => s !== dst.serial) } : { ...e }))
+    .filter((e) => ['switches', 'stacks', 'switchProfiles'].some((k) => e[k]?.length));
+  if (!from) return out;
+  const same = out.find((e) => e.switches?.length && values.every((k) => e[k] === from[k]));
+  if (same) same.switches.push(dst.serial);
+  else out.push({ switches: [dst.serial], ...Object.fromEntries(values.map((k) => [k, from[k]])) });
+  return out;
+}
+
+// The source's ports as the target takes them. Schedules and access policies
+// only carry within one network.
+function clonedPort(src, srcPort, dst, dstPort) {
+  const { portId, linkNegotiationCapabilities, schedule, ...c } = portConfig(src.net, src, srcPort);
+  const speeds = portConfig(dst.net, dst, dstPort).linkNegotiationCapabilities;
+  if (!speeds.includes(c.linkNegotiation)) c.linkNegotiation = 'Auto negotiate';
+  if (src.net !== dst.net) {
+    c.portScheduleId = null;
+    if (c.accessPolicyType === CUSTOM_POLICY) c.accessPolicyType = 'Open';
+    delete c.accessPolicyNumber;
+  }
+  return structuredClone(c);
+}
+
+function cloneSwitch(ctx) {
+  const org = orgOf(ctx);
+  const b = ctx.body;
+  const src = orgSwitch(org, b.sourceSerial, 'Source switch');
+  if (!b.targetSerials?.length) throw badRequest("'targetSerials' must list at least one switch");
+  limit(b.targetSerials, 100, 'Target switches');
+  if (new Set(b.targetSerials).size !== b.targetSerials.length) throw badRequest("'targetSerials' lists a switch more than once");
+  const targets = b.targetSerials.map((s) => orgSwitch(org, s, 'Target switch'));
+  for (const t of targets) {
+    if (t === src) throw badRequest("'targetSerials' must not include the source switch");
+    if (familyOf(t) !== familyOf(src)) throw badRequest(`Target switch '${t.serial}' is an ${t.model}; targets must be ${familyOf(src)} switches like the source`);
+  }
+  // Work out every change first, so a refused clone changes nothing.
+  const lists = new Map();
+  const listOf = (net, key, get) => {
+    const k = `${net.id}/${key}`;
+    if (!lists.has(k)) lists.set(k, { net, key, list: get(net) });
+    return lists.get(k);
+  };
+  const srcLists = { stp: stpOf(src.net).stpBridgePriority, mtu: mtuOf(src.net).overrides, multicast: multicastOf(src.net).overrides };
+  const srcGroups = aggregationsOf(src.net).list.filter((g) => g.ports.every((p) => p.dev === src));
+  const ports = [];
+  for (const t of targets) {
+    for (const port of t.ports) {
+      const from = src.ports.find((p) => p.portId === port.portId);
+      if (from) ports.push([port, clonedPort(src, from, t, port)]);
+    }
+    const stacked = !!stackOf(t);
+    const settings = [
+      ['stp', (n) => stpOf(n).stpBridgePriority, ['stpPriority'], true, MAX_ENTRIES],
+      ['mtu', (n) => mtuOf(n).overrides, ['mtuSize'], false, MAX_ENTRIES],
+      ['multicast', (n) => multicastOf(n).overrides, ['igmpSnoopingEnabled', 'floodUnknownMulticastTrafficEnabled'], true, MAX_MULTICAST],
+    ];
+    for (const [key, get, values, withStacks, max] of settings) {
+      if (withStacks && stacked) continue;
+      const slot = listOf(t.net, key, get);
+      slot.list = cloneEntry(slot.list, srcLists[key], src, t, values, withStacks);
+      if (slot.list.length > max) throw badRequest(`Cloning would give network '${t.net.name}' more than ${max} ${key} entries`);
+    }
+    // The target's own groups go; the source's groups on its own ports come over.
+    const lag = listOf(t.net, 'lag', (n) => aggregationsOf(n).list.map((g) => ({ g, ports: [...g.ports] })));
+    for (const x of lag.list) x.ports = x.ports.filter((p) => p.dev !== t);
+    for (const g of srcGroups) {
+      const mapped = g.ports.filter((p) => t.ports.some((q) => q.portId === p.portId && q.peer?.device.productType !== 'appliance')).map((p) => ({ dev: t, portId: p.portId }));
+      if (mapped.length >= 2) lag.list.push({ g: null, ports: mapped });
+    }
+    lag.list = lag.list.filter((x) => x.ports.length >= 2);
+    if (lag.list.length > MAX_AGGREGATIONS) throw badRequest(`Cloning would give network '${t.net.name}' more than ${MAX_AGGREGATIONS} link aggregations`);
+  }
+  for (const [port, config] of ports) port.config = config;
+  for (const { net, key, list } of lists.values()) {
+    if (key === 'stp') stpOf(net).stpBridgePriority = list;
+    else if (key === 'mtu') mtuOf(net).overrides = list;
+    else if (key === 'multicast') multicastOf(net).overrides = list;
+    else {
+      const store = aggregationsOf(net);
+      store.list = list.map((x) => {
+        const g = x.g ?? { id: nextAggregationId(ctx, store, net) };
+        g.ports = x.ports;
+        return g;
+      });
+    }
+  }
+  return { sourceSerial: src.serial, targetSerials: targets.map((t) => t.serial) };
+}
+
 // HQ's first MS250, which has a twin to pair with.
 const SPARE_SAMPLE = { serial: (world) => world.orgs[0].networks[0].switches.find((d) => d.model === 'MS250-48FP').serial };
 
@@ -371,6 +538,8 @@ export default [
   { op: 'getNetworkSwitchAlternateManagementInterface', path: `${NET}/alternateManagementInterface`, handler: (ctx) => amiJson(switchNet(ctx)) },
   { op: 'updateNetworkSwitchAlternateManagementInterface', method: 'PUT', path: `${NET}/alternateManagementInterface`, handler: updateAmi },
   ...linkAggregations.routes,
+  ...portSchedules.routes,
   { op: 'getDeviceSwitchWarmSpare', path: '/devices/{serial}/switch/warmSpare', sample: SPARE_SAMPLE, handler: (ctx) => warmSpareJson(switchOf(ctx)) },
   { op: 'updateDeviceSwitchWarmSpare', method: 'PUT', path: '/devices/{serial}/switch/warmSpare', sample: SPARE_SAMPLE, handler: updateWarmSpare },
+  { op: 'cloneOrganizationSwitchDevices', method: 'POST', path: '/organizations/{organizationId}/switch/devices/clone', status: 200, handler: cloneSwitch },
 ];
