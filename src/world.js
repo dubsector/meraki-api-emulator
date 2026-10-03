@@ -152,7 +152,7 @@ function buildAdminData(world, seed, bootTime) {
 
 // Co-term license model names, as license counts list them. Stripping the
 // edition gives the key the licenses overview counts devices under.
-const licenseModel = (d) => (d.productType === 'wireless' ? 'MR Enterprise' : d.productType === 'camera' ? 'MV' : d.productType === 'appliance' ? `${d.model} Enterprise` : d.model);
+const licenseModel = (d) => (d.productType === 'wireless' ? 'MR Enterprise' : d.productType === 'camera' ? 'MV' : d.productType === 'sensor' ? 'MT' : d.productType === 'appliance' ? `${d.model} Enterprise` : d.model);
 
 function licenseCounts(devices) {
   const counts = new Map();
@@ -203,6 +203,13 @@ function buildInventory(world, seed) {
 // Acme Test Lab networks from LAB_NETWORKS, after the admin and inventory
 // streams have run. Each network draws from its own stream, so appending one
 // never moves the IDs of those before it.
+//
+// A new device kind needs: a MODELS entry, SERIAL_PREFIX and DEVICE_OUI in
+// catalog.js, outageRate in buildNetwork and licenseModel here, BASE in
+// sim/memory.js, DEVICE_TYPE in sim/alerts.js, the kind map in samples.js,
+// PLACEHOLDER_DEVICE in webhooks.js, a firmware train in routes/firmware.js,
+// settingProduct in config.js, and claimDevice and the licenses overview
+// knowing it. Then every GET has to answer sensibly for it.
 function buildLab(world, seed, bootTime) {
   const lab = world.orgs[1];
   const bootDay = Math.floor(bootTime / DAY) * DAY;
@@ -246,7 +253,7 @@ function buildLab(world, seed, bootTime) {
 export function splitLicense(world, l, counts) {
   world.licenseKeys = (world.licenseKeys ?? 0) + 1;
   const r = new Rand(hashStr(`meraki-api-emulator:${world.seed}:cotermLicense:${world.licenseKeys}`));
-  const types = (m) => (m.startsWith('MR') ? 'wireless' : m === 'MV' ? 'camera' : m.startsWith('MX') ? 'appliance' : 'switch');
+  const types = (m) => (m.startsWith('MR') ? 'wireless' : m === 'MV' ? 'camera' : m === 'MT' ? 'sensor' : m.startsWith('MX') ? 'appliance' : 'switch');
   const editions = [...new Set(counts.map((c) => types(c.model)))].map((productType) => l.editions.find((e) => e.productType === productType) ?? { edition: 'Enterprise', productType });
   return { key: newLicenseKey(world, r), duration: l.duration, mode: l.mode, startedAt: l.startedAt, claimedAt: l.claimedAt, invalidatedAt: null, counts, editions };
 }
@@ -267,6 +274,7 @@ function buildNetwork(r, unique, org, tpl, siteIndex) {
   if (tpl.switches) productTypes.push('switch');
   if (tpl.aps) productTypes.push('wireless');
   if (tpl.cameras) productTypes.push('camera');
+  if (tpl.sensors) productTypes.push('sensor');
   const combined = productTypes.length > 1;
 
   const net = {
@@ -309,7 +317,7 @@ function buildNetwork(r, unique, org, tpl, siteIndex) {
       lat: tpl.lat + (r.next() - 0.5) * 0.002,
       lng: tpl.lng + (r.next() - 0.5) * 0.002,
       key: hashStr(serial),
-      outageRate: { appliance: 0.004, switch: 0.008, wireless: 0.02, camera: 0.03 }[info.productType],
+      outageRate: { appliance: 0.004, switch: 0.008, wireless: 0.02, camera: 0.03, sensor: 0.01 }[info.productType],
       ...extra,
     };
     net.devices.push(dev);
@@ -344,6 +352,8 @@ function buildNetwork(r, unique, org, tpl, siteIndex) {
         addDevice(tpl.cameras.model, `CAM-${tpl.code}-${n}`, { lanIp: `${net.subnet(1)}.${mgmtHost++}`, dormant: tpl.cameras.dormant === n }),
       )
     : [];
+  // Sensors talk to a gateway AP over Bluetooth, so they have no LAN IP.
+  for (const s of tpl.sensors ?? []) addDevice(s.model, `MT-${tpl.code}-${s.name}`, { lanIp: null });
 
   buildClients(r, unique, net, tpl);
   buildSwitchPorts(r, net);
@@ -639,7 +649,7 @@ export function claimDevice(world, net, spare) {
     outageRate: 0,
     orderNumber: spare.orderNumber,
     claimedAt: spare.claimedAt,
-    lanIp: pt === 'appliance' ? null : nextLanIp(net),
+    lanIp: pt === 'appliance' || pt === 'sensor' ? null : nextLanIp(net),
   };
   if (pt === 'appliance') {
     const host = 10 + (net.siteIndex % 240);
@@ -897,7 +907,7 @@ export function moveNetwork(world, net, dest) {
 
 // Settings kept on a network outside its config, since they name its own
 // devices or items. They go with the product they belong to.
-const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', cameraWirelessProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless', wirelessPortProfiles: 'wireless', wirelessMerakiAuthUsers: 'wireless', applianceMerakiAuthUsers: 'appliance' };
+const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', cameraWirelessProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless', wirelessPortProfiles: 'wireless', wirelessMerakiAuthUsers: 'wireless', applianceMerakiAuthUsers: 'appliance', sensorAlertProfiles: 'sensor' };
 
 // MQTT brokers serve cameras, sensors and wireless MQTT alike, which name them
 // by ID: a combined network takes every network's brokers and each part of a

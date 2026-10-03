@@ -88,7 +88,7 @@ function licensesOverview(org, now) {
   if (org.licensing === 'co-term') {
     const have = {};
     for (const d of devices) {
-      const key = d.productType === 'wireless' ? 'MR' : d.productType === 'camera' ? 'MV' : d.model;
+      const key = d.productType === 'wireless' ? 'MR' : d.productType === 'camera' ? 'MV' : d.productType === 'sensor' ? 'MT' : d.model;
       have[key] = (have[key] || 0) + 1;
     }
     const licensed = {};

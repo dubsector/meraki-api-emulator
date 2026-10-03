@@ -2002,7 +2002,64 @@ def insight():
         check("cloneOrganization", copied == sorted(nets) and o.getOrganizationDevices(c["id"]) == [], c)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight]
+@scenario
+def sensors():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        se = d.sensor
+        lab = next(o["id"] for o in d.organizations.getOrganizations() if o["name"] == "Acme Test Lab")
+        mtl = next(x["id"] for x in d.organizations.getOrganizationNetworks(lab) if x["name"] == "Lab - Montreal")
+        devices = d.networks.getNetworkDevices(mtl)
+        serial = {x["model"]: x["serial"] for x in devices}
+        sensors = sorted(x["serial"] for x in devices if x["productType"] == "sensor")
+
+        latest = se.getOrganizationSensorReadingsLatest(lab, total_pages="all", perPage=3)
+        check(f"getOrganizationSensorReadingsLatest perPage=3, all pages ({len(latest)} sensors)", [x["serial"] for x in latest] == sensors, latest[:1])
+        rows = se.getOrganizationSensorReadingsHistory(lab, total_pages="all", perPage=50, timespan=21600)
+        ref = se.getOrganizationSensorReadingsHistory(lab, perPage=1000, timespan=21600)
+        check(f"getOrganizationSensorReadingsHistory perPage=50, all pages ({len(rows)} readings)", rows == ref and len(rows) > 50, len(ref))
+        co2 = se.getOrganizationSensorReadingsHistory(lab, metrics=["co2"], serials=[serial["MT15"]], timespan=3600)
+        check("getOrganizationSensorReadingsHistory metrics and serials", co2 and all(x["metric"] == "co2" and x["serial"] == serial["MT15"] for x in co2), co2)
+        gw = se.getOrganizationSensorGatewaysConnectionsLatest(lab, total_pages="all", perPage=3)
+        check(f"getOrganizationSensorGatewaysConnectionsLatest perPage=3, all pages ({len(gw['items'])} pairs)", [x["sensor"]["serial"] for x in gw["items"]] == sensors and gw["items"][0]["gateway"]["serial"] == serial["CW9166I"], gw["items"][:1])
+
+        p = se.createNetworkSensorAlertsProfile(mtl, "Door", [{"metric": "door", "threshold": {"door": {"open": True}}}], serials=[serial["MT20"]], recipients={"emails": ["ops@example.com"]})
+        check("createNetworkSensorAlertsProfile", p["serials"] == [serial["MT20"]] and p["conditions"][0]["duration"] == 0, p)
+        check("getNetworkSensorAlertsProfiles", se.getNetworkSensorAlertsProfiles(mtl) == [p])
+        r = se.updateNetworkSensorAlertsProfile(mtl, p["profileId"], name="Back door")
+        check("updateNetworkSensorAlertsProfile and getNetworkSensorAlertsProfile", r["name"] == "Back door" and se.getNetworkSensorAlertsProfile(mtl, p["profileId"]) == r, r)
+        opens = [x for x in se.getOrganizationSensorReadingsHistory(lab, metrics=["door"], timespan=604800, total_pages="all") if x["door"]["open"]]
+        ov = se.getNetworkSensorAlertsOverviewByMetric(mtl)
+        check(f"getNetworkSensorAlertsOverviewByMetric counts the door's openings ({len(opens)})", len(ov) == 1 and ov[0]["counts"]["door"] == len(opens), ov)
+        cur = se.getNetworkSensorAlertsCurrentOverviewByMetric(mtl)
+        check("getNetworkSensorAlertsCurrentOverviewByMetric", "door" in cur["supportedMetrics"] and cur["counts"]["door"] in (0, 1), cur)
+        se.deleteNetworkSensorAlertsProfile(mtl, p["profileId"])
+        check("deleteNetworkSensorAlertsProfile", se.getNetworkSensorAlertsProfiles(mtl) == [])
+
+        c = se.createDeviceSensorCommand(serial["MT40"], "disableDownstreamPower")
+        check("createDeviceSensorCommand", c["status"] == "completed" and c["operation"] == "disableDownstreamPower", c)
+        check("getDeviceSensorCommand", se.getDeviceSensorCommand(serial["MT40"], c["commandId"]) == c)
+        check("getDeviceSensorCommands", se.getDeviceSensorCommands(serial["MT40"], operations=["disableDownstreamPower"]) == [c])
+        power = se.getOrganizationSensorReadingsLatest(lab, serials=[serial["MT40"]], metrics=["downstreamPower", "realPower"])[0]["readings"]
+        check("a disabled outlet reports no power", [x["metric"] for x in power] == ["downstreamPower", "realPower"] and power[0]["downstreamPower"]["enabled"] is False and power[1]["realPower"]["draw"] == 0, power)
+        try:
+            se.createDeviceSensorCommand(serial["MT10"], "cycleDownstreamPower")
+            check("a power command on an MT10 raises 400", False)
+        except meraki.APIError as e:
+            check("a power command on an MT10 raises 400", e.status == 400, e.status)
+
+        r = se.updateDeviceSensorRelationships(serial["MT10"], livestream={"relatedDevices": []})
+        check("updateDeviceSensorRelationships and getDeviceSensorRelationships", r == {"livestream": {"relatedDevices": []}} and se.getDeviceSensorRelationships(serial["MT10"]) == r, r)
+        rel = se.getNetworkSensorRelationships(mtl)
+        check(f"getNetworkSensorRelationships ({len(rel)} devices)", [x["device"]["serial"] for x in rel] == sensors, rel[:1])
+
+        b = d.networks.createNetworkMqttBroker(mtl, "Sensors", "mqtt.example.com", 1883)
+        check("getNetworkSensorMqttBrokers", se.getNetworkSensorMqttBrokers(mtl) == [{"mqttBrokerId": b["id"], "enabled": False}])
+        r = se.updateNetworkSensorMqttBroker(mtl, b["id"], True)
+        check("updateNetworkSensorMqttBroker and getNetworkSensorMqttBroker", r == {"mqttBrokerId": b["id"], "enabled": True} and se.getNetworkSensorMqttBroker(mtl, b["id"]) == r, r)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

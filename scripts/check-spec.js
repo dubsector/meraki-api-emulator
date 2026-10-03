@@ -67,6 +67,8 @@ const CONDITIONAL = [
   [/^\.(major|minor)$/, 'getNetworkWirelessBluetoothSettings', "'Non-unique' major and minor assignment (networks start in 'Unique' mode)"],
   [/\.ports\[\]\.pskGroupId$/, /WirelessEthernetPortsProfiles?$/, 'a PSK group set on a port (the default profile has none)'],
   [/^\.paths\..*\.(description|examples)$/, 'getOrganizationOpenapiSpec', "operation descriptions and examples (the emulator's document only lists its operations)"],
+  [/^(\[\]|\[\]\.readings\[\])\.(button|door|no2|o3|pm10|rawTemperature)$/, /^getOrganizationSensorReadings/, 'events in the sample window, or metrics no seeded sensor reports'],
+  [/^(\[\])?\.schedule$/, /SensorAlertsProfile/, 'sensor schedules, which the emulator has none of']
 ];
 
 // Objects keyed by name rather than by field, checked only for the keys the example shares.
