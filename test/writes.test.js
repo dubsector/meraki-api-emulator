@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, afterEach, before, describe, test } from 'node:test';
 import { ROUTES } from '../src/server.js';
-import { schemaOf } from '../src/validate.js';
+import { schemaOf, validateBody } from '../src/validate.js';
 import { NOW, start } from './helpers.js';
 
 describe('writes', () => {
@@ -106,6 +106,8 @@ describe('writes', () => {
     const r = await sb.put(`/networks/${hq.id}/settings`, '{"__proto__": {"polluted": 1}, "fips": {"constructor": {"prototype": {"polluted": 1}}}}');
     assert.equal(r.status, 200);
     assert.equal({}.polluted, undefined);
+    // Names an object inherits aren't fields of the schema either.
+    assert.deepEqual(validateBody('updateNetwork', { name: 'A', toString: 1, valueOf: 1, hasOwnProperty: 1 }), { name: 'A' });
   });
 
   test('methods a path lacks answer 405 with Allow', async () => {
