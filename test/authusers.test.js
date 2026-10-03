@@ -259,6 +259,30 @@ describe('Meraki auth users, NetFlow, traffic analysis and VLAN profiles', () =>
     await ok(sb.del(`${V(hq)}/P1`), 204);
   });
 
+  test('combining keeps the wireless network\'s VLAN profiles and refuses one email twice', async () => {
+    fresh();
+    const parts = (await ok(sb.post(`/networks/${austin.id}/split`))).resultingNetworks;
+    const part = (p) => parts.find((n) => n.productTypes[0] === p);
+    const [wl, mx, sw] = ['wireless', 'appliance', 'switch'].map(part);
+    await ok(sb.put(`/networks/${wl.id}/wireless/ssids/0`, { authMode: '8021x-meraki' }));
+    const dot1x = await ok(sb.post(users(wl), { email: 'pat@example.com', name: 'Pat', password: 'pw', authorizations: [{ ssidNumber: 0 }] }), 201);
+    await ok(sb.post(users(mx), { email: 'PAT@example.com', name: 'Pat', password: 'pw', accountType: 'Client VPN', authorizations: [{ expiresAt: 'Never' }] }), 201);
+    // A profile made on the wireless part after the split, and one the switch part also has.
+    await profile(wl, 'APs');
+    await profile(sw, 'Floor1');
+    await profile(wl, 'floor1', { vlanNames: [{ name: 'other', vlanId: '99' }] });
+    const ap = sb.world.networkById.get(wl.id).aps[0].serial;
+    await ok(sb.post(`${V(wl)}/assignments/reassign`, { vlanProfile: { iname: 'APs' }, serials: [ap], stackIds: [] }));
+    const C = `/organizations/${org.id}/networks/combine`;
+    assert.match(await errorOf(sb.post(C, { name: 'Austin', networkIds: [mx.id, sw.id, wl.id] })), /both have a Meraki auth user with email 'pat@example.com'/i);
+    assert.ok(sb.world.networkById.get(wl.id));
+    await ok(sb.del(`${users(wl)}/${dot1x.id}`), 204);
+    const net = (await ok(sb.post(C, { name: 'Austin', networkIds: [mx.id, sw.id, wl.id] }))).resultingNetwork;
+    assert.deepEqual((await ok(sb.get(V(net)))).map((p) => [p.iname, p.vlanNames[0].vlanId]), [['Default', '1'], ['Floor1', '10'], ['APs', '10']]);
+    assert.equal((await ok(sb.get(`${V(net)}/assignments/byDevice?serials[]=${ap}`)))[0].vlanProfile.iname, 'APs');
+    assert.deepEqual((await ok(sb.get(users(net)))).map((u) => u.accountType), ['Client VPN']);
+  });
+
   test('VLAN profiles come from the template on a bound network', async () => {
     fresh();
     const t = await ok(sb.post(`/organizations/${org.id}/configTemplates`, { name: 'Switches', copyFromNetworkId: austin.id }), 201);

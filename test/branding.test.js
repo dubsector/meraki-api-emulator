@@ -61,6 +61,25 @@ describe('branding policies, early access and splash themes', () => {
     await errorOf(sb.get(`${B}/${p.brandingPolicyId}`), 404);
   });
 
+  test('an update leaving values out keeps the ones still in the organization', async () => {
+    fresh();
+    const B = `${O}/brandingPolicies`;
+    const reno = org.networks.find((n) => n.name === 'Warehouse - Reno');
+    const t = await ok(sb.post(`${O}/configTemplates`, { name: 'Branches' }), 201);
+    const p = await ok(sb.post(B, { name: 'Sites', adminSettings: { appliesTo: 'All admins of networks...', values: [hq.id, reno.id, t.id] } }), 201);
+    await ok(sb.del(`/networks/${reno.id}`), 204);
+    await ok(sb.del(`${O}/configTemplates/${t.id}`), 204);
+    const u = await ok(sb.put(`${B}/${p.brandingPolicyId}`, { name: 'Renamed' }));
+    assert.deepEqual(u.adminSettings, { appliesTo: 'All admins of networks...', values: [hq.id] });
+    // Every admin it named has gone: a rename still works, a new empty list doesn't.
+    const admin = org.admins[0];
+    const s = await ok(sb.put(`${B}/${p.brandingPolicyId}`, { name: 'Renamed', adminSettings: { appliesTo: 'Specific admins...', values: [admin.id] } }));
+    assert.deepEqual(s.adminSettings.values, [admin.id]);
+    await ok(sb.del(`${O}/admins/${admin.id}`), 204);
+    assert.deepEqual((await ok(sb.put(`${B}/${p.brandingPolicyId}`, { name: 'Again' }))).adminSettings.values, []);
+    assert.match(await errorOf(sb.put(`${B}/${p.brandingPolicyId}`, { name: 'Again', adminSettings: { values: [] } })), /must list admin IDs/);
+  });
+
   test('branding policy bodies are checked before anything changes', async () => {
     fresh();
     const B = `${O}/brandingPolicies`;
@@ -167,6 +186,7 @@ describe('branding policies, early access and splash themes', () => {
     assert.match(await errorOf(sb.post(A, { name: '../x', content: 'AAAA' })), /file name/);
     assert.match(await errorOf(sb.post(A, { content: 'AAAA' })), /'name' is required/);
     assert.match(await errorOf(sb.post(`${T}/${base.id}/assets`, { name: 'x', content: 'AAAA' })), /System splash themes/);
+    assert.match(await errorOf(sb.post(`${T}/${base.name}/assets`, { name: 'x', content: 'AAAA' })), /System splash themes/);
     await errorOf(sb.post(`${T}/nope/assets`, { name: 'x', content: 'AAAA' }), 404);
 
     await ok(sb.del(`${O}/splash/assets/${logo.id}`), 204);

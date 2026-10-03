@@ -127,7 +127,7 @@ describe('MX ports, L3 interfaces, delegated prefixes and VRFs', () => {
     // A network whose MX ports name a group can't move to another organization.
     const dest = await ok(sb.post('/organizations', { name: 'Acme West' }), 201);
     const move = await ok(sb.post(`/organizations/${org.id}/networks/moves`, { network: { id: hq.id }, organizations: { target: { id: dest.id } } }), 201);
-    assert.match(move.result.reason, /appliance ports or SSIDs use adaptive policy groups/);
+    assert.match(move.result.reason, /appliance ports, SSIDs or VLAN profiles use adaptive policy groups/);
 
     // Deleting the group clears it from both ports.
     assert.equal((await sb.del(`${G}/${g.groupId}`)).status, 204);

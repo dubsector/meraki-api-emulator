@@ -10,6 +10,7 @@ import { WD_RECV, WD_SENT, WL_RECV, WL_SENT, networkTotals } from '../sim/usage.
 import { DAY, iso } from '../time.js';
 import { combineNetworks, moveNetwork, splitNetwork } from '../world.js';
 import { usesAdaptivePolicy } from './adaptivepolicy.js';
+import { authUserClash } from './authusers.js';
 import { usesArtifacts } from './cameraanalytics.js';
 import { netOf, orgOf, round } from './common.js';
 import { usesPolicyObjects } from './policyobjects.js';
@@ -118,7 +119,7 @@ function moveProblem(org, net, dest) {
   if (dest.licensing !== org.licensing) return 'Cannot move network: The source and target organizations use different licensing models.';
   if (net.template) return 'Cannot move network: The network is bound to a configuration template.';
   if (usesPolicyObjects(net)) return "Cannot move network: The network's firewall rules use policy objects of the source organization.";
-  if (usesAdaptivePolicy(net)) return "Cannot move network: The network's switch ports, appliance ports or SSIDs use adaptive policy groups of the source organization.";
+  if (usesAdaptivePolicy(net)) return "Cannot move network: The network's switch ports, appliance ports, SSIDs or VLAN profiles use adaptive policy groups of the source organization.";
   if (usesArtifacts(net)) return "Cannot move network: The network's cameras use custom analytics artifacts of the source organization.";
   if (usesSplashThemes(net)) return "Cannot move network: The network's splash pages use custom splash themes of the source organization.";
   if (dest.networks.some((n) => n.name === net.name)) return 'Cannot move network: A network with the same name already exists in the target organization.';
@@ -180,6 +181,8 @@ function combine(ctx) {
   }
   if (!b.name?.trim()) throw badRequest("'name' must not be empty");
   if (org.networks.some((n) => !nets.includes(n) && n.name === b.name)) throw badRequest('Name has already been taken');
+  const clash = authUserClash(nets);
+  if (clash) throw badRequest(clash);
   return { resultingNetwork: networkJson(combineNetworks(ctx.world, org, nets, b)) };
 }
 
