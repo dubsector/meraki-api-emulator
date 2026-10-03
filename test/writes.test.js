@@ -185,6 +185,26 @@ describe('writes', () => {
     assert.equal((await sb.get(`/organizations/${org.id}/configurationChanges?timespan=604800`)).status, 200);
   });
 
+  test('a deleted network drops out of its spokes and admin privileges', async () => {
+    fresh();
+    const reno = org.networks.find((n) => n.code === 'RNO');
+    const austin = org.networks.find((n) => n.code === 'AUS');
+    const vpn = (net) => `/networks/${net.id}/appliance/vpn/siteToSiteVpn`;
+    // Reno's settings are read before the hub goes, Austin's only after.
+    assert.deepEqual((await sb.get(vpn(reno))).body.hubs.map((h) => h.hubId), [hq.id]);
+    assert.equal((await sb.del(`/networks/${hq.id}`)).status, 204);
+    for (const net of [reno, austin]) {
+      const s2s = (await sb.get(vpn(net))).body;
+      assert.deepEqual([s2s.mode, s2s.hubs], ['none', []], net.name);
+      const put = await sb.put(vpn(net), s2s);
+      assert.equal(put.status, 200, JSON.stringify(put.body));
+    }
+    assert.ok(org.admins.some((a) => a.networks.some((n) => n.id === reno.id)));
+    assert.equal((await sb.del(`/networks/${reno.id}`)).status, 204);
+    const admins = (await sb.get(`/organizations/${org.id}/admins`)).body;
+    assert.ok(!admins.some((a) => a.networks.some((n) => n.id === reno.id)));
+  });
+
   test('renames reach events, statuses and clients', async () => {
     fresh();
     const ap = hq.aps[0];

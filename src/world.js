@@ -510,12 +510,16 @@ export function addNetwork(world, org, { name, productTypes, tags, timeZone, not
   return net;
 }
 
-// Deleting a network returns its devices to the organization's inventory.
+// Deleting a network returns its devices to the organization's inventory and
+// drops it from whatever names it, as moving it does. Settings are built first,
+// since spokes take theirs from the hub.
 export function removeNetwork(world, net) {
   const org = net.org;
+  settle(org);
   const gone = new Set(net.devices);
   for (const list of [org.networks, world.networks]) list.splice(list.indexOf(net), 1);
   world.networkById.delete(net.id);
+  repoint(org, net.id, null);
   world.devices = world.devices.filter((d) => !gone.has(d));
   org.devices = org.devices.filter((d) => !gone.has(d));
   for (const d of gone) {
@@ -525,6 +529,7 @@ export function removeNetwork(world, net) {
   dropClients(world, net, new Set(net.clients));
   if (org.hub === net) org.hub = null;
   net.deleted = true;
+  dropCaches(org);
 }
 
 // ── Claiming, removing and swapping devices ──
