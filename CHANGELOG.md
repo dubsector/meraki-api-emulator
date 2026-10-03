@@ -2,6 +2,30 @@
 
 Versions follow [semantic versioning](https://semver.org/). While the version starts with `0.`, a new minor version can change responses, IDs or defaults, and a patch version only fixes bugs.
 
+## 0.2.0
+
+The emulator now answers 521 operations (295 reads and 226 writes), up from 317. [ENDPOINTS.md](ENDPOINTS.md) lists them all.
+
+- Organization views: summaries of top applications, clients, devices and networks, security events, alert history, firmware, and switch and appliance ports across the organization.
+- Wireless: per-client stats, connectivity events and rate history, plus org-wide usage, packet loss, power and BSSID views.
+- Inventory claims, co-term licenses and binding networks to config templates.
+- Webhook payload templates, webhook tests, the webhook log and organization-wide alert configs.
+- Device live tools, reboots and API callbacks.
+- Action batches, the API identity and generating and revoking API keys.
+- Cameras: settings, video links and MQTT brokers.
+- MX traffic shaping, uplink selection, SD-WAN policies, firewall settings, cellular rules, NAT and warm spare.
+- Hub BGP, third-party VPN peers and their IPsec SLA policies, and the organization's allowed intrusion rules.
+- Switch layer 3 routing, OSPF and multicast, ACLs, access policies, QoS rules and DSCP mappings.
+- Webhook tests and callbacks are only sent when the emulator starts with `--webhooks` (`MERAKI_EMULATOR_WEBHOOKS`). Without it they are logged as delivered and nothing leaves the emulator.
+
+Changes to existing responses:
+
+- A null list item, or a null where a required list or object belongs, now answers `400` naming the field instead of `500`. A null sent for a settings object no longer replaces it.
+- Pages requested with `endingBefore` end at the cursor, so walking `rel=prev` links no longer repeats items. The first page can be short.
+- VPN stats latency summaries and client bandwidth history are whole numbers, as the spec types them.
+- The switch ports overview leaves out switches that were offline for the whole window, and the top devices summary honors `deviceTag`.
+- A failed action batch is undone from a copy of the world taken before it ran, instead of replaying every write since startup. Memory no longer grows with each write.
+
 ## 0.1.1
 
 - The Docker image no longer includes npm and npx. They carried the image's only known vulnerabilities, and the emulator doesn't use them.
