@@ -65,7 +65,11 @@ const CONDITIONAL = [
   [/^\.md5AuthenticationKey$/, 'getNetworkSwitchRoutingOspf', 'MD5 authentication turned on (OSPF starts with it off)'],
   [/^\.(major|minor)$/, 'getNetworkWirelessBluetoothSettings', "'Non-unique' major and minor assignment (networks start in 'Unique' mode)"],
   [/\.ports\[\]\.pskGroupId$/, /WirelessEthernetPortsProfiles?$/, 'a PSK group set on a port (the default profile has none)'],
+  [/^\.paths\..*\.(description|examples)$/, 'getOrganizationOpenapiSpec', "operation descriptions and examples (the emulator's document only lists its operations)"],
 ];
+
+// Objects keyed by name rather than by field, checked only for the keys the example shares.
+const KEYED = [[/^\.paths$/, 'getOrganizationOpenapiSpec']];
 
 function conditional(op, field) {
   return CONDITIONAL.some(([re, ops]) => re.test(field) && (ops == null || (typeof ops === 'string' ? ops === op : ops.test(op))));
@@ -101,7 +105,7 @@ function compare(ours, example, schema, at, out) {
     compare(mergeItems(Object.values(ours)), example[k], props[k], `${at}.${k}`, out);
     return;
   }
-  const free = schema?.additionalProperties;
+  const free = schema?.additionalProperties || out.keyed?.(at);
   for (const k of Object.keys(example)) if (!(k in ours) && !free) out.missing.push(`${at}.${k}`);
   for (const k of Object.keys(ours)) {
     if (!(k in example) && !(k in props) && !free) out.extra.push(`${at}.${k}`);
@@ -137,7 +141,7 @@ for (const route of ROUTES) {
   }
   if (res.status !== (route.status ?? 200)) continue;
   const content = (op.responses[res.status] || op.responses['200'] || op.responses['201'])?.content?.['application/json'];
-  const out = { missing: [], extra: [] };
+  const out = { missing: [], extra: [], keyed: (at) => KEYED.some(([re, op]) => op === route.op && re.test(at)) };
   compare(await res.json(), content?.example, content?.schema, '', out);
   const skip = out.missing.filter((f) => conditional(route.op, f));
   skipped += skip.length;

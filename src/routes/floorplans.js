@@ -3,10 +3,11 @@
 
 import { createHash } from 'node:crypto';
 import { deviceJson } from '../format.js';
-import { badRequest, notFound } from '../http.js';
+import { arrayParam, badRequest, notFound, paginateItems } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { MIN, iso, parseTime } from '../time.js';
-import { netOf, round } from './common.js';
+import { deviceStatus } from '../sim/outages.js';
+import { byId, bySerial, netOf, orgOf, round } from './common.js';
 
 const LIST = '/networks/{networkId}/floorPlans';
 const PLAN = `${LIST}/{floorPlanId}`;
@@ -323,6 +324,12 @@ function jobDevices(net, job, list) {
   });
 }
 
+// The spot a job works out for an AP: a seeded place on the plan.
+function calculated(world, plan, job, dev) {
+  const r = new Rand(hashStr(`meraki-api-emulator:${world.seed}:autoLocate:${job.id}:${dev.serial}`));
+  return onPlan(plan, 0.1 + 0.8 * r.next(), 0.1 + 0.8 * r.next());
+}
+
 // Moves the devices to the positions given, or to the calculated ones (a
 // seeded spot on the plan) when the body names none.
 function publishJob(ctx) {
@@ -336,10 +343,7 @@ function publishJob(ctx) {
     const plan = store.list.find((p) => p.id === job.floorPlanId);
     moves = apsOn(net, plan.id)
       .filter((d) => job.serials.includes(d.serial))
-      .map((dev) => {
-        const r = new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:autoLocate:${job.id}:${dev.serial}`));
-        return [dev, onPlan(plan, 0.1 + 0.8 * r.next(), 0.1 + 0.8 * r.next())];
-      });
+      .map((dev) => [dev, calculated(ctx.world, plan, job, dev)]);
   }
   for (const [dev, at, isAnchor] of moves) {
     Object.assign(dev, at);
@@ -362,6 +366,65 @@ function recalculateJob(ctx) {
   for (const [dev, a] of saved) dev.autoLocate = a;
   Object.assign(job, { start: ctx.now, refresh: false, publishedAt: null, serials: apsOn(net, job.floorPlanId).map((d) => d.serial) });
   return { success: true };
+}
+
+// ── Organization auto locate views ──
+
+// Floor plans in the organization's networks, read without creating stores.
+function orgPlans(ctx) {
+  const q = ctx.query;
+  const nets = arrayParam(q, 'networkIds');
+  const ids = arrayParam(q, 'floorPlanIds');
+  return orgOf(ctx)
+    .networks.filter((n) => !nets.length || nets.includes(n.id))
+    .sort(byId)
+    .flatMap((net) => (net.floorPlans?.list ?? []).filter((p) => !ids.length || ids.includes(p.id)).map((plan) => ({ net, plan })));
+}
+
+const latestJob = (net, plan) => (net.floorPlans?.jobs ?? []).filter((j) => j.floorPlanId === plan.id).at(-1);
+
+// A saved anchor is the admin's own position. Otherwise the plan's latest
+// job gives one once it has finished: suggested, then calculated when published.
+function autoLocateOf(ctx, net, plan, dev) {
+  if (dev.autoLocate) return { autoLocate: { lat: dev.autoLocate.lat, lng: dev.autoLocate.lng }, type: 'user', isAnchor: dev.autoLocate.isAnchor };
+  const job = latestJob(net, plan);
+  const status = job && job.serials.includes(dev.serial) ? statusOf(net, job, ctx.now) : null;
+  if (status !== 'finished' && status !== 'published') return { autoLocate: null, type: null, isAnchor: false };
+  const at = calculated(ctx.world, plan, job, dev);
+  return { autoLocate: { lat: at.lat, lng: at.lng }, type: status === 'published' ? 'calculated' : 'suggested', isAnchor: false };
+}
+
+function orgAutoLocateDevices(ctx) {
+  const rows = orgPlans(ctx)
+    .flatMap(({ net, plan }) => apsOn(net, plan.id).map((dev) => ({ net, plan, dev })))
+    .sort((a, b) => bySerial(a.dev, b.dev));
+  // The spec wraps the page in a one-item array.
+  return [
+    paginateItems(ctx, rows, (x) => x.dev.serial, { def: 1000, max: 10000 }, ({ net, plan, dev }) => ({
+      name: dev.name,
+      serial: dev.serial,
+      mac: dev.mac,
+      model: dev.model,
+      tags: [...dev.tags],
+      status: deviceStatus(dev, ctx.now),
+      network: { id: net.id },
+      floorPlan: { id: plan.id, name: plan.name },
+      lat: dev.lat,
+      lng: dev.lng,
+      ...autoLocateOf(ctx, net, plan, dev),
+    })),
+  ];
+}
+
+function orgAutoLocateStatuses(ctx) {
+  const rows = orgPlans(ctx);
+  return [
+    paginateItems(ctx, rows, (x) => x.plan.id, { def: 1000, max: 10000 }, ({ net, plan }) => {
+      const job = latestJob(net, plan);
+      const jobs = job ? [jobJson(net, job, ctx.now)].map(({ id, status, scheduledAt, completed, ranging, gnss, errors }) => ({ id, status, scheduledAt, completed, ranging, gnss, errors })) : [];
+      return { network: { id: net.id }, floorPlanId: plan.id, name: plan.name, counts: { devices: { total: apsOn(net, plan.id).length } }, jobs };
+    }),
+  ];
 }
 
 export default [
@@ -390,4 +453,6 @@ export default [
   { op: 'cancelNetworkFloorPlansAutoLocateJob', method: 'POST', path: `${JOB}/cancel`, status: 204, handler: cancelJob },
   { op: 'publishNetworkFloorPlansAutoLocateJob', method: 'POST', path: `${JOB}/publish`, status: 200, handler: publishJob },
   { op: 'recalculateNetworkFloorPlansAutoLocateJob', method: 'POST', path: `${JOB}/recalculate`, status: 200, handler: recalculateJob },
+  { op: 'getOrganizationFloorPlansAutoLocateDevices', path: '/organizations/{organizationId}/floorPlans/autoLocate/devices', handler: orgAutoLocateDevices },
+  { op: 'getOrganizationFloorPlansAutoLocateStatuses', path: '/organizations/{organizationId}/floorPlans/autoLocate/statuses', handler: orgAutoLocateStatuses },
 ];

@@ -1939,7 +1939,53 @@ def branding():
         check("deleteOrganizationSplashTheme", o.getOrganizationSplashThemes(org) == system)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding]
+def insight():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o = d.organizations
+        i = d.insight
+        org = acme(o.getOrganizations())
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        hq = nets["HQ - San Francisco"]
+
+        apps = i.getOrganizationInsightApplications(org)
+        check(f"getOrganizationInsightApplications ({len(apps)} apps)", len(apps) == 8 and all(len(a["thresholds"]["byNetwork"]) == 5 for a in apps), apps[:1])
+        rows = i.getNetworkInsightApplicationHealthByTime(hq, apps[0]["applicationId"], timespan=86400, resolution=3600)
+        check(f"getNetworkInsightApplicationHealthByTime ({len(rows)} buckets)", len(rows) == 24 and all(r["wanGoodput"] >= 0 for r in rows), rows[:1])
+
+        s = i.createOrganizationInsightMonitoredMediaServer(org, "Sample VoIP Provider", "123.123.123.1", bestEffortMonitoringEnabled=True)
+        check("createOrganizationInsightMonitoredMediaServer", len(s["id"]) == 13 and s["bestEffortMonitoringEnabled"], s)
+        r = i.updateOrganizationInsightMonitoredMediaServer(org, s["id"], address="sip.example.com")
+        check("updateOrganizationInsightMonitoredMediaServer and getOrganizationInsightMonitoredMediaServer", r["address"] == "sip.example.com" and i.getOrganizationInsightMonitoredMediaServer(org, s["id"]) == r, r)
+        check("getOrganizationInsightMonitoredMediaServers", i.getOrganizationInsightMonitoredMediaServers(org) == [r])
+        i.deleteOrganizationInsightMonitoredMediaServer(org, s["id"])
+        check("deleteOrganizationInsightMonitoredMediaServer", i.getOrganizationInsightMonitoredMediaServers(org) == [])
+
+        jobs = o.getOrganizationApiRestProvisioningPipelinesJobs(org, total_pages="all", status="running")
+        check("getOrganizationApiRestProvisioningPipelinesJobs", jobs["items"] == [], jobs)
+        over = o.getOrganizationApiRestProvisioningPipelinesJobsOverviewsByPipeline(org, pipelineIds=["1234"])
+        check("getOrganizationApiRestProvisioningPipelinesJobsOverviewsByPipeline", over["items"] == [], over)
+
+        spec = o.getOrganizationOpenapiSpec(org, version=3)
+        ops = [x["operationId"] for p in spec["paths"].values() for x in p.values()]
+        check(f"getOrganizationOpenapiSpec ({len(ops)} operations)", spec["openapi"].startswith("3.") and "cloneOrganization" in ops and len(ops) == len(set(ops)), len(ops))
+
+        n = d.networks
+        plan = n.createNetworkFloorPlan(hq, "HQ 2F", "R0lGODlhAQABAAAAACw=", center={"lat": 37.7749, "lng": -122.4194})
+        aps = sorted(x["serial"] for x in n.getNetworkDevices(hq) if x["model"].startswith("CW"))[:4]
+        n.batchNetworkFloorPlansDevicesUpdate(hq, [{"serial": x, "floorPlan": {"id": plan["floorPlanId"]}} for x in aps])
+        n.batchNetworkFloorPlansAutoLocateJobs(hq, [{"floorPlanId": plan["floorPlanId"], "refresh": ["gnss", "ranging"], "scheduledAt": "2020-01-01T00:00:00Z"}])
+        pages = o.getOrganizationFloorPlansAutoLocateDevices(org, total_pages=-1, perPage=3)
+        check("getOrganizationFloorPlansAutoLocateDevices perPage=3, all pages", [r["serial"] for p in pages for r in p["items"]] == aps and all(r["type"] == "suggested" for p in pages for r in p["items"]), len(pages))
+        st = o.getOrganizationFloorPlansAutoLocateStatuses(org)
+        check("getOrganizationFloorPlansAutoLocateStatuses", st[0]["items"][0]["counts"]["devices"]["total"] == 4 and st[0]["items"][0]["jobs"][0]["status"] == "finished", st)
+
+        c = o.cloneOrganization(org, "Acme Copy")
+        copied = sorted(x["name"] for x in o.getOrganizationNetworks(c["id"]))
+        check("cloneOrganization", copied == sorted(nets) and o.getOrganizationDevices(c["id"]) == [], c)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
