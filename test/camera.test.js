@@ -233,7 +233,9 @@ describe('cameras and MQTT brokers', () => {
     assert.deepEqual([u.port, u.security, u.authentication], [1883, { mode: 'none', tls: { hasCaCertificate: false, verifyHostnames: false } }, { username: 'cams' }]);
     assert.equal((await sb.del(`${N}/mqttBrokers/${b.id}`)).status, 204);
     assert.equal((await sb.get(`${N}/mqttBrokers/${b.id}`)).status, 404);
-    assert.match(await errorOf(sb.get(`/networks/${austin.id}/mqttBrokers`)), /'camera' or 'sensor'/);
+    assert.equal((await sb.get(`/networks/${austin.id}/mqttBrokers`)).status, 200);
+    const mx = (await sb.post(`/organizations/${austin.org.id}/networks`, { name: 'MX only', productTypes: ['appliance'] })).body;
+    assert.match(await errorOf(sb.get(`/networks/${mx.id}/mqttBrokers`)), /'camera', 'sensor' or 'wireless'/);
   });
 
   test('reset clears camera settings, profiles and brokers', async () => {
