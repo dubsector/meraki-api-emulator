@@ -152,9 +152,11 @@ describe('MX local and split DNS', () => {
     const net = (await ok(sb.post(`/organizations/${org.id}/networks/combine`, { name: 'Merged', networkIds: [mx.id, sw.id] }))).resultingNetwork;
     assert.deepEqual((await ok(sb.get(L))).items.map((x) => [x.network.id, x.profile.id]), [[net.id, a.profileId], [austin.id, b.profileId]]);
 
-    // A deleted network drops out, and its profile can go.
+    // A deleted network drops out, its assignment can't be deleted any more, and its profile can go.
+    const austinRow = (await ok(sb.get(`${L}?networkIds[]=${austin.id}`))).items[0];
     assert.equal((await sb.del(`/networks/${austin.id}`)).status, 204);
     assert.deepEqual((await ok(sb.get(L))).items.map((x) => x.network.id), [net.id]);
+    assert.match(await errorOf(sb.post(`${L}/bulkDelete`, { items: [{ assignmentId: austinRow.assignmentId }] })), /does not exist/);
     assert.equal((await sb.del(`${D}/local/profiles/${b.profileId}`)).status, 204);
 
     // A network moved to another organization leaves its assignment behind.

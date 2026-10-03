@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, afterEach, before, describe, test } from 'node:test';
-import { start } from './helpers.js';
+import { collect, start } from './helpers.js';
 
 describe('MX ports, L3 interfaces, delegated prefixes and VRFs', () => {
   let sb;
@@ -42,10 +42,11 @@ describe('MX ports, L3 interfaces, delegated prefixes and VRFs', () => {
     const net = await ok(sb.get(`/networks/${hq.id}/appliance/ports/5`));
     assert.deepEqual([net.enabled, net.type, net.vlan, net.allowedVlans, net.sgt.enabled], [true, 'trunk', 10, '10,20', true]);
 
-    const access = await ok(updatePort({ interface: { number: 6 }, downlink: { mode: 'access', access: { vlan: '30', policy: { type: '802.1X' } }, sgt: { id: '5' } } }));
-    assert.deepEqual(access.downlink, { mode: 'access', sgt: { id: '5' }, access: { vlan: '30', policy: { type: '802.1X' } } });
+    const infra = (await ok(sb.get(`/organizations/${org.id}/adaptivePolicy/groups`))).find((g) => g.name === 'Infrastructure');
+    const access = await ok(updatePort({ interface: { number: 6 }, downlink: { mode: 'access', access: { vlan: '30', policy: { type: '802.1X' } }, sgt: { id: infra.groupId } } }));
+    assert.deepEqual(access.downlink, { mode: 'access', sgt: { id: infra.groupId }, access: { vlan: '30', policy: { type: '802.1X' } } });
     const six = await ok(sb.get(`/networks/${hq.id}/appliance/ports/6`));
-    assert.deepEqual([six.type, six.vlan, six.accessPolicy, six.sgt.id], ['access', 30, '8021x-radius', 5]);
+    assert.deepEqual([six.type, six.vlan, six.accessPolicy, six.sgt.id], ['access', 30, '8021x-radius', Number(infra.groupId)]);
 
     // A native VLAN of 0 drops untagged traffic.
     const drop = await ok(updatePort({ interface: { number: 5 }, downlink: { trunk: { nativeVlan: '0', allowedVlans: ['all'] } } }));
@@ -110,6 +111,61 @@ describe('MX ports, L3 interfaces, delegated prefixes and VRFs', () => {
     assert.equal((await sb.del(`${L3()}/${a.interfaceId}`)).status, 204);
     assert.equal((await sb.del(`${L3()}/${a.interfaceId}`)).status, 404);
     assert.equal((await ok(sb.get(`/organizations/${org.id}/appliance/devices/interfaces/l3`))).items.length, 1);
+  });
+
+  test('MX ports name adaptive policy groups of the organization', async () => {
+    fresh();
+    const G = `/organizations/${org.id}/adaptivePolicy/groups`;
+    const g = await ok(sb.post(G, { name: 'Cameras', sgt: 40 }), 201);
+    assert.match(await errorOf(updatePort({ interface: { number: 5 }, downlink: { sgt: { id: '999999' } } })), /'downlink.sgt.id' names adaptive policy group 999999/);
+    assert.match(await errorOf(sb.put(`/networks/${hq.id}/appliance/ports/6`, { sgt: { id: 999999 } })), /'sgt.id' names adaptive policy group 999999/);
+    assert.equal((await byDevice(5)).downlink.sgt.id, null);
+    await ok(updatePort({ interface: { number: 5 }, downlink: { sgt: { id: g.groupId } } }));
+    assert.equal((await ok(sb.put(`/networks/${hq.id}/appliance/ports/6`, { sgt: { id: Number(g.groupId) } }))).sgt.id, Number(g.groupId));
+    assert.equal((await byDevice(6)).downlink.sgt.id, g.groupId);
+
+    // A network whose MX ports name a group can't move to another organization.
+    const dest = await ok(sb.post('/organizations', { name: 'Acme West' }), 201);
+    const move = await ok(sb.post(`/organizations/${org.id}/networks/moves`, { network: { id: hq.id }, organizations: { target: { id: dest.id } } }), 201);
+    assert.match(move.result.reason, /appliance ports or SSIDs use adaptive policy groups/);
+
+    // Deleting the group clears it from both ports.
+    assert.equal((await sb.del(`${G}/${g.groupId}`)).status, 204);
+    assert.deepEqual([(await byDevice(5)).downlink.sgt.id, (await byDevice(6)).downlink.sgt.id], [null, null]);
+    assert.equal((await ok(sb.get(`/networks/${hq.id}/appliance/ports/6`))).sgt.id, null);
+    const again = await ok(sb.post(`/organizations/${org.id}/networks/moves`, { network: { id: hq.id }, organizations: { target: { id: dest.id } } }), 201);
+    assert.equal(again.result.status, 'completed', again.result.reason);
+  });
+
+  test('a port holding an L3 interface routes and VLANs turning on keep clear of interfaces', async () => {
+    fresh();
+    const a = await ok(sb.post(L3(), { ipv4: { address: '172.20.1.2', subnet: '172.20.1.0/24' }, port: { interface: { slot: 0, subslot: 0, number: 7 } } }), 201);
+    const seven = await byDevice(7);
+    assert.deepEqual([seven.personality.layer.mode, seven.downlink], [3, undefined]);
+    assert.match(await errorOf(updatePort({ interface: { number: 7 }, downlink: { mode: 'access' } })), /holds an L3 interface/);
+    assert.equal((await ok(updatePort({ interface: { number: 7 }, enabled: false }))).enabled, false);
+    await ok(sb.put(`${L3()}/${a.interfaceId}`, { port: null }));
+    assert.equal((await byDevice(7)).personality.layer.mode, 2);
+
+    // With VLANs off, an interface can take a kept VLAN's subnet, and VLANs then stay off.
+    const V = `/networks/${hq.id}/appliance/vlans`;
+    const kept = (await ok(sb.get(V))).at(-1);
+    await ok(sb.put(`${V}/settings`, { vlansEnabled: false }));
+    const b = await ok(sb.post(L3(), { ipv4: { address: kept.applianceIp, subnet: kept.subnet } }), 201);
+    assert.match(await errorOf(sb.put(`${V}/settings`, { vlansEnabled: true })), new RegExp(`VLAN ${kept.id} overlaps the subnet of L3 interface ${b.interfaceId}`));
+    assert.equal((await ok(sb.get(`${V}/settings`))).vlansEnabled, false);
+    assert.equal((await sb.del(`${L3()}/${b.interfaceId}`)).status, 204);
+    assert.equal((await ok(sb.put(`${V}/settings`, { vlansEnabled: true }))).vlansEnabled, true);
+  });
+
+  test('the organization L3 interface list pages through network copies sharing IDs', async () => {
+    fresh();
+    const made = [];
+    for (const n of [7, 8]) made.push(await ok(sb.post(L3(), { ipv4: { address: `172.2${n}.0.1`, subnet: `172.2${n}.0.0/24` }, port: { interface: { slot: 0, subslot: 0, number: n } } }), 201));
+    const copy = await ok(sb.post(`/organizations/${org.id}/networks`, { name: 'HQ copy', productTypes: ['appliance'], copyFromNetworkId: hq.id }), 201);
+    const all = await collect(sb.get, `/organizations/${org.id}/appliance/devices/interfaces/l3?perPage=3`);
+    const want = [hq.id, copy.id].sort().flatMap((id) => made.map((x) => [id, x.interfaceId]));
+    assert.deepEqual(all.map((x) => [x.network.id, x.interfaceId]), want);
   });
 
   test('static delegated prefixes list on the device and feed IPv6 VLANs', async () => {

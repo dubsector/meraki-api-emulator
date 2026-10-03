@@ -179,9 +179,11 @@ function bulkDelete(kind) {
     const org = orgOf(ctx);
     const store = assignmentsOf(org, kind);
     if (!ctx.body.items.length) throw badRequest("'items' must hold at least one assignment");
+    // Rows of deleted networks are gone as far as reads go.
+    const rows = liveRows(org, kind);
     const gone = ctx.body.items.map((x) => {
       if (x.assignmentId == null) throw badRequest("'items[].assignmentId' is required");
-      const a = store.list.find((r) => r.assignmentId === String(x.assignmentId));
+      const a = rows.find((r) => r.assignmentId === String(x.assignmentId));
       if (!a) throw badRequest(`Assignment ${x.assignmentId} does not exist in this organization`);
       return a;
     });

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, afterEach, before, describe, test } from 'node:test';
 import { MODELS } from '../src/catalog.js';
+import { claimDevice } from '../src/world.js';
 import { start } from './helpers.js';
 
 describe('MX Wi-Fi and vMX tokens', () => {
@@ -80,6 +81,19 @@ describe('MX Wi-Fi and vMX tokens', () => {
     await ok(sb.put(radio(), { rfProfileId: null }));
     assert.equal((await sb.del(`${P()}/${p.id}`)).status, 204);
     assert.deepEqual(await ok(sb.get(P())), { assigned: [] });
+  });
+
+  test('an MX swapped for a model without a radio no longer holds its RF profile', async () => {
+    fresh();
+    const p = await ok(sb.post(P(), { name: 'Office' }), 201);
+    // A second MX68W in London, as a warm spare would be.
+    const spare = claimDevice(sb.world, london, { serial: 'Q2MW-TEST-0001', model: 'MX68W', mac: '00:18:0a:00:00:01', orderNumber: null, claimedAt: 0, tags: [], name: null });
+    await ok(sb.put(radio(spare.serial), { rfProfileId: p.id }));
+    assert.match(await errorOf(sb.del(`${P()}/${p.id}`)), new RegExp(`assigned to appliance ${spare.serial}`));
+    // A swap keeps the device object and its settings but changes the model.
+    Object.assign(spare, { model: 'MX68', info: MODELS.MX68 });
+    assert.match(await errorOf(sb.get(radio(spare.serial))), /no wireless radio/);
+    assert.equal((await sb.del(`${P()}/${p.id}`)).status, 204);
   });
 
   test('radio settings store manual values and a profile clears them', async () => {

@@ -117,7 +117,7 @@ function moveProblem(org, net, dest) {
   if (dest.licensing !== org.licensing) return 'Cannot move network: The source and target organizations use different licensing models.';
   if (net.template) return 'Cannot move network: The network is bound to a configuration template.';
   if (usesPolicyObjects(net)) return "Cannot move network: The network's firewall rules use policy objects of the source organization.";
-  if (usesAdaptivePolicy(net)) return "Cannot move network: The network's switch ports or SSIDs use adaptive policy groups of the source organization.";
+  if (usesAdaptivePolicy(net)) return "Cannot move network: The network's switch ports, appliance ports or SSIDs use adaptive policy groups of the source organization.";
   if (usesArtifacts(net)) return "Cannot move network: The network's cameras use custom analytics artifacts of the source organization.";
   if (dest.networks.some((n) => n.name === net.name)) return 'Cannot move network: A network with the same name already exists in the target organization.';
   if (dest.networks.length >= MAX_NETWORKS) return 'Cannot move network: The target organization has reached its network limit.';

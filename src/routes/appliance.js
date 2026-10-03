@@ -9,6 +9,7 @@ import { isDown } from '../sim/outages.js';
 import { presenceIn } from '../sim/presence.js';
 import { DAY } from '../time.js';
 import { ipInCidr, merge, parseCidr } from '../validate.js';
+import { checkGroupId } from './adaptivepolicy.js';
 import { bySerial, devOf, netOf, orgOf, requireModel, requireProduct } from './common.js';
 import { checkRefs } from './policyobjects.js';
 
@@ -70,6 +71,7 @@ const POLICY_NAMES = Object.fromEntries(Object.entries(POLICY_TYPES).map(([k, v]
 export function interfacePorts(mx) {
   const iface = (n) => ({ name: `GigabitEthernet0/0/${n}`, slot: 0, subslot: 0, number: n });
   const lan = appliancePorts(mx.net);
+  const routed = new Set((configOf(mx.net).applianceL3Interfaces?.list ?? []).map((x) => x.port?.number));
   const wan = mx.uplinks.map((u, i) => ({
     number: String(i + 1),
     interface: iface(i + 1),
@@ -92,8 +94,9 @@ export function interfacePorts(mx) {
         interface: iface(p.number),
         enabled: p.enabled,
         name: `port${p.number}`,
-        personality: { mode: 'lan', isFlexible: false, layer: { mode: 2, isFlexible: false } },
-        downlink: downlink(p),
+        // A port holding an L3 interface routes, so it has no VLAN settings.
+        personality: { mode: 'lan', isFlexible: false, layer: { mode: routed.has(p.number) ? 3 : 2, isFlexible: false } },
+        ...(!routed.has(p.number) && { downlink: downlink(p) }),
       })),
   ];
 }
@@ -139,6 +142,7 @@ function updateDevicePort(ctx) {
     return port;
   }
   if (b.uplink != null) throw badRequest("'uplink' only applies to WAN ports");
+  if (layer.mode === 3 && b.downlink != null) throw badRequest(`Port ${port.number} holds an L3 interface, so 'downlink' doesn't apply to it`);
   const lan = appliancePorts(net).find((p) => p.number === i.number);
   const patch = {};
   if (b.enabled != null) patch.enabled = b.enabled;
@@ -178,6 +182,7 @@ function updateDevicePort(ctx) {
     if (d.sgt && 'id' in d.sgt) {
       const id = d.sgt.id;
       if (id != null && !/^\d{1,9}$/.test(String(id))) throw badRequest("'downlink.sgt.id' must be an adaptive policy group ID");
+      checkGroupId(net.org, ctx.now, id, 'downlink.sgt.id');
       patch.sgt = { ...patch.sgt, id: id == null ? null : Number(id) };
     }
   }
@@ -271,10 +276,12 @@ function deleteVlan(ctx) {
 
 // Turning VLANs on makes the single LAN VLAN 1; turning them off keeps the
 // VLANs for later and moves the first one's addressing to the single LAN.
+// Kept VLANs coming back must not overlap an L3 interface made meanwhile.
 function setVlansEnabled(ctx) {
   const c = mxConfig(ctx);
   const on = ctx.body.vlansEnabled;
   if (on === true && !c.vlansEnabled) {
+    for (const v of c.vlans) for (const l3 of c.applianceL3Interfaces?.list ?? []) if (overlaps(l3.ipv4.subnet, v.subnet)) throw badRequest(`VLAN ${v.id} overlaps the subnet of L3 interface ${l3.interfaceId}`);
     if (!c.vlans.length) {
       c.vlans.push(newVlan(netOf(ctx), 1, 'Default', c.singleLan.subnet, c.singleLan.applianceIp));
       c.siteToSite.subnets = [{ localSubnet: c.singleLan.subnet, useVpn: false }];
@@ -438,9 +445,11 @@ export default [
     op: 'updateNetworkAppliancePort',
     method: 'PUT',
     path: '/networks/{networkId}/appliance/ports/{portId}',
+    sample: { portId: '5' },
     handler: (ctx) => {
       const net = netOf(ctx);
       const port = portOf(net, ctx.params.portId);
+      checkGroupId(net.org, ctx.now, ctx.body.sgt?.id, 'sgt.id');
       const overrides = (configOf(net).portOverrides ??= {});
       overrides[port.number] = merge(overrides[port.number] || {}, ctx.body);
       return portOf(net, ctx.params.portId);
