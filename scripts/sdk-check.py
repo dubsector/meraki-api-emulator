@@ -1138,7 +1138,44 @@ def switchpolicies():
         check("updateNetworkSwitchDscpToCosMappings resets", len(reset["mappings"]) == 6, reset)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies]
+@scenario
+def policyobjects():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o = d.organizations
+        org = acme(o.getOrganizations())
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        hq = nets["HQ - San Francisco"]
+
+        web = o.createOrganizationPolicyObject(org, "Web Servers", "network", "cidr", cidr="10.0.0.0/24")
+        check("createOrganizationPolicyObject", o.getOrganizationPolicyObject(org, web["id"]) == web and web["cidr"] == "10.0.0.0/24", web)
+        site = o.createOrganizationPolicyObject(org, "Example", "network", "fqdn", fqdn="example.com")
+        for i in range(10):
+            o.createOrganizationPolicyObject(org, f"Host {i}", "network", "cidr", cidr=f"10.1.0.{i}")
+        everything = o.getOrganizationPolicyObjects(org, total_pages="all", perPage=10)
+        check("getOrganizationPolicyObjects pages", len(everything) == 12 and everything == o.getOrganizationPolicyObjects(org), len(everything))
+
+        g = o.createOrganizationPolicyObjectsGroup(org, "Servers", objectIds=[web["id"]])
+        check("createOrganizationPolicyObjectsGroup", o.getOrganizationPolicyObjectsGroup(org, g["id"]) == g and g["objectIds"] == [int(web["id"])], g)
+        web = o.updateOrganizationPolicyObject(org, web["id"], name="Web Tier", groupIds=[])
+        check("updateOrganizationPolicyObject", web["name"] == "Web Tier" and o.getOrganizationPolicyObjectsGroup(org, g["id"])["objectIds"] == [], web)
+        g = o.updateOrganizationPolicyObjectsGroup(org, g["id"], objectIds=[web["id"], site["id"]])
+        check("updateOrganizationPolicyObjectsGroup", o.getOrganizationPolicyObject(org, site["id"])["groupIds"] == [g["id"]] and o.getOrganizationPolicyObjectsGroups(org, total_pages="all", perPage=10) == [g], g)
+
+        d.appliance.updateNetworkApplianceFirewallL3FirewallRules(hq, rules=[{"comment": "Objects", "policy": "deny", "protocol": "any", "srcCidr": "Any", "destCidr": f"GRP({g['id']})"}])
+        check("L3 rules name a group", o.getOrganizationPolicyObject(org, web["id"])["networkIds"] == [hq] and o.getOrganizationPolicyObjectsGroup(org, g["id"])["networkIds"] == [hq])
+        try:
+            o.deleteOrganizationPolicyObjectsGroup(org, g["id"])
+            check("deleteOrganizationPolicyObjectsGroup refuses a group in use", False, "no error")
+        except meraki.APIError as e:
+            check("deleteOrganizationPolicyObjectsGroup refuses a group in use", e.status == 400, e.message)
+        d.appliance.updateNetworkApplianceFirewallL3FirewallRules(hq, rules=[])
+        o.deleteOrganizationPolicyObjectsGroup(org, g["id"])
+        o.deleteOrganizationPolicyObject(org, web["id"])
+        check("deleteOrganizationPolicyObject", len(o.getOrganizationPolicyObjects(org)) == 11 and o.getOrganizationPolicyObjectsGroups(org) == [])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

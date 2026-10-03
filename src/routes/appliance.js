@@ -10,6 +10,7 @@ import { presenceIn } from '../sim/presence.js';
 import { DAY } from '../time.js';
 import { ipInCidr, merge, parseCidr } from '../validate.js';
 import { bySerial, devOf, netOf, orgOf, requireModel, requireProduct } from './common.js';
+import { checkRefs } from './policyobjects.js';
 
 const MAX_ITEMS = 1000;
 const SERVICES = ['ICMP', 'SNMP', 'web'];
@@ -223,14 +224,15 @@ function inboundJson(c) {
   return { rules: [...c.inbound.rules, { ...DEFAULT_RULE, syslogEnabled: c.inbound.syslogDefaultRule }], syslogDefaultRule: c.inbound.syslogDefaultRule };
 }
 
-function normalizeRules(rules) {
-  return limit(rules, 'Rules')
-    .filter((r) => r.comment !== DEFAULT_RULE.comment)
-    .map((r) => ({ comment: r.comment ?? '', policy: r.policy, protocol: r.protocol, srcPort: r.srcPort ?? 'Any', srcCidr: r.srcCidr ?? 'Any', destPort: r.destPort ?? 'Any', destCidr: r.destCidr ?? 'Any', syslogEnabled: r.syslogEnabled ?? false }));
+// Addresses are free text apart from policy object references, which must exist.
+function normalizeRules(org, rules) {
+  const kept = limit(rules, 'Rules').filter((r) => r.comment !== DEFAULT_RULE.comment);
+  kept.forEach((r, i) => ['srcCidr', 'destCidr'].forEach((k) => checkRefs(org, r[k], `rules[${i}].${k}`)));
+  return kept.map((r) => ({ comment: r.comment ?? '', policy: r.policy, protocol: r.protocol, srcPort: r.srcPort ?? 'Any', srcCidr: r.srcCidr ?? 'Any', destPort: r.destPort ?? 'Any', destCidr: r.destCidr ?? 'Any', syslogEnabled: r.syslogEnabled ?? false }));
 }
 
-function putRuleSet(set, body) {
-  if (body.rules) set.rules = normalizeRules(body.rules);
+function putRuleSet(org, set, body) {
+  if (body.rules) set.rules = normalizeRules(org, body.rules);
   if (body.syslogDefaultRule != null) set.syslogDefaultRule = body.syslogDefaultRule;
 }
 
@@ -402,7 +404,7 @@ export default [
     path: '/networks/{networkId}/appliance/firewall/l3FirewallRules',
     handler: (ctx) => {
       const c = mxConfig(ctx);
-      putRuleSet(c.l3, ctx.body);
+      putRuleSet(netOf(ctx).org, c.l3, ctx.body);
       return l3Json(c);
     },
   },
@@ -432,7 +434,7 @@ export default [
     path: '/networks/{networkId}/appliance/firewall/inboundFirewallRules',
     handler: (ctx) => {
       const c = mxConfig(ctx);
-      putRuleSet(c.inbound, ctx.body);
+      putRuleSet(netOf(ctx).org, c.inbound, ctx.body);
       return inboundJson(c);
     },
   },

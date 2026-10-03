@@ -8,7 +8,7 @@ import { DEFAULT_RULE, configOf, stored } from '../config.js';
 import { badRequest } from '../http.js';
 import { inRange, isAddress, isHostname, isIpv6, parseCidr, parseIp } from '../validate.js';
 import { checkHttpUrl } from '../webhooks.js';
-import { checkList, isPorts } from './firewall.js';
+import { checkAddresses, checkList, isPorts } from './firewall.js';
 import { limit, mxNet, newId, orgOf } from './common.js';
 
 const ORG = '/organizations/{organizationId}/appliance';
@@ -335,8 +335,8 @@ function updateVpnRules(ctx) {
     rules.forEach((r, i) => {
       checkList(r.srcPort, `rules[${i}].srcPort`, isPorts, 'ports');
       checkList(r.destPort, `rules[${i}].destPort`, isPorts, 'ports');
-      checkList(r.srcCidr, `rules[${i}].srcCidr`, isAddress, 'IP addresses or CIDRs');
-      checkList(r.destCidr, `rules[${i}].destCidr`, isAddress, 'IP addresses or CIDRs');
+      checkAddresses(org, r.srcCidr, `rules[${i}].srcCidr`, isAddress, 'IP addresses or CIDRs');
+      checkAddresses(org, r.destCidr, `rules[${i}].destCidr`, isAddress, 'IP addresses or CIDRs');
     });
   }
   const set = vpnRulesOf(org);

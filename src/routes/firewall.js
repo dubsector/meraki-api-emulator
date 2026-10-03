@@ -7,6 +7,7 @@ import { DEFAULT_RULE, configOf, stored } from '../config.js';
 import { arrayParam, badRequest, paginate, paginateItems } from '../http.js';
 import { ipInCidr, isAddress, isHostname, isPort, parseIp } from '../validate.js';
 import { limit, mxNet, mxNets, orgOf } from './common.js';
+import { checkRefs, isRef } from './policyobjects.js';
 
 const BASE = '/networks/{networkId}/appliance';
 const MAX_RULES = 1000;
@@ -37,15 +38,21 @@ export function checkList(v, at, ok, what) {
   if (!items(v).every(ok)) throw badRequest(`'${at}' must be 'any' or a comma-separated list of ${what}`);
 }
 
+// Address lists also take the organization's policy objects as OBJ(id) and GRP(id).
+export function checkAddresses(org, v, at, ok, what) {
+  checkList(v, at, (x) => isRef(x) || ok(x), what);
+  checkRefs(org, v, at);
+}
+
 // Like the L3 rules: the default rule is always last and dropped when sent back.
-function cellularRules(rules) {
+function cellularRules(org, rules) {
   limit(rules, MAX_RULES, 'Rules');
   const kept = rules.filter((r) => r.comment !== DEFAULT_RULE.comment);
   kept.forEach((r, i) => {
     checkList(r.srcPort, `rules[${i}].srcPort`, isPorts, 'ports');
     checkList(r.destPort, `rules[${i}].destPort`, isPorts, 'ports');
-    checkList(r.srcCidr, `rules[${i}].srcCidr`, isAddress, 'IP addresses or CIDRs');
-    checkList(r.destCidr, `rules[${i}].destCidr`, (x) => isAddress(x) || isHostname(x), 'IP addresses, CIDRs or domain names');
+    checkAddresses(org, r.srcCidr, `rules[${i}].srcCidr`, isAddress, 'IP addresses or CIDRs');
+    checkAddresses(org, r.destCidr, `rules[${i}].destCidr`, (x) => isAddress(x) || isHostname(x), 'IP addresses, CIDRs or domain names');
   });
   return kept.map((r) => ({ comment: r.comment ?? '', policy: r.policy, protocol: r.protocol, srcPort: r.srcPort ?? 'Any', srcCidr: r.srcCidr, destPort: r.destPort ?? 'Any', destCidr: r.destCidr, syslogEnabled: r.syslogEnabled ?? false }));
 }
@@ -59,8 +66,9 @@ const cellularRoutes = (name, path, setOf) => [
     method: 'PUT',
     path: `${BASE}/firewall/${path}`,
     handler: (ctx) => {
-      const set = setOf(mxNet(ctx));
-      if (ctx.body.rules) set.rules = cellularRules(ctx.body.rules);
+      const net = mxNet(ctx);
+      const set = setOf(net);
+      if (ctx.body.rules) set.rules = cellularRules(net.org, ctx.body.rules);
       return rulesJson(set);
     },
   },
