@@ -19,7 +19,7 @@ const BY_NETWORK = { def: 50, max: 250 };
 
 const rand = (ctx, kind, id) => new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:${kind}:${id}`));
 
-function wirelessNetIn(org, id) {
+export function wirelessNetIn(org, id) {
   const net = org.networks.find((n) => n.id === id);
   if (!net) throw badRequest(`Network '${id}' is not in this organization`);
   if (!net.productTypes.includes('wireless')) throw badRequest(`Network '${id}' has no wireless devices`);

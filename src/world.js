@@ -710,6 +710,19 @@ export function moveLicenses(world, org, dest, licenses) {
   dropCaches(dest);
 }
 
+// Org-wide wireless rows naming a network: scanning receivers, SSID profile
+// assignments and isolation allowlist entries. A split sends them to the
+// wireless part. SSID rows keep their number; one already on the target wins.
+function repointWireless(org, fromId, toId) {
+  const rx = org.wirelessScanningReceivers;
+  if (rx) rx.list = rx.list.flatMap((r) => (r.networkId !== fromId ? [r] : toId ? [Object.assign(r, { networkId: toId })] : []));
+  const ssidRows = (list, same) => list.flatMap((a) => (a.networkId !== fromId ? [a] : toId && !list.some((b) => b.networkId === toId && same(a, b)) ? [Object.assign(a, { networkId: toId })] : []));
+  const sp = org.wirelessSsidProfiles;
+  if (sp) sp.assignments = ssidRows(sp.assignments, (a, b) => a.number === b.number);
+  const al = org.wirelessIsolationAllowlist;
+  if (al) al.list = ssidRows(al.list, (a, b) => a.number === b.number && a.mac === b.mac);
+}
+
 // Points what names a network at its new ID, or drops it when toId is null:
 // admin privileges, network groups and spokes' VPN hubs.
 function repoint(org, fromId, toId) {
@@ -723,8 +736,7 @@ function repoint(org, fromId, toId) {
   for (const a of org.admins) a.networks = swap(a.networks, (n) => n.id, (n) => ({ ...n, id: toId }));
   for (const g of org.networkGroups?.list ?? []) g.networkIds = swap(g.networkIds, (id) => id, () => toId);
   for (const p of org.vpnPeers?.list ?? []) if (p.networkIds) p.networkIds = swap(p.networkIds, (id) => id, () => toId);
-  const rx = org.wirelessScanningReceivers;
-  if (rx) rx.list = rx.list.flatMap((r) => (r.networkId !== fromId ? [r] : toId ? [Object.assign(r, { networkId: toId })] : []));
+  repointWireless(org, fromId, toId);
   for (const n of org.networks) {
     const s2s = n.config?.siteToSite;
     if (!s2s?.hubs.length) continue;
@@ -872,6 +884,7 @@ export function splitNetwork(world, net) {
   for (const list of [org.networks, world.networks]) list.splice(list.indexOf(net), 1);
   world.networkById.delete(net.id);
   net.deleted = true;
+  if (wl) repointWireless(org, net.id, wl.id);
   repoint(org, net.id, main.id);
   dropCaches(org);
   return parts;

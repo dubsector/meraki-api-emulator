@@ -1369,7 +1369,64 @@ def wirelesslocation():
         check("getOrganizationWirelessMqttSettings", len(rows) == 5 and m in rows, len(rows))
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation]
+@scenario
+def ssidprofiles():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o = d.organizations
+        w = d.wireless
+        org = acme(o.getOrganizations())
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        hq, austin = nets["HQ - San Francisco"], nets["Branch - Austin"]
+
+        made = [w.createOrganizationWirelessSsidsProfile(org, name, {"security": {"mode": "psk", "encryption": {"passphrase": "correct horse"}}}) for name in ["Delta", "Alpha", "Charlie", "Bravo"]]
+        check("createOrganizationWirelessSsidsProfile", made[0]["ssid"]["security"]["mode"] == "psk" and "passphrase" not in made[0]["ssid"]["security"]["encryption"], made[0])
+        u = w.updateOrganizationWirelessSsidsProfile(org, made[0]["id"], ssid={"advertisement": {"enabled": False}})
+        check("updateOrganizationWirelessSsidsProfile", u["ssid"]["advertisement"]["enabled"] is False and u["ssid"]["name"] == "Delta", u)
+        listed = w.getOrganizationWirelessSsidsProfiles(org, total_pages=-1, perPage=3)
+        check("getOrganizationWirelessSsidsProfiles", [x["name"] for x in listed] == ["Alpha", "Bravo", "Charlie", "Delta"] and u in listed, [x["name"] for x in listed])
+        over = w.getOrganizationWirelessSsidsProfilesOverviews(org, total_pages=-1, perPage=3)
+        check("getOrganizationWirelessSsidsProfilesOverviews", over == listed, len(over))
+
+        a = w.createOrganizationWirelessSsidsProfilesAssignment(org, {"id": made[0]["id"]}, {"number": 1}, network={"id": hq})
+        check("createOrganizationWirelessSsidsProfilesAssignment", a["network"]["id"] == hq and a["ssid"]["number"] == 1 and a["profile"]["name"] == "Delta", a)
+        b = w.createOrganizationWirelessSsidsProfilesAssignment(org, {"id": made[1]["id"]}, {"number": 0}, network={"id": austin})
+        rows = w.getOrganizationWirelessSsidsProfilesAssignments(org, total_pages=-1, perPage=3)["items"]
+        check("getOrganizationWirelessSsidsProfilesAssignments", rows == [a, b], rows)
+        by = w.getOrganizationWirelessSsidsProfilesAssignmentsByNetwork(org, total_pages=-1, perPage=3, includeAllNetworks=True)
+        hq_row = next(x for x in by if x["id"] == hq)
+        check("getOrganizationWirelessSsidsProfilesAssignmentsByNetwork", len(by) == 5 and hq_row["assignments"] == [{"profile": a["profile"], "ssid": a["ssid"]}], hq_row)
+        # The SDK's delete sends no body, so the SSID it names never reaches the API.
+        try:
+            w.deleteOrganizationWirelessSsidsProfilesAssignments(org, {"id": b["ssid"]["id"]})
+            check("deleteOrganizationWirelessSsidsProfilesAssignments", False, "no 400")
+        except meraki.APIError as e:
+            check("deleteOrganizationWirelessSsidsProfilesAssignments", e.status == 400, e.message)
+        try:
+            w.deleteOrganizationWirelessSsidsProfile(org, made[0]["id"])
+            check("deleteOrganizationWirelessSsidsProfile in use", False, "no 400")
+        except meraki.APIError as e:
+            check("deleteOrganizationWirelessSsidsProfile in use", e.status == 400, e.message)
+        w.deleteOrganizationWirelessSsidsProfile(org, made[2]["id"])
+        check("deleteOrganizationWirelessSsidsProfile", len(w.getOrganizationWirelessSsidsProfiles(org)) == 3, "")
+
+        entries = [w.createOrganizationWirelessSsidsFirewallIsolationAllowlistEntry(org, {"mac": f"00:11:22:33:44:5{i}"}, {"number": 2}, {"id": hq}, description=f"Printer {i}") for i in range(4)]
+        check("createOrganizationWirelessSsidsFirewallIsolationAllowlistEntry", entries[0]["entryId"] == "1" and entries[0]["network"]["id"] == hq, entries[0])
+        e = w.updateOrganizationWirelessSsidsFirewallIsolationAllowlistEntry(org, "1", description="Lab printer")
+        check("updateOrganizationWirelessSsidsFirewallIsolationAllowlistEntry", e["description"] == "Lab printer" and e["client"] == entries[0]["client"], e)
+        listed = w.getOrganizationWirelessSsidsFirewallIsolationAllowlistEntries(org, total_pages=-1, perPage=3)["items"]
+        check("getOrganizationWirelessSsidsFirewallIsolationAllowlistEntries", [x["entryId"] for x in listed] == ["1", "2", "3", "4"] and listed[0] == e, len(listed))
+        w.deleteOrganizationWirelessSsidsFirewallIsolationAllowlistEntry(org, "1")
+        left = w.getOrganizationWirelessSsidsFirewallIsolationAllowlistEntries(org, ssids=[2])["items"]
+        check("deleteOrganizationWirelessSsidsFirewallIsolationAllowlistEntry", [x["entryId"] for x in left] == ["2", "3", "4"], left)
+
+        roam = w.updateNetworkWirelessSsidOpenRoaming(hq, 1, enabled=True, tenantId="42")
+        rows = w.getOrganizationWirelessSsidsOpenRoamingByNetwork(org, total_pages=-1, perPage=3)["items"]
+        hq_row = next(x for x in rows if x["networkId"] == hq)
+        check("getOrganizationWirelessSsidsOpenRoamingByNetwork", len(rows) == 5 and hq_row["ssid"][1]["openRoaming"] == roam, hq_row["ssid"][1])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
