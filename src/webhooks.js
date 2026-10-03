@@ -234,9 +234,16 @@ export function sendCallback(ctx, net, dev, { cb, secret, template }, alertData,
     const at = isoUs(Math.round(sent * 1e6));
     cb.webhook.sentAt = at;
     const data = { version: '0.1', sharedSecret: secret, sentAt: at, organizationId: org.id, organizationName: org.name, organizationUrl: orgJson(org).url };
-    if (net) Object.assign(data, { networkId: net.id, networkName: net.name, networkUrl: net.url, networkTags: [...net.tags] });
-    if (dev) Object.assign(data, { deviceSerial: dev.serial, deviceMac: dev.mac, deviceName: dev.name, deviceUrl: deviceUrl(dev), deviceTags: [...dev.tags], deviceModel: dev.model });
-    Object.assign(data, { alertId: cb.callbackId, alertType: 'API callback', alertTypeId: 'api_callback', alertLevel: 'informational', occurredAt: at, alertData: alertData() });
+    try {
+      if (net) Object.assign(data, { networkId: net.id, networkName: net.name, networkUrl: net.url, networkTags: [...net.tags] });
+      if (dev) Object.assign(data, { deviceSerial: dev.serial, deviceMac: dev.mac, deviceName: dev.name, deviceUrl: deviceUrl(dev), deviceTags: [...dev.tags], deviceModel: dev.model });
+      Object.assign(data, { alertId: cb.callbackId, alertType: 'API callback', alertTypeId: 'api_callback', alertLevel: 'informational', occurredAt: at, alertData: alertData() });
+    } catch (e) {
+      // This runs from a timer, so an error here would stop the server. It fails the callback instead.
+      console.error(e);
+      Object.assign(cb, { status: 'failed', errors: ['Callback failed'] });
+      return;
+    }
     const job = { status: 'enqueued' };
     const done = () => {
       cb.status = job.status === 'delivered' ? 'completed' : 'failed';

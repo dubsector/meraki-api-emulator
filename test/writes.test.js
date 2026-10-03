@@ -77,6 +77,30 @@ describe('writes', () => {
     assert.deepEqual((await sb.get(`${N}/settings`)).body, before);
   });
 
+  test('null tags and admin networks clear them, and a null name or time zone is left out', async () => {
+    fresh();
+    const ap = hq.aps[0];
+    const admin = org.admins.find((a) => a.networks.length);
+    for (const [path, body] of [
+      [`/networks/${hq.id}`, { name: null, timeZone: null, tags: null }],
+      [`/devices/${ap.serial}`, { tags: null }],
+      [`/organizations/${org.id}/admins/${admin.id}`, { tags: null, networks: null }],
+    ]) {
+      const r = await sb.put(path, body);
+      assert.equal(r.status, 200, `${path}: ${JSON.stringify(r.body)}`);
+    }
+    const net = (await sb.get(`/networks/${hq.id}`)).body;
+    assert.deepEqual([net.name, net.timeZone, net.tags], ['HQ - San Francisco', 'America/Los_Angeles', []]);
+    assert.deepEqual((await sb.get(`/devices/${ap.serial}`)).body.tags, []);
+    const created = await sb.post(`/organizations/${org.id}/networks`, { name: 'Branch - Boise', productTypes: ['wireless'], tags: null, timeZone: null, notes: null });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    assert.deepEqual([created.body.tags, created.body.timeZone, created.body.notes], [[], 'America/Los_Angeles', '']);
+    // Reads that filter on or copy these lists still answer.
+    for (const path of [`/organizations/${org.id}/networks?tags[]=x`, `/organizations/${org.id}/devices?tags[]=x`, `/organizations/${org.id}/admins?networkIds[]=${hq.id}`, `/organizations/${org.id}/firmware/upgrades`, `/networks/${hq.id}/networkHealth/channelUtilization`]) {
+      assert.equal((await sb.get(path)).status, 200, path);
+    }
+  });
+
   test('prototype keys in a body are ignored', async () => {
     fresh();
     const r = await sb.put(`/networks/${hq.id}/settings`, '{"__proto__": {"polluted": 1}, "fips": {"constructor": {"prototype": {"polluted": 1}}}}');

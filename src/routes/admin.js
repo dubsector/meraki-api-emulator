@@ -251,7 +251,9 @@ export default [
       const org = orgOf(ctx);
       const a = adminOf(org, ctx.params.adminId);
       checkPrivileges(org, ctx.body);
-      for (const k of ['name', 'orgAccess', 'tags', 'networks']) if (ctx.body[k] !== undefined) a[k] = ctx.body[k];
+      for (const k of ['name', 'orgAccess']) if (ctx.body[k] !== undefined) a[k] = ctx.body[k];
+      // A null list clears it.
+      for (const k of ['tags', 'networks']) if (ctx.body[k] !== undefined) a[k] = ctx.body[k] ?? [];
       return adminJson(a, ctx);
     },
   },

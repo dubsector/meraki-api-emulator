@@ -466,7 +466,11 @@ export function removeOrganization(world, org) {
 }
 
 // An empty network: no devices or clients, so every stats endpoint reports nothing.
-export function addNetwork(world, org, { name, productTypes, tags = [], timeZone = 'America/Los_Angeles', notes = '' }) {
+// A null in the body counts as left out.
+export function addNetwork(world, org, { name, productTypes, tags, timeZone, notes }) {
+  tags ??= [];
+  timeZone ??= 'America/Los_Angeles';
+  notes ??= '';
   const r = nextRand(world, 'network');
   let id;
   do id = (productTypes.length > 1 ? 'L_' : 'N_') + r.digits(18);
