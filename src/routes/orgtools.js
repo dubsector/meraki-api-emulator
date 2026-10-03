@@ -7,7 +7,7 @@ import { orgJson } from '../format.js';
 import { arrayParam, badRequest, paginateItems } from '../http.js';
 import { API_PREFIX, ROUTES, VERSION } from '../server.js';
 import { schemaOf } from '../validate.js';
-import { addNetwork, addOrganization } from '../world.js';
+import { addNetwork, addOrganization, dropSwitchSerials } from '../world.js';
 import { byId, orgOf } from './common.js';
 import { MAX_ORGS } from './organizations.js';
 
@@ -50,7 +50,7 @@ function cloneOrganization(ctx) {
     for (const [n, net] of pairs) s = s.replaceAll(n.id, net.id);
     return JSON.parse(s);
   };
-  for (const [n, net] of pairs) net.config = swap(rebase(configOf(n), n.template?.id ?? n.id, net.id));
+  for (const [n, net] of pairs) net.config = dropSwitchSerials(swap(rebase(configOf(n), n.template?.id ?? n.id, net.id)));
   for (const k of CLONED) if (src[k] !== undefined) org[k] = swap(src[k]);
   return orgJson(org);
 }

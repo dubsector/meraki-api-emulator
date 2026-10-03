@@ -719,6 +719,19 @@ export function removeDevice(world, dev) {
 // multicast overrides. A swapped switch keeps its place in them.
 const SERIAL_LISTS = [['switchStp', 'stpBridgePriority'], ['switchMtu', 'overrides'], ['switchMulticast', 'overrides']];
 
+// A copied config (a new network, a template or a cloned organization) has none
+// of the source's switches, so its entries drop them, and an entry left with no
+// switches, stacks or switch profiles goes.
+export function dropSwitchSerials(config) {
+  for (const [key, list] of SERIAL_LISTS) {
+    const entries = config?.[key]?.[list];
+    if (!entries) continue;
+    for (const e of entries) delete e.switches;
+    config[key][list] = entries.filter((e) => e.stacks?.length || e.switchProfiles?.length);
+  }
+  return config;
+}
+
 function renameSwitch(net, from, to) {
   const c = net.template ? net.template.config : net.config;
   for (const [key, list] of SERIAL_LISTS) for (const e of c?.[key]?.[list] ?? []) if (e.switches) e.switches = e.switches.map((s) => (s === from ? to : s));

@@ -9,6 +9,7 @@ import { networkJson } from '../format.js';
 import { badRequest, notFound } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { merge, validTimeZone } from '../validate.js';
+import { dropSwitchSerials } from '../world.js';
 import { netOf, orgOf } from './common.js';
 import { checkPortBody, checkPortPolicy, portConfig, portDefaults, withSchedule } from './switch.js';
 
@@ -95,7 +96,7 @@ function createTemplate(ctx) {
     }
   }
   for (const p of source?.profiles ?? []) newProfile(ctx, template, p.model, structuredClone(p.ports));
-  if (net) template.config = rebase(configOf(net), net.id, id);
+  if (net) template.config = dropSwitchSerials(rebase(configOf(net), net.id, id));
   else if (source?.config) template.config = rebase(source.config, source.id, id);
   store.list.push(template);
   return templateJson(template);
