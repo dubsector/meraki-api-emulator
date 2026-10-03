@@ -1555,7 +1555,49 @@ def cameraanalytics():
         check("updateOrganizationCameraOnboardingStatuses records it", ok == {"success": True} and c.getOrganizationCameraOnboardingStatuses(org, serials=[serial])[0]["status"] == "pending onboarding", ok)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics]
+@scenario
+def orgsecurity():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o = d.organizations
+        org = acme(o.getOrganizations())
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        net = nets["HQ - San Francisco"]
+
+        sec = o.updateOrganizationLoginSecurity(org, enforceLoginIpRanges=True, loginIpRanges=["10.0.0.0/8"], apiAuthentication={"ipRestrictionsForKeys": {"enabled": True, "ranges": ["192.0.2.0/24"]}})
+        check("updateOrganizationLoginSecurity, then getOrganizationLoginSecurity", o.getOrganizationLoginSecurity(org) == sec and sec["loginIpRanges"] == ["10.0.0.0/8"], sec)
+        check("API key IP restrictions don't lock out the emulator's callers", len(o.getOrganizationNetworks(org)) == len(nets))
+
+        fp = "00:11:22:33:44:55:66:77:88:99:00:11:22:33:44:55:66:77:88:99"
+        idp = o.createOrganizationSamlIdp(org, fp, ssoLoginUrl="https://idp.example.com/sso")
+        check("createOrganizationSamlIdp gives consumer URLs", idp["consumerUrl"].endswith(idp["idpId"]) and idp["visionConsumerUrl"].endswith("?appTarget=MerakiVision"), idp)
+        idp = o.updateOrganizationSamlIdp(org, idp["idpId"], sloLogoutUrl="https://idp.example.com/slo")
+        check("getOrganizationSamlIdps, then get and update one", o.getOrganizationSamlIdps(org) == [idp] and o.getOrganizationSamlIdp(org, idp["idpId"]) == idp, idp)
+        saml = o.updateOrganizationSaml(org, enabled=True, spInitiated={"subdomain": "acme", "idpId": idp["idpId"]})
+        check("updateOrganizationSaml, then getOrganizationSaml", o.getOrganizationSaml(org) == saml == {"enabled": True, "spInitiated": {"subdomain": "acme", "idpId": idp["idpId"]}}, saml)
+        try:
+            o.deleteOrganizationSamlIdp(org, idp["idpId"])
+            check("deleteOrganizationSamlIdp refuses the SP-initiated IdP", False)
+        except meraki.APIError as e:
+            check("deleteOrganizationSamlIdp refuses the SP-initiated IdP", e.status == 400, e.message)
+        o.updateOrganizationSaml(org, enabled=False)
+        other = o.createOrganizationSamlIdp(org, fp)
+        o.updateOrganizationSaml(org, spInitiated={"idpId": other["idpId"]})
+        o.deleteOrganizationSamlIdp(org, idp["idpId"])
+        check("deleteOrganizationSamlIdp", [x["idpId"] for x in o.getOrganizationSamlIdps(org)] == [other["idpId"]])
+
+        role = o.createOrganizationSamlRole(org, "west", "none", networks=[{"id": net, "access": "full"}], tags=[{"tag": "west", "access": "read-only"}])
+        check("createOrganizationSamlRole", role["networks"] == [{"id": net, "access": "full"}] and role["camera"] == [], role)
+        role = o.updateOrganizationSamlRole(org, role["id"], orgAccess="read-only")
+        check("getOrganizationSamlRoles, then get and update one", o.getOrganizationSamlRoles(org) == [role] and o.getOrganizationSamlRole(org, role["id"]) == role and role["orgAccess"] == "read-only", role)
+        o.deleteOrganizationSamlRole(org, role["id"])
+        check("deleteOrganizationSamlRole", o.getOrganizationSamlRoles(org) == [])
+
+        snmp = o.updateOrganizationSnmp(org, v2cEnabled=True, v3Enabled=True, v3AuthMode="SHA", v3AuthPass="password1", v3PrivMode="AES128", v3PrivPass="password2", peerIps=["123.123.123.1"])
+        check("updateOrganizationSnmp, then getOrganizationSnmp", o.getOrganizationSnmp(org) == snmp and snmp["v3User"] == snmp["v2CommunityString"] and "v3AuthPass" not in snmp, snmp)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

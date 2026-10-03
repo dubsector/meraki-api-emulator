@@ -26,6 +26,7 @@ const CONDITIONAL = [
   [/^\.(licenseCount|states|licenseTypes|systemsManager)$/, 'getOrganizationLicensesOverview', 'per-device licensing (Acme Test Lab)'],
   [/^\[\]\.client$/, 'getOrganizationConfigurationChanges', 'changes made by OAuth clients'],
   [/^\.communityString$/, 'getNetworkSnmp', 'community access'],
+  [/^\.(v2CommunityString|v3User|v3AuthMode|v3PrivMode)$/, 'getOrganizationSnmp', 'SNMP v2c or v3 turned on'],
   [/^\.alerts\[\]\.filters\./, 'getNetworkAlertsSettings', 'each alert type has its own filters'],
   [/vlanTagging\.vlanId$/, /GroupPolic/, 'custom VLAN tagging'],
   [/^\.nodes\[\]\.stack$/, 'getNetworkTopologyLinkLayer', 'switch stacks'],
