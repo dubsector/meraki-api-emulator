@@ -49,7 +49,7 @@ function adminOf(org, id) {
 }
 
 // Network and tag privileges must point at networks in this organization.
-function checkPrivileges(org, b) {
+export function checkPrivileges(org, b) {
   for (const n of b.networks || []) {
     if (!org.networks.some((x) => x.id === n.id)) throw badRequest(`Network ${n.id} is not in this organization`);
   }
