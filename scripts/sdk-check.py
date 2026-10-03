@@ -1597,7 +1597,47 @@ def orgsecurity():
         check("updateOrganizationSnmp, then getOrganizationSnmp", o.getOrganizationSnmp(org) == snmp and snmp["v3User"] == snmp["v2CommunityString"] and "v3AuthPass" not in snmp, snmp)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity]
+@scenario
+def adaptivepolicy():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o = d.organizations
+        org = acme(o.getOrganizations())
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        net = nets["HQ - San Francisco"]
+
+        groups = o.getOrganizationAdaptivePolicyGroups(org)
+        check("getOrganizationAdaptivePolicyGroups starts with Infrastructure and Unknown", [(g["name"], g["sgt"]) for g in groups] == [("Infrastructure", 2), ("Unknown", 0)], groups)
+        iot = o.createOrganizationAdaptivePolicyGroup(org, "IoT Devices", 50, description="Sensors")
+        iot = o.updateOrganizationAdaptivePolicyGroup(org, iot["groupId"], sgt=60)
+        check("createOrganizationAdaptivePolicyGroup, then get and update it", o.getOrganizationAdaptivePolicyGroup(org, iot["groupId"]) == iot and iot["sgt"] == 60, iot)
+        acl = o.createOrganizationAdaptivePolicyAcl(org, "Block SSH", [{"policy": "deny", "protocol": "tcp", "dstPort": "22"}], "ipv4")
+        acl = o.updateOrganizationAdaptivePolicyAcl(org, acl["aclId"], description="No SSH")
+        check("createOrganizationAdaptivePolicyAcl, then list, get and update it", o.getOrganizationAdaptivePolicyAcls(org) == [acl] and o.getOrganizationAdaptivePolicyAcl(org, acl["aclId"]) == acl and acl["rules"][0]["srcPort"] == "any", acl)
+        pol = o.createOrganizationAdaptivePolicyPolicy(org, {"id": iot["groupId"]}, {"name": "Infrastructure"}, acls=[{"id": acl["aclId"]}])
+        pol = o.updateOrganizationAdaptivePolicyPolicy(org, pol["adaptivePolicyId"], lastEntryRule="deny")
+        check("createOrganizationAdaptivePolicyPolicy, then list, get and update it", o.getOrganizationAdaptivePolicyPolicies(org) == [pol] and o.getOrganizationAdaptivePolicyPolicy(org, pol["adaptivePolicyId"]) == pol and pol["acls"] == [{"id": acl["aclId"], "name": "Block SSH"}], pol)
+        ov = o.getOrganizationAdaptivePolicyOverview(org)
+        check("getOrganizationAdaptivePolicyOverview counts what exists", ov["counts"]["customGroups"] == 1 and ov["counts"]["denyPolicies"] == 1, ov)
+        s = o.updateOrganizationAdaptivePolicySettings(org, enabledNetworks=[net])
+        check("updateOrganizationAdaptivePolicySettings, then getOrganizationAdaptivePolicySettings", o.getOrganizationAdaptivePolicySettings(org) == s == {"enabledNetworks": [net]}, s)
+
+        serial = next(x["serial"] for x in o.getOrganizationDevices(org, total_pages="all", productTypes=["switch"]) if x["networkId"] == net)
+        port = d.switch.updateDeviceSwitchPort(serial, "1", type="trunk", adaptivePolicyGroupId=iot["groupId"], peerSgtCapable=True)
+        check("updateDeviceSwitchPort takes an adaptive policy group", port["adaptivePolicyGroup"] == {"id": iot["groupId"], "name": "IoT Devices"} and port["peerSgtCapable"] is True, port)
+        ssid = d.wireless.updateNetworkWirelessSsid(net, "1", adaptivePolicyGroupId=iot["groupId"])
+        check("updateNetworkWirelessSsid takes an adaptive policy group", ssid["adaptivePolicyGroupId"] == iot["groupId"], ssid)
+
+        o.deleteOrganizationAdaptivePolicyAcl(org, acl["aclId"])
+        check("deleteOrganizationAdaptivePolicyAcl takes it out of policies", o.getOrganizationAdaptivePolicyPolicy(org, pol["adaptivePolicyId"])["acls"] == [])
+        o.deleteOrganizationAdaptivePolicyGroup(org, iot["groupId"])
+        check("deleteOrganizationAdaptivePolicyGroup drops its policies and references", o.getOrganizationAdaptivePolicyPolicies(org) == [] and d.switch.getDeviceSwitchPort(serial, "1")["adaptivePolicyGroupId"] is None and "adaptivePolicyGroupId" not in d.wireless.getNetworkWirelessSsid(net, "1"))
+        other = o.createOrganizationAdaptivePolicyPolicy(org, {"sgt": 2}, {"sgt": 0})
+        o.deleteOrganizationAdaptivePolicyPolicy(org, other["adaptivePolicyId"])
+        check("deleteOrganizationAdaptivePolicyPolicy", o.getOrganizationAdaptivePolicyPolicies(org) == [])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

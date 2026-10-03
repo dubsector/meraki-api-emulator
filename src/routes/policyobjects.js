@@ -173,11 +173,14 @@ function listObjects(ctx) {
   return paginate(ctx, objectsOf(org).list, (o) => o.id, { def: 5000, max: 5000, min: 10 }).map((o) => objectJson(o, org, used));
 }
 
-// An object in a group can go; it leaves the group. One a rule names can't.
+// An object in a group can go; it leaves the group. One a rule or an adaptive
+// policy group names can't.
 function deleteObject(ctx) {
   const { parent: org, store, item: o } = objects.find(ctx);
   const reason = inUse(org, `OBJ(${o.id})`, `Policy object ${o.id}`);
   if (reason) throw badRequest(reason);
+  const tagged = org.adaptivePolicyGroups?.list.find((g) => g.policyObjectIds.includes(o.id));
+  if (tagged) throw badRequest(`Policy object ${o.id} is used by adaptive policy group '${tagged.name}'`);
   for (const g of groupsOf(org).list) g.objectIds = g.objectIds.filter((id) => id !== o.id);
   store.list.splice(store.list.indexOf(o), 1);
 }

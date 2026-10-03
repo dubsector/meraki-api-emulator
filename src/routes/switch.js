@@ -11,6 +11,7 @@ import { isOnline, presenceIn } from '../sim/presence.js';
 import { WAN_RECV, WAN_SENT, clientUsage, networkTotals } from '../sim/usage.js';
 import { DAY, HOUR, parseTime } from '../time.js';
 import { merge } from '../validate.js';
+import { checkGroupId, withGroup } from './adaptivepolicy.js';
 import { bySerial, devOf, netOf, orgOf, requireModel, requireProduct, round } from './common.js';
 
 const NO_USAGE = { sent: 0, recv: 0, clients: 0, wh: 0 };
@@ -142,7 +143,7 @@ export function portConfig(net, sw, port) {
     return withSchedule(configOf(net), config ? merge(portDefaults(sw, port), config) : portDefaults(sw, port));
   }
   const base = defaultPortConfig(net, sw, port);
-  return withSchedule(configOf(net), port.config ? merge(base, port.config) : base);
+  return withGroup(net.org, withSchedule(configOf(net), port.config ? merge(base, port.config) : base));
 }
 
 // A port shows its schedule's name; one that's gone reads as no schedule.
@@ -208,6 +209,12 @@ export function checkPortPolicy(config, current, b) {
   const number = b.accessPolicyNumber ?? current.accessPolicyNumber;
   if (number == null) throw badRequest("'accessPolicyNumber' is required when 'accessPolicyType' is 'Custom access policy'");
   if (!policies.some((p) => p.number === String(number))) throw missing(number);
+}
+
+// Peer SGT only runs on trunks, and a port's group has to exist.
+function checkAdaptivePort(org, now, current, b) {
+  checkGroupId(org, now, b.adaptivePolicyGroupId);
+  if ((b.peerSgtCapable ?? current.peerSgtCapable) && (b.type ?? current.type) === 'access') throw badRequest("'peerSgtCapable' only applies to trunk ports");
 }
 
 function defaultPortConfig(net, sw, port) {
@@ -509,7 +516,9 @@ export default [
       const port = portOf(dev, ctx.params.portId);
       if (boundProfile(dev)) throw badRequest('This switch is bound to a switch profile; change the port on the profile instead');
       checkPortBody(dev, port, ctx.body);
-      checkPortPolicy(configOf(dev.net), portConfig(dev.net, dev, port), ctx.body);
+      const current = portConfig(dev.net, dev, port);
+      checkPortPolicy(configOf(dev.net), current, ctx.body);
+      checkAdaptivePort(dev.net.org, ctx.now, current, ctx.body);
       const { portId, ...patch } = ctx.body;
       port.config = merge(port.config || {}, patch);
       return portConfig(dev.net, dev, port);
