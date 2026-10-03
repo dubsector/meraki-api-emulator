@@ -156,6 +156,36 @@ describe('writes', () => {
     assert.deepEqual((await sb.put(route, { fixedIpAssignments: null })).body.fixedIpAssignments, {});
   });
 
+  test('L7 rules take each value shape the spec gives and read back as written', async () => {
+    fresh();
+    const mx = `/networks/${hq.id}/appliance/firewall/l7FirewallRules`;
+    for (const path of [mx, `/networks/${hq.id}/wireless/ssids/1/firewall/l7FirewallRules`]) {
+      const seeded = (await sb.get(path)).body;
+      assert.ok(seeded.rules.some((r) => typeof r.value === 'object'), path);
+      const put = await sb.put(path, seeded);
+      assert.equal(put.status, 200, `${path}: ${JSON.stringify(put.body)}`);
+      assert.deepEqual(put.body, seeded);
+    }
+    const [cat] = (await sb.get(`${mx}/applicationCategories`)).body.applicationCategories;
+    const rules = [
+      { policy: 'deny', type: 'applicationCategory', value: { id: cat.id } },
+      { policy: 'deny', type: 'application', value: cat.applications[0].id },
+      { policy: 'deny', type: 'blockedCountries', value: ['cn', 'RU'] },
+      { policy: 'deny', type: 'port', value: 23 },
+    ];
+    const r = await sb.put(mx, { rules });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.rules.map((x) => x.value), [{ id: cat.id, name: cat.name }, cat.applications[0], ['CN', 'RU'], '23']);
+    for (const [rule, message] of [
+      [{ type: 'host', value: { id: 'x' } }, /'rules\[0\]\.value' must be a string/],
+      [{ type: 'applicationCategory', value: 'games' }, /application category/],
+      [{ type: 'blockedCountries', value: 'CN' }, /country codes/],
+      [{ value: 'x' }, /'rules\[0\]\.type' is required/],
+    ]) {
+      assert.match((await sb.put(mx, { rules: [{ policy: 'deny', ...rule }] })).body.errors[0], message);
+    }
+  });
+
   test('the default firewall rule stays last and is never duplicated', async () => {
     fresh();
     const path = `/networks/${hq.id}/appliance/firewall/l3FirewallRules`;

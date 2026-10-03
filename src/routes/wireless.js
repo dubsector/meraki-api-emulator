@@ -13,7 +13,7 @@ import { clientUsage } from '../sim/usage.js';
 import { DAY, HOUR, iso, isoMicro } from '../time.js';
 import { merge } from '../validate.js';
 import { checkGroupId } from './adaptivepolicy.js';
-import { bySerial, devOf, netOf, orgOf, requireModel, requireProduct, round } from './common.js';
+import { bySerial, devOf, l7Rules, netOf, orgOf, requireModel, requireProduct, round } from './common.js';
 import { themeIn } from './splash.js';
 
 export const BANDS = ['2.4', '5', '6'];
@@ -513,7 +513,7 @@ export default [
     handler: (ctx) => {
       const net = wirelessNet(ctx);
       const set = ssidL7(net, ssidOf(net, ctx).number);
-      if (ctx.body.rules) set.rules = ctx.body.rules;
+      if (ctx.body.rules) set.rules = l7Rules(ctx.body.rules);
       return set;
     },
   },

@@ -10,7 +10,7 @@ import { presenceIn } from '../sim/presence.js';
 import { DAY } from '../time.js';
 import { ipInCidr, merge, parseCidr } from '../validate.js';
 import { checkGroupId } from './adaptivepolicy.js';
-import { bySerial, devOf, netOf, orgOf, requireModel, requireProduct } from './common.js';
+import { bySerial, devOf, l7Rules, netOf, orgOf, requireModel, requireProduct } from './common.js';
 import { checkRefs } from './policyobjects.js';
 
 const MAX_ITEMS = 1000;
@@ -515,7 +515,7 @@ export default [
     path: '/networks/{networkId}/appliance/firewall/l7FirewallRules',
     handler: (ctx) => {
       const c = mxConfig(ctx);
-      if (ctx.body.rules) c.l7Rules = limit(ctx.body.rules, 'Rules');
+      if (ctx.body.rules) c.l7Rules = l7Rules(limit(ctx.body.rules, 'Rules'));
       return { rules: c.l7Rules };
     },
   },
