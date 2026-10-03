@@ -735,7 +735,8 @@ function repointCamera(org, fromId, toId) {
 }
 
 // Points what names a network at its new ID, or drops it when toId is null:
-// admin and SAML role privileges, network groups, camera roles and spokes' VPN hubs.
+// admin and SAML role privileges, network groups, camera roles, networks with
+// adaptive policy enabled and spokes' VPN hubs.
 function repoint(org, fromId, toId) {
   const swap = (list, idOf, make) => {
     const i = list.findIndex((x) => idOf(x) === fromId);
@@ -748,6 +749,7 @@ function repoint(org, fromId, toId) {
   for (const r of org.samlRoles?.list ?? []) r.networks = swap(r.networks, (n) => n.id, (n) => ({ ...n, id: toId }));
   for (const g of org.networkGroups?.list ?? []) g.networkIds = swap(g.networkIds, (id) => id, () => toId);
   for (const p of org.vpnPeers?.list ?? []) if (p.networkIds) p.networkIds = swap(p.networkIds, (id) => id, () => toId);
+  if (org.adaptivePolicySettings) org.adaptivePolicySettings.enabledNetworks = swap(org.adaptivePolicySettings.enabledNetworks, (id) => id, () => toId);
   repointWireless(org, fromId, toId);
   repointCamera(org, fromId, toId);
   for (const n of org.networks) {

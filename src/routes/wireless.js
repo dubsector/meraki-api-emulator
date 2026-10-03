@@ -12,6 +12,7 @@ import { RADIO, SETTINGS, WIDTH, apChannel, apPower, apWidth, bssid, channelUtil
 import { clientUsage } from '../sim/usage.js';
 import { DAY, HOUR, iso, isoMicro } from '../time.js';
 import { merge } from '../validate.js';
+import { checkGroupId } from './adaptivepolicy.js';
 import { bySerial, devOf, netOf, orgOf, requireModel, requireProduct, round } from './common.js';
 
 export const BANDS = ['2.4', '5', '6'];
@@ -166,6 +167,7 @@ function updateSsid(ctx) {
   const net = wirelessNet(ctx);
   const { number, ssid, config } = ssidOf(net, ctx);
   const { number: ignored, ...patch } = ctx.body;
+  checkGroupId(net.org, ctx.now, patch.adaptivePolicyGroupId);
   const next = merge(structuredClone(config), patch);
   if (next.authMode === 'psk' && (!next.psk || next.psk.length < 8 || next.psk.length > 63)) throw badRequest("'psk' must be 8 to 63 characters when authMode is psk");
   if (usesRadius(next.authMode) && !next.radiusServers?.length) throw badRequest(`'radiusServers' is required when authMode is ${next.authMode}`);
