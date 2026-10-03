@@ -55,6 +55,11 @@ describe('radio overrides, AutoRF and Air Marshal', () => {
     assert.equal(five.channelWidth, '80 MHz');
     assert.equal(five.power, '17 dBm');
     assert.ok(sets.filter((x) => x.band === '6 GHz').every((x) => !x.broadcasting && x.power === '-1 dBm'));
+    // The org BSSID view shows the same radios.
+    const org = (await ok(sb.get(`/organizations/${corp.id}/wireless/ssids/statuses/byDevice?serials[]=${ap.serial}`))).items[0].basicServiceSets;
+    assert.ok(org.some((x) => x.radio.band === '6'));
+    assert.ok(org.filter((x) => x.radio.band === '5').every((x) => x.radio.channelWidth === 80 && x.radio.power === 17 && x.radio.isBroadcasting));
+    assert.ok(org.filter((x) => x.radio.band === '6').every((x) => !x.radio.isBroadcasting && x.radio.power === -1));
     // Radios left out stay as they were; null hands a value back to the profile.
     const again = await ok(sb.put(O(), { radios: [{ index: '1', channel: null }] }));
     assert.equal(again.radios[1].channel, null);
@@ -62,6 +67,10 @@ describe('radio overrides, AutoRF and Air Marshal', () => {
     assert.equal(again.radios[2].enabled, false);
     const byDevice = await ok(sb.get(`/organizations/${corp.id}/wireless/radio/overrides/byDevice?serials[]=${ap.serial}`));
     assert.deepEqual(byDevice.items, [again]);
+    // A width of 0 leaves it to auto.
+    await ok(sb.put(`/devices/${ap.serial}/wireless/radio/settings`, { fiveGhzSettings: { channelWidth: 0 } }));
+    const auto = (await ok(sb.get(`/devices/${ap.serial}/wireless/status`))).basicServiceSets.find((x) => x.band === '5 GHz');
+    assert.equal(auto.channelWidth, '40 MHz');
   });
 
   test('assigning an RF profile clears the overrides', async () => {
@@ -116,7 +125,7 @@ describe('radio overrides, AutoRF and Air Marshal', () => {
     assert.equal(r.timeZone, 'America/Los_Angeles');
     assert.equal(r.ai.lastEnabledAt, '2026-09-29T18:30:00Z');
     assert.deepEqual(r.busyHour.schedule.manual, { start: '09:00', end: '12:00' });
-    assert.match(await errorOf(sb.put(R, { ai: { enabled: false } })), /FRA/);
+    assert.match(await errorOf(sb.put(R, { ai: { enabled: false }, fra: { enabled: true } })), /FRA/);
     assert.match(await errorOf(sb.put(R, { busyHour: { schedule: { manual: { start: '9am' } } } })), /whole hour/);
     assert.match(await errorOf(sb.put(R, { busyHour: { schedule: { manual: { start: '12:00' } } } })), /different hours/);
     const list = await ok(sb.get(`/organizations/${corp.id}/wireless/radio/rrm/byNetwork?networkIds[]=${hq.id}`));
@@ -126,6 +135,8 @@ describe('radio overrides, AutoRF and Air Marshal', () => {
     assert.deepEqual(ids, [...ids].sort().reverse());
     assert.equal(all.meta.counts.items.total, corp.networks.filter((n) => n.productTypes.includes('wireless')).length);
     assert.equal((await sb.get(`/organizations/${corp.id}/wireless/radio/rrm/byNetwork?sortOrder=up`)).status, 400);
+    const off = await ok(sb.put(R, { ai: { enabled: false } }));
+    assert.deepEqual([off.ai.enabled, off.fra.enabled], [false, false]);
   });
 
   test('channel recalculation checks its networks', async () => {

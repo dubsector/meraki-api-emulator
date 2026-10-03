@@ -2,12 +2,12 @@
 // default policy for rogue SSIDs.
 
 import { configOf, stored } from '../config.js';
-import { arrayParam, badRequest, paginateItems, timeWindow } from '../http.js';
+import { badRequest, paginateItems, timeWindow } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { lastSighting, neighborsOf } from '../sim/neighbors.js';
 import { DAY } from '../time.js';
-import { byId, collection, orgOf } from './common.js';
-import { wirelessNet } from './wireless.js';
+import { byId, collection } from './common.js';
+import { wirelessNet, wirelessNets } from './wireless.js';
 
 const RULE_TYPES = ['alert', 'allow', 'block'];
 const MATCH_TYPES = ['bssid', 'contains', 'exact', 'wildcard'];
@@ -138,10 +138,7 @@ function scanResults(ctx) {
   return rows.sort((a, b) => (a.ssid < b.ssid ? -1 : a.ssid > b.ssid ? 1 : 0));
 }
 
-function orgWirelessNets(ctx) {
-  const ids = arrayParam(ctx.query, 'networkIds');
-  return orgOf(ctx).networks.filter((n) => n.productTypes.includes('wireless') && (!ids.length || ids.includes(n.id))).sort(byId);
-}
+const orgWirelessNets = (ctx) => wirelessNets(ctx).sort(byId);
 
 export default [
   { op: 'getNetworkWirelessAirMarshal', path: '/networks/{networkId}/wireless/airMarshal', handler: scanResults },

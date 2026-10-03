@@ -772,7 +772,12 @@ export function moveNetwork(world, net, dest) {
 
 // Settings kept on a network outside its config, since they name its own
 // devices or items. They go with the product they belong to.
-const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', mqttBrokers: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless' };
+const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless' };
+
+// MQTT brokers serve cameras, sensors and wireless MQTT alike, which name them
+// by ID: a combined network takes every network's brokers and each part of a
+// split gets a copy.
+const BROKER_PRODUCTS = ['camera', 'sensor', 'wireless'];
 
 // Merges networks with different product types into one. Each product's
 // devices and settings come from the network that had it; network-wide
@@ -829,6 +834,11 @@ export function combineNetworks(world, org, nets, { name, enrollmentString }) {
   const stacks = owner('switch')?.switchStacks;
   Object.assign(target, { config, productTypes, floorPlans: plans, firmware, switchStacks: stacks, stagedUpgrades: first.stagedUpgrades, name, tags: [...new Set(sources.flatMap((n) => n.tags))] });
   for (const [k, p] of Object.entries(OWN_STORES)) target[k] = owner(p)?.[k];
+  const brokers = sources.map((n) => n.mqttBrokers).filter(Boolean);
+  // Parts of an earlier split hold copies of the same brokers; the first one wins.
+  const seen = new Set();
+  const list = brokers.flatMap((b) => b.list).filter((x) => !seen.has(x.id) && seen.add(x.id));
+  target.mqttBrokers = brokers.length ? { created: Math.max(...brokers.map((b) => b.created)), list } : undefined;
   if (enrollmentString !== undefined) target.enrollmentString = enrollmentString;
 
   for (const n of sources) {
@@ -878,6 +888,7 @@ export function splitNetwork(world, net) {
   const cam = partFor('camera');
   if (cam) cam.cameras = net.cameras;
   for (const [k, p] of Object.entries(OWN_STORES)) if (partFor(p)) partFor(p)[k] = net[k];
+  if (net.mqttBrokers) for (const p of BROKER_PRODUCTS) if (partFor(p)) partFor(p).mqttBrokers = structuredClone(net.mqttBrokers);
   if (net.floorPlans) (wl ?? cam ?? main).floorPlans = net.floorPlans;
   for (const l of org.licenses ?? []) if (l.networkId === net.id) l.networkId = world.deviceBySerial.get(l.deviceSerial)?.net.id ?? null;
 

@@ -8,7 +8,7 @@ import { hashStr } from '../rng.js';
 import { connectFailure, failureTime } from '../sim/events.js';
 import { isDown } from '../sim/outages.js';
 import { START, eachSession, presenceIn } from '../sim/presence.js';
-import { RADIO, SETTINGS, apChannel, apPower, apWidth, bssid, channelUtilization, clientSignal } from '../sim/rf.js';
+import { RADIO, SETTINGS, WIDTH, apChannel, apPower, apWidth, bssid, channelUtilization, clientSignal } from '../sim/rf.js';
 import { clientUsage } from '../sim/usage.js';
 import { DAY, HOUR, iso, isoMicro } from '../time.js';
 import { merge } from '../validate.js';
@@ -208,7 +208,7 @@ function radioSettings(ap) {
     serial: ap.serial,
     rfProfileId: apProfile(ap).id,
     twoFourGhzSettings: { channel: apChannel(ap, '2.4'), targetPower: apPower(ap, '2.4') },
-    fiveGhzSettings: { channel: apChannel(ap, '5'), channelWidth: apWidth(ap, '5'), targetPower: apPower(ap, '5') },
+    fiveGhzSettings: { channel: apChannel(ap, '5'), channelWidth: ap.radio?.fiveGhzSettings?.channelWidth ?? WIDTH[5], targetPower: apPower(ap, '5') },
   };
 }
 

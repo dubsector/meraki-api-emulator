@@ -25,8 +25,9 @@ export function apPower(ap, band) {
   return ap.radio?.[SETTINGS[band]]?.targetPower ?? { 2.4: 11, 5: 14, 6: 16 }[band] + (derive(ap.key, `power${band}`) % 6);
 }
 
+// Channel width in MHz; 0, like null, leaves it to auto.
 export function apWidth(ap, band) {
-  return ap.radio?.[SETTINGS[band]]?.channelWidth ?? WIDTH[band];
+  return ap.radio?.[SETTINGS[band]]?.channelWidth || WIDTH[band];
 }
 
 // Share of airtime in use on one radio over [t0, t1). Wi-Fi grows with the
