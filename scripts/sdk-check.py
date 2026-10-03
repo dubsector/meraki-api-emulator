@@ -1477,7 +1477,38 @@ def wirelessdevices():
         check("getOrganizationWirelessDevicesRadsecCertificatesAuthoritiesCrlsDeltas", deltas["items"] == [], deltas)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices]
+@scenario
+def cameraroles():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        c = d.camera
+        org = acme(d.organizations.getOrganizations())
+        nets = {x["name"]: x["id"] for x in d.organizations.getOrganizationNetworks(org)}
+        net = nets["HQ - San Francisco"]
+        serial = next(x["serial"] for x in d.networks.getNetworkDevices(net) if x["model"].startswith("MV"))
+
+        p = c.createNetworkCameraWirelessProfile(net, "Cams", {"name": "cam-net", "authMode": "psk", "psk": "secret123"})
+        eap = c.createNetworkCameraWirelessProfile(net, "EAP", {"name": "cam-eap", "authMode": "8021x-radius", "encryptionMode": "wpa-eap"}, identity={"username": "cam", "password": "hunter22"})
+        check("createNetworkCameraWirelessProfile keeps the identity password", eap["identity"] == {"username": "cam"} and p["ssid"]["encryptionMode"] == "wpa", eap)
+        upd = c.updateNetworkCameraWirelessProfile(net, p["id"], name="Cams 2")
+        check("getNetworkCameraWirelessProfiles, then get and update one", c.getNetworkCameraWirelessProfiles(net) == [upd, eap] and c.getNetworkCameraWirelessProfile(net, p["id"]) == upd, upd)
+        ids = c.updateDeviceCameraWirelessProfiles(serial, {"primary": p["id"], "secondary": eap["id"]})
+        check("updateDeviceCameraWirelessProfiles assigns the slots", c.getDeviceCameraWirelessProfiles(serial) == ids == {"ids": {"primary": p["id"], "secondary": eap["id"], "backup": None}}, ids)
+        check("appliedDeviceCount counts the camera", c.getNetworkCameraWirelessProfile(net, eap["id"])["appliedDeviceCount"] == 1)
+        c.deleteNetworkCameraWirelessProfile(net, eap["id"])
+        check("deleteNetworkCameraWirelessProfile takes it off the camera", c.getDeviceCameraWirelessProfiles(serial)["ids"]["secondary"] is None)
+
+        scopes = c.getOrganizationCameraPermissions(org)
+        check("getOrganizationCameraPermissions and getOrganizationCameraPermission", c.getOrganizationCameraPermission(org, scopes[0]["id"]) == scopes[0], scopes)
+        role = c.createOrganizationCameraRole(org, "Guard", appliedOnDevices=[{"id": serial, "permissionScopeId": "3"}], appliedOnNetworks=[{"id": net, "permissionScopeId": "2"}], appliedOrgWide=[{"permissionScopeId": "1"}])
+        check("createOrganizationCameraRole names its scopes", role["appliedOnDevices"][0]["permissionLevel"] == "view_and_export" and role["appliedOnNetworks"][0]["id"] == net, role)
+        r2 = c.updateOrganizationCameraRole(org, role["id"], name="Guard 2", appliedOrgWide=[])
+        check("getOrganizationCameraRoles, then get and update one", c.getOrganizationCameraRoles(org) == [r2] and c.getOrganizationCameraRole(org, role["id"]) == r2 and r2["appliedOrgWide"] == [], r2)
+        c.deleteOrganizationCameraRole(org, role["id"])
+        check("deleteOrganizationCameraRole", c.getOrganizationCameraRoles(org) == [])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

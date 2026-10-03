@@ -251,4 +251,124 @@ describe('cameras and MQTT brokers', () => {
     // The same calls give the same IDs after a reset.
     assert.equal((await newBroker()).id, broker.id);
   });
+  const newWireless = async (body = {}) => {
+    const r = await sb.post(`${N}/camera/wirelessProfiles`, { name: 'Cams', ssid: { name: 'cam-net', authMode: 'psk', psk: 'secret123' }, ...body });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    return r.body;
+  };
+
+  test('camera wireless profiles check their SSID and keep the identity password', async () => {
+    fresh();
+    const p = await newWireless();
+    assert.match(p.id, /^\d{18}$/);
+    assert.deepEqual(p, { id: p.id, name: 'Cams', appliedDeviceCount: 0, ssid: { name: 'cam-net', authMode: 'psk', encryptionMode: 'wpa', psk: 'secret123' } });
+    const eap = await newWireless({ name: 'EAP', ssid: { name: 'cam-eap', encryptionMode: 'wpa-eap' }, identity: { username: 'cam', password: 'hunter22' } });
+    assert.deepEqual([eap.ssid, eap.identity], [{ name: 'cam-eap', authMode: '8021x-radius', encryptionMode: 'wpa-eap' }, { username: 'cam' }]);
+    assert.deepEqual((await sb.get(`${N}/camera/wirelessProfiles`)).body.map((x) => x.name), ['Cams', 'EAP']);
+    assert.deepEqual((await sb.get(`${N}/camera/wirelessProfiles/${eap.id}`)).body, eap);
+    assert.match(await errorOf(sb.post(`${N}/camera/wirelessProfiles`, { name: 'x' })), /'ssid' is required/);
+    assert.match(await errorOf(sb.post(`${N}/camera/wirelessProfiles`, { name: 'x', ssid: { psk: 'secret123' } })), /'ssid.name' is required/);
+    assert.match(await errorOf(sb.post(`${N}/camera/wirelessProfiles`, { name: 'x', ssid: { name: 'n' } })), /'ssid.psk' is required/);
+    assert.match(await errorOf(sb.post(`${N}/camera/wirelessProfiles`, { name: 'x', ssid: { name: 'n', psk: 'short' } })), /8 and 63/);
+    assert.match(await errorOf(sb.post(`${N}/camera/wirelessProfiles`, { name: 'x', ssid: { name: 'n', authMode: 'psk', encryptionMode: 'wpa-eap', psk: 'secret123' } })), /must be 'wpa'/);
+    assert.match(await errorOf(sb.post(`${N}/camera/wirelessProfiles`, { name: 'x', ssid: { name: 'n', authMode: '8021x-radius' }, identity: { username: 'u' } })), /identity.password/);
+    assert.match(await errorOf(sb.post(`${N}/camera/wirelessProfiles`, { name: 'Cams', ssid: { name: 'n', psk: 'secret123' } })), /already exists/);
+    // Switching to 802.1X needs an identity; the old key comes back with PSK.
+    assert.match(await errorOf(sb.put(`${N}/camera/wirelessProfiles/${p.id}`, { ssid: { authMode: '8021x-radius' } })), /identity.username/);
+    const u = (await sb.put(`${N}/camera/wirelessProfiles/${p.id}`, { ssid: { authMode: '8021x-radius' }, identity: { username: 'a', password: 'b' } })).body;
+    assert.deepEqual([u.ssid.name, u.ssid.psk, u.identity], ['cam-net', undefined, { username: 'a' }]);
+    assert.equal((await sb.put(`${N}/camera/wirelessProfiles/${p.id}`, { ssid: { encryptionMode: 'wpa' } })).body.ssid.psk, 'secret123');
+    assert.match(await errorOf(sb.get(`/networks/${austin.id}/camera/wirelessProfiles`)), /'camera'/);
+    assert.equal((await sb.get(`${N}/camera/wirelessProfiles/123`)).status, 404);
+  });
+
+  test('cameras take wireless profiles in three slots, and deleted ones drop out', async () => {
+    fresh();
+    const empty = { primary: null, secondary: null, backup: null };
+    assert.deepEqual((await sb.get(`${C}/wirelessProfiles`)).body, { ids: empty });
+    const [a, b] = [await newWireless(), await newWireless({ name: 'Backup' })];
+    const r = await sb.put(`${C}/wirelessProfiles`, { ids: { primary: a.id, backup: b.id } });
+    assert.deepEqual(r.body, { ids: { primary: a.id, secondary: null, backup: b.id } });
+    assert.deepEqual((await sb.get(`${C}/wirelessProfiles`)).body, r.body);
+    assert.equal((await sb.get(`${N}/camera/wirelessProfiles/${a.id}`)).body.appliedDeviceCount, 1);
+    assert.equal((await sb.put(`/devices/${hq.cameras[1].serial}/camera/wirelessProfiles`, { ids: { primary: a.id } })).status, 200);
+    assert.equal((await sb.get(`${N}/camera/wirelessProfiles/${a.id}`)).body.appliedDeviceCount, 2);
+    assert.match(await errorOf(sb.put(`${C}/wirelessProfiles`, { ids: { primary: a.id, secondary: a.id } })), /one slot/);
+    assert.match(await errorOf(sb.put(`${C}/wirelessProfiles`, { ids: { primary: '1' } })), /does not exist/);
+    assert.match(await errorOf(sb.put(`${C}/wirelessProfiles`, {})), /'ids' is required/);
+    assert.match(await errorOf(sb.get(`/devices/${hq.switches[0].serial}/camera/wirelessProfiles`)), /camera devices/);
+    // A profile from another network doesn't apply.
+    const reno = hq.org.networks.find((n) => n.name === 'Warehouse - Reno');
+    assert.match(await errorOf(sb.put(`/devices/${reno.cameras[0].serial}/camera/wirelessProfiles`, { ids: { primary: a.id } })), /does not exist/);
+    assert.equal((await sb.del(`${N}/camera/wirelessProfiles/${b.id}`)).status, 204);
+    assert.deepEqual((await sb.get(`${C}/wirelessProfiles`)).body, { ids: { primary: a.id, secondary: null, backup: null } });
+    // Leaving out a slot clears it.
+    assert.deepEqual((await sb.put(`${C}/wirelessProfiles`, { ids: {} })).body, { ids: empty });
+  });
+
+  test('camera wireless profiles go with the camera part of a split', async () => {
+    fresh();
+    const p = await newWireless();
+    await sb.put(`${C}/wirelessProfiles`, { ids: { primary: p.id } });
+    const parts = (await sb.post(`${N}/split`)).body.resultingNetworks;
+    const cams = parts.find((n) => n.productTypes[0] === 'camera');
+    const list = (await sb.get(`/networks/${cams.id}/camera/wirelessProfiles`)).body;
+    assert.deepEqual(list.map((x) => [x.id, x.appliedDeviceCount]), [[p.id, 1]]);
+    assert.equal((await sb.get(`${C}/wirelessProfiles`)).body.ids.primary, p.id);
+  });
+
+  test('camera permission scopes are a fixed list', async () => {
+    fresh();
+    const O = `/organizations/${hq.org.id}/camera`;
+    const list = (await sb.get(`${O}/permissions`)).body;
+    assert.deepEqual(list.map((s) => s.id), ['1', '2', '3', '4', '5']);
+    assert.deepEqual((await sb.get(`${O}/permissions/3`)).body, list[2]);
+    assert.equal((await sb.get(`${O}/permissions/9`)).status, 404);
+  });
+
+  test('camera roles check their scopes, devices and networks', async () => {
+    fresh();
+    const O = `/organizations/${hq.org.id}/camera/roles`;
+    const body = {
+      name: 'Guard',
+      appliedOnDevices: [{ tag: 'lobby', inNetworksWithId: hq.id.slice(2), permissionScopeId: '1' }, { id: cam.serial, permissionScopeId: '3' }],
+      appliedOnNetworks: [{ id: austin.id, permissionScopeId: '2' }, { tag: 'west', permissionScopeId: '4' }],
+      appliedOrgWide: [{ permissionScopeId: '5' }],
+    };
+    const r = await sb.post(O, body);
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.deepEqual(r.body.appliedOnDevices, [
+      { tag: 'lobby', id: '', permissionScopeId: '1', permissionScope: 'camera_video', permissionLevel: 'view_live' },
+      { tag: '', id: cam.serial, permissionScopeId: '3', permissionScope: 'camera_video', permissionLevel: 'view_and_export' },
+    ]);
+    assert.deepEqual(r.body.appliedOnNetworks.map((e) => [e.tag, e.id, e.permissionLevel]), [['', austin.id, 'view'], ['west', '', 'read_only']]);
+    assert.deepEqual(r.body.appliedOrgWide, [{ tag: '', permissionScopeId: '5', permissionScope: 'camera_settings', permissionLevel: 'full_access' }]);
+    const id = r.body.id;
+    assert.deepEqual((await sb.get(`${O}/${id}`)).body, r.body);
+    assert.deepEqual((await sb.get(O)).body, [r.body]);
+    assert.match(await errorOf(sb.post(O, { name: 'Guard' })), /already exists/);
+    assert.match(await errorOf(sb.post(O, { name: 'x', appliedOrgWide: [{ permissionScopeId: '9' }] })), /permission scope/);
+    assert.match(await errorOf(sb.post(O, { name: 'x', appliedOnDevices: [{ id: hq.switches[0].serial, permissionScopeId: '1' }] })), /serial of a camera/);
+    assert.match(await errorOf(sb.post(O, { name: 'x', appliedOnDevices: [{ permissionScopeId: '1' }] })), /either 'tag' or 'id'/);
+    assert.match(await errorOf(sb.post(O, { name: 'x', appliedOnDevices: [{ id: cam.serial, inNetworksWithTag: 'a', permissionScopeId: '1' }] })), /only applies to device tags/);
+    assert.match(await errorOf(sb.post(O, { name: 'x', appliedOnNetworks: [{ id: 'L_1', permissionScopeId: '1' }] })), /network in this organization/);
+    const u = (await sb.put(`${O}/${id}`, { name: 'Guard 2', appliedOrgWide: [] })).body;
+    assert.deepEqual([u.name, u.appliedOrgWide, u.appliedOnNetworks.length], ['Guard 2', [], 2]);
+    assert.equal((await sb.del(`${O}/${id}`)).status, 204);
+    assert.equal((await sb.get(`${O}/${id}`)).status, 404);
+  });
+
+  test('camera roles follow combined networks and removed cameras', async () => {
+    fresh();
+    const O = `/organizations/${hq.org.id}/camera/roles`;
+    const id = (await sb.post(O, { name: 'Guard', appliedOnDevices: [{ id: cam.serial, permissionScopeId: '1' }], appliedOnNetworks: [{ id: hq.id, permissionScopeId: '2' }] })).body.id;
+    const parts = (await sb.post(`${N}/split`)).body.resultingNetworks;
+    const main = parts.find((n) => n.productTypes[0] === 'appliance');
+    assert.equal((await sb.get(`${O}/${id}`)).body.appliedOnNetworks[0].id, main.id);
+    const camNet = parts.find((n) => n.productTypes[0] === 'camera');
+    assert.equal((await sb.post(`/networks/${camNet.id}/devices/remove`, { serial: cam.serial })).status, 204);
+    assert.deepEqual((await sb.get(`${O}/${id}`)).body.appliedOnDevices, []);
+    assert.equal((await sb.del(`/networks/${main.id}`)).status, 204);
+    assert.deepEqual((await sb.get(`${O}/${id}`)).body.appliedOnNetworks, []);
+  });
 });

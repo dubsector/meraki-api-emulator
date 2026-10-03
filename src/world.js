@@ -726,7 +726,7 @@ function repointWireless(org, fromId, toId) {
 }
 
 // Points what names a network at its new ID, or drops it when toId is null:
-// admin privileges, network groups and spokes' VPN hubs.
+// admin privileges, network groups, camera roles and spokes' VPN hubs.
 function repoint(org, fromId, toId) {
   const swap = (list, idOf, make) => {
     const i = list.findIndex((x) => idOf(x) === fromId);
@@ -739,6 +739,10 @@ function repoint(org, fromId, toId) {
   for (const g of org.networkGroups?.list ?? []) g.networkIds = swap(g.networkIds, (id) => id, () => toId);
   for (const p of org.vpnPeers?.list ?? []) if (p.networkIds) p.networkIds = swap(p.networkIds, (id) => id, () => toId);
   repointWireless(org, fromId, toId);
+  for (const r of org.cameraRoles?.list ?? []) {
+    r.appliedOnNetworks = r.appliedOnNetworks.flatMap((e) => (e.networkId !== fromId ? [e] : toId ? [Object.assign(e, { networkId: toId })] : []));
+    r.appliedOnDevices = r.appliedOnDevices.flatMap((e) => (e.inNetworksWithId !== fromId ? [e] : toId ? [Object.assign(e, { inNetworksWithId: toId })] : []));
+  }
   for (const n of org.networks) {
     const s2s = n.config?.siteToSite;
     if (!s2s?.hubs.length) continue;
@@ -774,7 +778,7 @@ export function moveNetwork(world, net, dest) {
 
 // Settings kept on a network outside its config, since they name its own
 // devices or items. They go with the product they belong to.
-const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless', wirelessPortProfiles: 'wireless' };
+const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', cameraWirelessProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless', wirelessPortProfiles: 'wireless' };
 
 // MQTT brokers serve cameras, sensors and wireless MQTT alike, which name them
 // by ID: a combined network takes every network's brokers and each part of a
