@@ -3,13 +3,13 @@
 
 import { APPS } from '../catalog.js';
 import { GUEST_POLICY_ID, configOf, stored } from '../config.js';
-import { arrayParam, badRequest, intParam, notFound, paginate, timeWindow } from '../http.js';
+import { arrayParam, badRequest, boolParam, intParam, notFound, paginate, timeWindow } from '../http.js';
 import { derive, hashStr, unit } from '../rng.js';
 import { START, presenceIn, sessions } from '../sim/presence.js';
 import { clientApps } from '../sim/traffic.js';
 import { clientUsage } from '../sim/usage.js';
 import { DAY, iso, isoMicro } from '../time.js';
-import { findClient, netOf } from './common.js';
+import { byId, findClient, netOf, orgOf } from './common.js';
 
 const HISTORY_DAYS = 30;
 const CLICK_THROUGH = 'Click-through splash page';
@@ -203,6 +203,92 @@ function updateSplash(ctx) {
   return splashJson(net, c, ctx.now);
 }
 
+// ── Policies by client ──
+
+// One entry per place a client's policy applies: the whole network (ssid null)
+// or one SSID. Normal clients and gone group policies have none.
+function entryOf(net, devicePolicy, groupPolicyId, ssid) {
+  if (devicePolicy === 'Whitelisted' || devicePolicy === 'Allowed') return { type: 'Allowed', name: 'Allowed', ssid };
+  if (devicePolicy === 'Blocked') return { type: 'Blocked', name: 'Blocked', ssid };
+  if (devicePolicy !== 'Group policy') return null;
+  const g = configOf(net).groupPolicies.find((x) => x.groupPolicyId === groupPolicyId);
+  return g ? { type: 'Group', name: g.name, id: g.groupPolicyId, ssid } : null;
+}
+
+// The Guest policy a guest SSID client gets by default applies on that SSID.
+function assignedTo(net, mac, client) {
+  const set = policies(net)[mac];
+  const p = set ?? defaultPolicy(net, client);
+  if (p.policiesBySsid) return p.policiesBySsid.map((s) => entryOf(net, s.devicePolicy, s.groupPolicyId, s.ssidNumber)).filter(Boolean);
+  const e = entryOf(net, p.devicePolicy, p.groupPolicyId, set ? null : (client?.ssid?.number ?? null));
+  return e ? [e] : [];
+}
+
+// Clients seen in the window that have a policy, plus provisioned MACs the
+// network hasn't seen when undetected is set, in client ID order.
+function clientsWithPolicies(net, t0, t1, undetected) {
+  const rows = [];
+  for (const c of net.clients) {
+    if (!presenceIn(c, t0, t1)) continue;
+    const assigned = assignedTo(net, c.mac, c);
+    if (assigned.length) rows.push({ net, clientId: c.id, mac: c.mac, name: c.description ?? c.mac, assigned });
+  }
+  if (undetected) {
+    for (const p of Object.values(provisioned(net))) {
+      if (net.clients.some((c) => c.mac === p.mac)) continue;
+      const assigned = assignedTo(net, p.mac, null);
+      if (assigned.length) rows.push({ net, clientId: p.clientId, mac: p.mac, name: p.name ?? p.mac, assigned });
+    }
+  }
+  return rows.sort((a, b) => (a.clientId < b.clientId ? -1 : a.clientId > b.clientId ? 1 : 0));
+}
+
+const BY_CLIENT_PAGE = { def: 50, max: 1000 };
+
+function networkByClient(ctx) {
+  const net = netOf(ctx);
+  const { t0, t1 } = clientsWindow(ctx);
+  const rows = clientsWithPolicies(net, t0, t1, false);
+  return paginate(ctx, rows, (r) => r.clientId, BY_CLIENT_PAGE).map((r) => ({
+    name: r.name,
+    clientId: r.clientId,
+    assigned: r.assigned.map((e) => ({
+      name: e.name,
+      type: e.ssid == null ? 'network' : 'ssid',
+      ...(e.id && { groupPolicyId: e.id }),
+      ...(e.ssid != null && { ssid: [{ ssidNumber: e.ssid }] }),
+    })),
+  }));
+}
+
+// A network-wide policy applies on the appliance and every SSID.
+function limitTo(net, e) {
+  if (e.ssid != null) return [{ appliance: false, ssids: [{ number: e.ssid }] }];
+  return [{ appliance: net.productTypes.includes('appliance'), ssids: net.ssids.map((s) => ({ number: s.number })) }];
+}
+
+function orgByClient(ctx) {
+  const org = orgOf(ctx);
+  const ids = [...new Set(arrayParam(ctx.query, 'networkIds'))];
+  if (!ids.length) throw badRequest("'networkIds' is required");
+  if (ids.length > 30) throw badRequest("'networkIds' can hold at most 30 network IDs");
+  const nets = ids.map((id) => {
+    const net = org.networks.find((n) => n.id === id);
+    if (!net) throw badRequest(`Network ${id} does not exist in this organization`);
+    return net;
+  });
+  const { t0, t1 } = clientsWindow(ctx);
+  const undetected = boolParam(ctx.query, 'includeUndetectedClients');
+  const rows = nets.sort(byId).flatMap((net) => clientsWithPolicies(net, t0, t1, undetected));
+  return paginate(ctx, rows, (r) => `${r.net.id}/${r.clientId}`, BY_CLIENT_PAGE).map((r) => ({
+    name: r.name,
+    clientId: r.clientId,
+    mac: r.mac,
+    networkId: r.net.id,
+    assigned: r.assigned.map((e) => ({ name: e.name, type: e.type, ...(e.id && { id: e.id }), limitTo: limitTo(r.net, e) })),
+  }));
+}
+
 const guestClient = (world) => world.orgs[0].networks[0].clients.find((c) => c.kindName === 'guest').id;
 const someClients = (world) => `clients=${world.orgs[0].networks[0].clients.slice(0, 3).map((c) => c.id).join(',')}`;
 
@@ -299,4 +385,11 @@ export default [
     handler: (ctx) => splashJson(netOf(ctx), clientOf(ctx), ctx.now),
   },
   { op: 'updateNetworkClientSplashAuthorizationStatus', method: 'PUT', path: '/networks/{networkId}/clients/{clientId}/splashAuthorizationStatus', handler: updateSplash },
+  { op: 'getNetworkPoliciesByClient', path: '/networks/{networkId}/policies/byClient', handler: networkByClient },
+  {
+    op: 'getOrganizationPoliciesAssignmentsByClient',
+    path: '/organizations/{organizationId}/policies/assignments/byClient',
+    sample: { query: (world) => `networkIds[]=${world.orgs[0].networks[0].id}` },
+    handler: orgByClient,
+  },
 ];

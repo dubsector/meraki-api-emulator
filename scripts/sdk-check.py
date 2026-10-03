@@ -1637,7 +1637,49 @@ def adaptivepolicy():
         check("deleteOrganizationAdaptivePolicyPolicy", o.getOrganizationAdaptivePolicyPolicies(org) == [])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy]
+@scenario
+def globalfirewall():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o = d.organizations
+        org = acme(o.getOrganizations())
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        net = nets["HQ - San Francisco"]
+
+        mine = d.networks.getNetworkPoliciesByClient(net, total_pages="all", perPage=3)
+        ref = [d.networks.getNetworkClientPolicy(net, c["clientId"]) for c in mine]
+        check("getNetworkPoliciesByClient pages and agrees with getNetworkClientPolicy", len(mine) > 3 and all(p["groupPolicyId"] == c["assigned"][0]["groupPolicyId"] for p, c in zip(ref, mine)), mine[:2])
+        rows = o.getOrganizationPoliciesAssignmentsByClient(org, [net], total_pages="all", perPage=3)
+        check("getOrganizationPoliciesAssignmentsByClient lists the same clients", [r["clientId"] for r in rows] == [c["clientId"] for c in mine] and rows[0]["networkId"] == net, rows[:2])
+        cats = o.getOrganizationPoliciesGlobalFirewallApplicationCategories(org)
+        check("getOrganizationPoliciesGlobalFirewallApplicationCategories", cats[0]["applications"][0]["id"] == "meraki:layer7/application/4", cats[0])
+
+        rs = o.createOrganizationPoliciesGlobalFirewallRuleset(org, "Block Social Media", description="Social")
+        rs = o.updateOrganizationPoliciesGlobalFirewallRuleset(org, rs["rulesetId"], description="No social")
+        check("createOrganizationPoliciesGlobalFirewallRuleset, then update and list it", o.getOrganizationPoliciesGlobalFirewallRulesets(org, total_pages="all")["items"] == [rs], rs)
+        obj = o.createOrganizationPolicyObject(org, "Web", "network", "cidr", cidr="10.1.0.0/24")
+        anyb = {"matchCriteria": ["any"]}
+        made = []
+        for i in range(4):
+            src = {"matchCriteria": ["policyObjects"], "criteria": {"policyObjects": [{"id": obj["id"]}]}}
+            dst = {"matchCriteria": ["applications"], "criteria": {"applications": [{"id": "meraki:layer7/application/5"}]}}
+            made.append(o.createOrganizationPoliciesGlobalFirewallRulesetsRule(org, f"Rule {i}", rs["rulesetId"], "deny", src, dst))
+        check("createOrganizationPoliciesGlobalFirewallRulesetsRule", made[0]["destinations"]["criteria"]["applications"] == [{"id": "meraki:layer7/application/5", "name": "Advertising.com"}] and [r["priority"] for r in made] == [1, 2, 3, 4], made[0])
+        up = o.updateOrganizationPoliciesGlobalFirewallRulesetsRule(org, made[3]["ruleId"], priority=1, sources=anyb, enabled=False)
+        listed = o.getOrganizationPoliciesGlobalFirewallRulesetsRules(org, total_pages="all", perPage=3)["items"]
+        check("updateOrganizationPoliciesGlobalFirewallRulesetsRule reorders, getOrganizationPoliciesGlobalFirewallRulesetsRules pages", [r["name"] for r in listed] == ["Rule 3", "Rule 0", "Rule 1", "Rule 2"] and listed[0] == up, [r["name"] for r in listed])
+        try:
+            o.deleteOrganizationPolicyObject(org, obj["id"])
+            check("a policy object a firewall rule names can't be deleted", False)
+        except meraki.APIError as e:
+            check("a policy object a firewall rule names can't be deleted", e.status == 400, e.message)
+        o.deleteOrganizationPoliciesGlobalFirewallRulesetsRule(org, made[0]["ruleId"])
+        check("deleteOrganizationPoliciesGlobalFirewallRulesetsRule", len(o.getOrganizationPoliciesGlobalFirewallRulesetsRules(org, total_pages="all")["items"]) == 3)
+        o.deleteOrganizationPoliciesGlobalFirewallRuleset(org, rs["rulesetId"])
+        check("deleteOrganizationPoliciesGlobalFirewallRuleset drops its rules", o.getOrganizationPoliciesGlobalFirewallRulesets(org)["items"] == [] and o.getOrganizationPoliciesGlobalFirewallRulesetsRules(org)["items"] == [])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
