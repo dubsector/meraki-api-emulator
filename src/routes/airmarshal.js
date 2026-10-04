@@ -6,12 +6,12 @@ import { badRequest, paginateItems, timeWindow } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { lastSighting, neighborsOf } from '../sim/neighbors.js';
 import { DAY } from '../time.js';
+import { isMac } from '../validate.js';
 import { byId, collection } from './common.js';
 import { wirelessNet, wirelessNets } from './wireless.js';
 
 const RULE_TYPES = ['alert', 'allow', 'block'];
 const MATCH_TYPES = ['bssid', 'contains', 'exact', 'wildcard'];
-const MAC_RE = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i;
 
 function airMarshalOf(net) {
   return stored(net, 'wirelessAirMarshal', () => ({ defaultPolicy: 'block', rules: { created: 0, list: [] } }));
@@ -30,7 +30,7 @@ function checkRule(ctx, net, b, self) {
   const match = { ...self?.match, ...(b.match ?? {}) };
   if (!MATCH_TYPES.includes(match.type)) throw badRequest(`'match.type' must be one of: ${MATCH_TYPES.join(', ')}`);
   if (typeof match.string !== 'string' || !match.string.trim()) throw badRequest("'match.string' must not be empty");
-  if (match.type === 'bssid' && !MAC_RE.test(match.string)) throw badRequest("'match.string' must be a BSSID like 00:11:22:33:44:55 when 'match.type' is 'bssid'");
+  if (match.type === 'bssid' && !isMac(match.string)) throw badRequest("'match.string' must be a BSSID like 00:11:22:33:44:55 when 'match.type' is 'bssid'");
   if (match.type === 'bssid') match.string = match.string.toLowerCase();
   const rules = airMarshalOf(net).rules.list;
   if (rules.some((r) => r !== self && r.match.type === match.type && r.match.string === match.string)) throw badRequest('A rule with this match already exists in this network');

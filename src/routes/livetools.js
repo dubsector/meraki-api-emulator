@@ -12,7 +12,7 @@ import { activeUplink, isDown } from '../sim/outages.js';
 import { isOnline } from '../sim/presence.js';
 import { isSecureRouter, routingEntries } from '../sim/router.js';
 import { isoMicro } from '../time.js';
-import { ipInCidr, parseCidr, parseIp } from '../validate.js';
+import { ipInCidr, isMac, parseCidr, parseIp } from '../validate.js';
 import { callbacksOf, newCallback, sendCallback } from '../webhooks.js';
 import { devOf, round } from './common.js';
 import { multicastState } from './routing.js';
@@ -21,7 +21,6 @@ import { checkCyclePorts, peerConnected, portConfig, portLoad, portSpeed, portSt
 const QUEUED = 1;
 const MAX_JOBS = 100;
 const UNREACHABLE = 'The device is unreachable.';
-const MAC = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i;
 const FQDN = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/i;
 const PRIVATE = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|f[cd]|fe80)/i;
 // Watts a switch draws before PoE, and its PoE budget. Both are educated guesses.
@@ -348,7 +347,7 @@ const TOOLS = {
     seconds: 3,
     request: (dev, b) => {
       if (b.mac == null) return {};
-      if (!MAC.test(b.mac)) throw badRequest("'mac' must be a colon-delimited six-octet MAC address, like 00:11:22:a0:b1:c2");
+      if (!isMac(b.mac)) throw badRequest("'mac' must be a colon-delimited six-octet MAC address, like 00:11:22:a0:b1:c2");
       return { mac: b.mac };
     },
     result: (dev, job, t, ok) => (ok ? { entries: macEntries(dev, t, job.request.mac) } : { error: UNREACHABLE }),
@@ -454,7 +453,7 @@ const TOOLS = {
     seconds: 1,
     request: (dev, b) => {
       if (b.vlanId < 1 || b.vlanId > 4094) throw badRequest("'vlanId' must be between 1 and 4094");
-      if (!MAC.test(b.mac)) throw badRequest("'mac' must be a colon-delimited six-octet MAC address");
+      if (!isMac(b.mac)) throw badRequest("'mac' must be a colon-delimited six-octet MAC address");
       if (!wakeOnLanVlans(dev).has(b.vlanId)) throw badRequest(`VLAN ${b.vlanId} does not exist on this device`);
       return { vlanId: b.vlanId, mac: b.mac };
     },

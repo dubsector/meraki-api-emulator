@@ -7,7 +7,7 @@ import { badRequest, intParam, notFound } from '../http.js';
 import { Rand, derive, hashStr } from '../rng.js';
 import { DAY, MIN, iso, parseTime } from '../time.js';
 import { isDown } from '../sim/outages.js';
-import { collection, devOf, netOf, requireModel, requireProduct } from './common.js';
+import { collection, devOf, netOf, productNet, requireModel } from './common.js';
 
 const DEV = '/devices/{serial}/camera';
 const PROFILES = '/networks/{networkId}/camera/qualityRetentionProfiles';
@@ -202,11 +202,7 @@ function clip(ctx) {
 const profilesOf = (net) => (net.cameraProfiles ??= { created: 0, list: [] });
 const brokersOf = (net) => (net.mqttBrokers ??= { created: 0, list: [] });
 
-function cameraNet(ctx) {
-  const net = netOf(ctx);
-  requireProduct(net, 'camera');
-  return net;
-}
+const cameraNet = (ctx) => productNet(ctx, 'camera');
 
 function schedulesOf(ctx, net) {
   const r = new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:cameraSchedules:${net.id}`));

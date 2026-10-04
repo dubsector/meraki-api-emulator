@@ -5,7 +5,7 @@
 import { configOf, stored } from '../config.js';
 import { badRequest, notFound } from '../http.js';
 import { inRange, isAddress, isIpv6, isPort, merge, parseIp } from '../validate.js';
-import { limit, netOf, newId, requireProduct } from './common.js';
+import { limit, newId, switchNet } from './common.js';
 import { CUSTOM_POLICY, portConfig } from './switch.js';
 
 const NET = '/networks/{networkId}/switch';
@@ -32,12 +32,6 @@ const DSCP_DEFAULTS = [
   { dscp: 46, cos: 5, title: 'EF' },
 ];
 const MISSING = { accessPolicyNumber: '999', qosRuleId: '578149602163689004', status: 404 };
-
-function switchNet(ctx) {
-  const net = netOf(ctx);
-  requireProduct(net, 'switch');
-  return net;
-}
 
 const isAny = (v) => v == null || /^any$/i.test(v);
 const vlanError = (at) => badRequest(`'${at}' must be a VLAN from 1 to 4094`);

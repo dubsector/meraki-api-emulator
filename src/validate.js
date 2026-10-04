@@ -146,6 +146,9 @@ export const isAddress = (v) => parseIp(v) != null || parseCidr(v) != null;
 const HOSTNAME = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/i;
 export const isHostname = (v) => HOSTNAME.test(v);
 
+const MAC = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i;
+export const isMac = (v) => MAC.test(v);
+
 // A port from 1 to 65535, or a range like 1-1024 when ranges are allowed.
 export function isPort(v, ranges = false) {
   const m = (ranges ? /^(\d{1,5})(?:-(\d{1,5}))?$/ : /^(\d{1,5})$/).exec(v);

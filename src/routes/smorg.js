@@ -9,7 +9,8 @@ import { arrayParam, badRequest, notFound, paginate, paginateItems } from '../ht
 import { Rand, hashStr } from '../rng.js';
 import { SCOPES, idOf, lastConnected, smOf } from '../sim/sm.js';
 import { DAY, iso } from '../time.js';
-import { collection, netOf, newId, orgOf, requireProduct } from './common.js';
+import { collection, newId, orgOf } from './common.js';
+import { smNet } from './sm.js';
 
 const isSm = (n) => n.productTypes.includes('systemsManager');
 const smNets = (org) => org.networks.filter(isSm);
@@ -215,12 +216,6 @@ function sentryByNetwork(ctx) {
 }
 
 // ── Trusted access ──
-
-function smNet(ctx) {
-  const net = netOf(ctx);
-  requireProduct(net, 'systemsManager');
-  return net;
-}
 
 const PAGE = { def: 100, min: 3, max: 1000 };
 

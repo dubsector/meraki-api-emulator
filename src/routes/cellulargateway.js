@@ -9,8 +9,8 @@ import { DEFAULT_DESTINATION, checkDestinations } from './firewall.js';
 import { isGateway, signalAt, signalType, uplinkState } from '../sim/cellular.js';
 import { lastReportedAt } from '../sim/outages.js';
 import { iso } from '../time.js';
-import { ipInCidr, isAddress, isPort, parseCidr, parseIp } from '../validate.js';
-import { bySerial, devOf, netOf, orgOf, requireProduct } from './common.js';
+import { ipInCidr, isAddress, isMac, isPort, parseCidr, parseIp } from '../validate.js';
+import { bySerial, devOf, orgOf, productNet } from './common.js';
 
 // Each MG takes the next subnet of its network's pool, in the order the MGs
 // joined; the pool's first subnet is held back, so the first MG gets
@@ -18,7 +18,6 @@ import { bySerial, devOf, netOf, orgOf, requireProduct } from './common.js';
 const DEFAULT_POOL = { cidr: '192.168.0.0/24', mask: 27 };
 const LEASE_TIMES = ['30 minutes', '1 hour', '4 hours', '12 hours', '1 day', '1 week'];
 const DNS_MODES = ['upstream_dns', 'google_dns', 'opendns', 'custom'];
-const MAC_RE = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i;
 const MAX_RULES = 100;
 
 function gatewayOf(ctx) {
@@ -104,7 +103,7 @@ function updateLan(ctx) {
     const macs = new Set();
     fixed = b.fixedIpAssignments.map((f, i) => {
       const host = lanHost(f.ip, `fixedIpAssignments[${i}].ip`, addr);
-      if (typeof f.mac !== 'string' || !MAC_RE.test(f.mac)) throw badRequest(`'fixedIpAssignments[${i}].mac' must be a MAC address like 00:11:22:33:44:55`);
+      if (typeof f.mac !== 'string' || !isMac(f.mac)) throw badRequest(`'fixedIpAssignments[${i}].mac' must be a MAC address like 00:11:22:33:44:55`);
       const mac = f.mac.toLowerCase();
       if (hosts.has(host)) throw badRequest(`${f.ip} is assigned twice`);
       if (macs.has(mac)) throw badRequest(`${mac} is assigned twice`);
@@ -163,11 +162,7 @@ function updatePortForwarding(ctx) {
   return { rules: rulesJson(dev) };
 }
 
-function gatewayNet(ctx) {
-  const net = netOf(ctx);
-  requireProduct(net, 'cellularGateway');
-  return net;
-}
+const gatewayNet = (ctx) => productNet(ctx, 'cellularGateway');
 
 const uplinkOf = (net) => configOf(net).cellularGatewayUplink ?? { bandwidthLimits: { limitUp: null, limitDown: null } };
 

@@ -4,8 +4,7 @@
 // drops out on read. Network IDs follow split and combine through repoint.
 
 import { badRequest, notFound } from '../http.js';
-import { Rand, hashStr } from '../rng.js';
-import { collection, orgOf } from './common.js';
+import { collection, countingId, orgOf } from './common.js';
 
 const PERMISSIONS = '/organizations/{organizationId}/camera/permissions';
 const ROLES = '/organizations/{organizationId}/camera/roles';
@@ -33,11 +32,7 @@ function permission(ctx) {
 
 const rolesOf = (org) => (org.cameraRoles ??= { created: 0, list: [] });
 
-// IDs count up from a seeded start, so creation order is ID order.
-function nextId(ctx, store, org) {
-  const start = new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:cameraRole:${org.id}`)).int(1000000, 8999999);
-  return String(start + ++store.created);
-}
+const nextId = (ctx, store, org) => countingId(ctx, store, 'cameraRole', org.id, 7);
 
 // Legacy numeric network IDs are the digits after the prefix.
 const networkIn = (org, id) => org.networks.find((n) => n.id === id || n.id.replace(/^[A-Z]_/, '') === id);

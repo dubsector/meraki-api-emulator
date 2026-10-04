@@ -5,16 +5,12 @@ import { arrayParam, badRequest, notFound, paginate } from '../http.js';
 import { hashStr, unit } from '../rng.js';
 import { KINDS, LOOKBACK, SCOPES, cellularRows, desktopLogRows, idOf, inScope, keepAccessRows, lastConnected, ownerOf, performanceRows, profilesFor, sessions, smOf } from '../sim/sm.js';
 import { HOUR, iso } from '../time.js';
-import { collection, netOf, newId, requireProduct } from './common.js';
+import { collection, newId, productNet } from './common.js';
 
 const DEFAULT_FIELDS = ['id', 'name', 'tags', 'ssid', 'wifiMac', 'osName', 'systemModel', 'uuid', 'serialNumber', 'serial', 'ip', 'notes'];
 const PAGE = { def: 1000, min: 3, max: 1000 };
 
-function smNet(ctx) {
-  const net = netOf(ctx);
-  requireProduct(net, 'systemsManager');
-  return net;
-}
+export const smNet = (ctx) => productNet(ctx, 'systemsManager');
 
 function deviceOf(ctx) {
   const net = smNet(ctx);

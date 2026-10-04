@@ -7,7 +7,7 @@ import { configOf, stored } from '../config.js';
 import { badRequest } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { inRange, ipInCidr, parseIp } from '../validate.js';
-import { collection, devOf, limit, netOf, orgOf, requireModel, requireProduct } from './common.js';
+import { collection, devOf, limit, orgOf, requireModel, switchNet } from './common.js';
 import { checkEntries, liveEntries, multicastOf, seriesOf, stacksOf } from './routing.js';
 import { CUSTOM_POLICY, boundProfile, portConfig } from './switch.js';
 
@@ -22,12 +22,6 @@ const MTU_MAX = 9578;
 const PROTOCOLS = ['radius', 'snmp', 'syslog'];
 const TRAFFIC_TYPES = ['broadcast', 'multicast', 'unknownUnicast'];
 const THRESHOLDS = { broadcast: 'broadcastThreshold', multicast: 'multicastThreshold', unknownUnicast: 'unknownUnicastThreshold' };
-
-function switchNet(ctx) {
-  const net = netOf(ctx);
-  requireProduct(net, 'switch');
-  return net;
-}
 
 const switchIn = (net, serial) => net.switches.find((d) => d.serial === serial);
 

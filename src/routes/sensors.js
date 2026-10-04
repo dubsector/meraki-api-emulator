@@ -9,7 +9,7 @@ import { Rand, hashStr, unit } from '../rng.js';
 import { eachOutage, isDown } from '../sim/outages.js';
 import { latestRaw, metricsOf, rawReadings, readingJson, sensorsOf } from '../sim/sensors.js';
 import { DAY, HOUR, isoMicro, iso } from '../time.js';
-import { bySerial, collection, devOf, netOf, orgOf, requireModel, requireProduct } from './common.js';
+import { bySerial, collection, devOf, netOf, orgOf, productNet, requireModel } from './common.js';
 
 const PROFILES = '/networks/{networkId}/sensor/alerts/profiles';
 const MAX_PROFILES = 100;
@@ -30,11 +30,7 @@ const tsOf = (t) => isoMicro(t);
 const netRef = (net) => ({ id: net.id, name: net.name });
 const alive = (world, net) => (d) => world.deviceBySerial.get(d.serial) === d && d.net === net;
 
-function sensorNet(ctx) {
-  const net = netOf(ctx);
-  requireProduct(net, 'sensor');
-  return net;
-}
+const sensorNet = (ctx) => productNet(ctx, 'sensor');
 
 function sensorDev(ctx) {
   const dev = devOf(ctx);

@@ -6,7 +6,7 @@
 import { stored } from '../config.js';
 import { badRequest, notFound } from '../http.js';
 import { inRange, ipInCidr, parseCidr, parseIp } from '../validate.js';
-import { devOf, limit, netOf, newId, requireModel, requireProduct } from './common.js';
+import { devOf, limit, newId, requireModel, switchNet } from './common.js';
 import { warmSparePair } from './switchsettings.js';
 
 const DEV = '/devices/{serial}/switch/routing';
@@ -276,12 +276,6 @@ const BACKBONE = { areaId: '0', areaName: 'Backbone', areaType: 'normal' };
 function ospfDefaults() {
   const base = { enabled: false, helloTimerInSeconds: 10, deadTimerInSeconds: 40, areas: [{ ...BACKBONE }] };
   return { ...base, v3: structuredClone(base), md5AuthenticationEnabled: false, md5AuthenticationKey: null };
-}
-
-function switchNet(ctx) {
-  const net = netOf(ctx);
-  requireProduct(net, 'switch');
-  return net;
 }
 
 function ospfNet(ctx) {
