@@ -29,10 +29,10 @@ curl -H 'X-Cisco-Meraki-API-Key: anything' http://localhost:8765/api/v1/organiza
 With Docker:
 
 ```sh
-docker run --rm -p 8765:8765 ghcr.io/dubsector/meraki-api-emulator:0.3
+docker run --rm -p 8765:8765 ghcr.io/dubsector/meraki-api-emulator:0.4
 ```
 
-`-p 8765:8765` publishes the port on every interface of your machine. Use `-p 127.0.0.1:8765:8765` to keep it local. Pin `0.3` or an exact version in tests, since a new minor version can change responses while the version starts with `0.`. [Docker](https://github.com/dubsector/meraki-api-emulator/wiki/Docker) on the wiki covers options, other ports, the tags and Docker Compose.
+`-p 8765:8765` publishes the port on every interface of your machine. Use `-p 127.0.0.1:8765:8765` to keep it local. Pin `0.4` or an exact version in tests, since a new minor version can change responses while the version starts with `0.`. [Docker](https://github.com/dubsector/meraki-api-emulator/wiki/Docker) on the wiki covers options, other ports, the tags and Docker Compose.
 
 ## Pointing a client at it
 
