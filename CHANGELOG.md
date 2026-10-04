@@ -2,6 +2,28 @@
 
 Versions follow [semantic versioning](https://semver.org/). While the version starts with `0.`, a new minor version can change responses, IDs or defaults, and a patch version only fixes bugs.
 
+## 0.5.0
+
+The emulator now answers 991 operations (530 reads and 461 writes), up from 888. That is every operation in version 1.74.0 of the Meraki OpenAPI spec except the 7 it marks deprecated. [ENDPOINTS.md](ENDPOINTS.md) lists them all.
+
+- Acme Test Lab gets five more networks: Lab - Systems Manager with 13 enrolled devices, their owners and profiles, Lab - Calgary with two CW9800H1 campus gateways in one cluster, Lab - Halifax with a pair of C9800-40 wireless LAN controllers and six Catalyst APs, and Lab - Winnipeg with a C8455-G2-MX Secure Router. Acme Corporation's answers don't change.
+- Systems Manager: devices with their certificates, connectivity, logs, profiles, restrictions, software and histories, owners, profiles, device actions (check in, lock, reboot, shutdown, wipe, tags, move, app installs and unenrolling), activation lock bypass attempts and target groups.
+- Systems Manager organization settings: limited access roles, the APNS certificate, VPP accounts, Sentry policies, trusted access configs and user access devices, plus PII lookups and requests.
+- Campus gateways: clusters, provisioning with failover targets, SSID tunneling and mDNS, tunnel encryption, connections and client usage.
+- Wireless LAN controllers: overviews, AP connections, availability changes, clients, layer 2 and layer 3 interfaces with their usage and packet counters, redundancy and failover history, and CPU utilization.
+- Secure Routers: routing table lookups and summaries, transceiver readings and interface packet counters.
+- Subscription licensing: entitlements, subscriptions, claims, claim key validation, binding networks and compliance, plus order previews and order claims.
+- Long history reads and request routing are faster. The 31 day network health channel utilization read went from 441 to 348 ms, and a GET of a network SSID takes about a quarter of the time it did.
+
+Changes to existing responses:
+
+- Acme Test Lab's organization views list the new networks, devices and licenses: networks, devices, statuses, availabilities, inventory, licenses, firmware upgrades, summaries and the appliance and wireless views. The licenses overview counts the enrolled SM devices, and Insight thresholds and Secure Access eligible networks include Lab - Winnipeg.
+- The wireless SSID usage views, organization wireless usage reads and the wireless device overview name the campus gateway clusters an SSID tunnels through.
+- An SSID in `Campus Gateway` mode needs a cluster of the organization, and every SSID of a network tunnels through clusters of one network.
+- Network copies and organization clones take an SM network's profiles, target groups and trusted access configs, and campus gateway clusters without their gateways, with the copy's SSIDs pointing at the copied clusters.
+- Moving a network to another organization takes its PII requests along, and is refused while it is named by a Sentry policy or linked to another network's campus gateway cluster.
+- Ping and ping device run on campus gateways. Wireless LAN controllers refuse them.
+
 ## 0.4.0
 
 The emulator now answers 888 operations (463 reads and 425 writes), up from 800. [ENDPOINTS.md](ENDPOINTS.md) lists them all.
