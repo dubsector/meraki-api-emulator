@@ -79,6 +79,41 @@ export function tunnelsFor(ap, cnet, cluster, now) {
   });
 }
 
+// A new 13 digit cluster ID, unique in the organization.
+export function newClusterId(world, net, store) {
+  store.created++;
+  const r = new Rand(hashStr(`meraki-api-emulator:${world.seed}:campusCluster:${net.id}:${store.created}`));
+  let id;
+  do id = r.digits(13);
+  while (id[0] === '0' || clusterIn(net.org, id));
+  return id;
+}
+
+// A network copy, or a cloned organization's copy of a network, takes each
+// cluster's settings under a new ID and without gateways, since the copy has
+// none. `ids` collects old ID to new, for remapClusters.
+export function copyCampus(world, from, net, ids) {
+  if (!clustersOf(from).length || !net.productTypes.includes('campusGateway')) return;
+  const store = (net.campusGatewayClusters = { created: 0, list: [] });
+  for (const { devices, ...c } of clustersOf(from)) {
+    const copy = { ...structuredClone(c), clusterId: newClusterId(world, net, store), devices: [] };
+    ids.set(c.clusterId, copy.clusterId);
+    store.list.push(copy);
+  }
+}
+
+// Points a copy's SSIDs, tunnel settings and failover targets at the copied
+// clusters. A same-org copy's links to other networks' clusters stay.
+export function remapClusters(net, ids) {
+  if (!ids.size) return;
+  const to = (id) => ids.get(String(id)) ?? id;
+  const config = configOf(net);
+  for (const s of config.ssids ?? []) if (ssidCluster(s) != null) s.campusGateway.cluster.id = to(s.campusGateway.cluster.id);
+  const cg = config.wirelessCampusGateway;
+  for (const x of [...(cg?.encryption ?? []), ...(cg?.mdns ?? [])]) x.clusterId = to(x.clusterId);
+  for (const c of clustersOf(net)) for (const t of c.failover.targets) t.clusterId = to(t.clusterId);
+}
+
 // Lab networks with a cluster start with both gateways in it, and every SSID
 // tunneling through it. The uplink is static on the management VLAN, and the
 // tunnel reuses it.

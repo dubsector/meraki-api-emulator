@@ -2533,9 +2533,11 @@ def securerouter():
             check("createDeviceLiveToolsRoutingTableSummary refuses an MX", e.status == 400, e.message)
 
 
-# The default seed's claim key and order claim ID; nothing in the API lists them.
-CLAIM_KEY = "S2Z4-KQZD-EDZH"
-ORDER_CLAIM_ID = "LNCKQZV3J8Z5"
+# The default seed's claim key and order claim ID. Nothing in the API lists
+# them, so they come from the world the emulator builds.
+def seeded_claims():
+    js = "const { buildWorld } = await import('./src/world.js'); const u = buildWorld().unclaimed; console.log(JSON.stringify([u.subscriptions.find((s) => s.name === 'Lab networking').claimKey, u.orders[0].claimId]))"
+    return json.loads(subprocess.check_output(["node", "--input-type=module", "-e", js], cwd=REPO, text=True))
 
 
 @scenario
@@ -2543,18 +2545,19 @@ def subscriptions():
     with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
         d = dashboard(emu)
         o, lic = d.organizations, d.licensing
+        claim_key, order_claim_id = seeded_claims()
         ents = lic.getAdministeredLicensingSubscriptionEntitlements(skus=["LIC-MR-A", "LIC-MT-E"])
         check("getAdministeredLicensingSubscriptionEntitlements", [e["sku"] for e in ents] == ["LIC-MR-A", "LIC-MT-E"], ents)
-        found = lic.validateAdministeredLicensingSubscriptionSubscriptionsClaimKey(CLAIM_KEY)
+        found = lic.validateAdministeredLicensingSubscriptionSubscriptionsClaimKey(claim_key)
         check("validateAdministeredLicensingSubscriptionSubscriptionsClaimKey", found["name"] == "Lab networking" and found["counts"]["organizations"] == 0, found)
         org = o.createOrganization("Subscriptions")["id"]
-        dry = lic.claimAdministeredLicensingSubscriptionSubscriptions(CLAIM_KEY, org, validate=True, name="Mine")
-        sub = lic.claimAdministeredLicensingSubscriptionSubscriptions(CLAIM_KEY, org, name="Mine")
+        dry = lic.claimAdministeredLicensingSubscriptionSubscriptions(claim_key, org, validate=True, name="Mine")
+        sub = lic.claimAdministeredLicensingSubscriptionSubscriptions(claim_key, org, name="Mine")
         check("claimAdministeredLicensingSubscriptionSubscriptions", dry["name"] == sub["name"] == "Mine" and o.getOrganization(org)["licensing"]["model"] == "subscription", sub)
 
-        preview = o.previewOrganizationInventoryOrders(org, ORDER_CLAIM_ID)
+        preview = o.previewOrganizationInventoryOrders(org, order_claim_id)
         check("previewOrganizationInventoryOrders", preview["resolution"]["claimableShippedDeviceCount"] == 2, preview)
-        claimed = o.claimOrganizationInventoryOrders(org, ORDER_CLAIM_ID)
+        claimed = o.claimOrganizationInventoryOrders(org, order_claim_id)
         check("claimOrganizationInventoryOrders", len(claimed["serials"]) == 2 and claimed["subscriptions"] == [], claimed)
         net = o.createOrganizationNetwork(org, "Site", ["wireless"])["id"]
         d.networks.claimNetworkDevices(net, serials=claimed["serials"])

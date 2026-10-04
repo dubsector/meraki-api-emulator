@@ -299,8 +299,9 @@ function wakeOnLanVlans(dev) {
 
 // ── The tools ──
 
-// Sensors have no IP address of their own, so they can't ping or be pinged.
-const IP_KINDS = ['appliance', 'switch', 'wireless', 'camera', 'cellularGateway'];
+// Sensors have no IP address of their own, so they can't ping or be pinged;
+// wireless LAN controllers are only monitored from the cloud.
+const IP_KINDS = ['appliance', 'switch', 'wireless', 'camera', 'cellularGateway', 'campusGateway'];
 
 // Each tool: the ID field in its answers, the path param of its GET, the
 // device kinds it runs on, how long it runs, its request fields and what

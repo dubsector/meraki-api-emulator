@@ -1,7 +1,7 @@
 import { configOf, exportedSubnets } from '../config.js';
 import { deviceJson, networkJson, networkRef, orgJson } from '../format.js';
 import { arrayParam, badRequest, hasTags, notFound, paginate, paginateItems, timeWindow } from '../http.js';
-import { clusterWan } from '../sim/campus.js';
+import { clusterWan, copyCampus, remapClusters } from '../sim/campus.js';
 import { isGateway, uplinkState } from '../sim/cellular.js';
 import { linkAverage, linkSample, pathLatency, vpnReachable } from '../sim/links.js';
 import { memorySamples, ramKb } from '../sim/memory.js';
@@ -35,6 +35,9 @@ function createNetwork(ctx) {
     net.config = dropSwitchSerials(JSON.parse(JSON.stringify(configOf(source)).replaceAll(source.id, net.id)));
     copyIot(source, net);
     copySm(source, net);
+    const ids = new Map();
+    copyCampus(ctx.world, source, net, ids);
+    remapClusters(net, ids);
   }
   return networkJson(net);
 }

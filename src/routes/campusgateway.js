@@ -7,7 +7,7 @@
 import { configOf, stored } from '../config.js';
 import { arrayParam, badRequest, boolParam, notFound, paginate, paginateItems, timeWindow } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
-import { clusterIn, clusterUrl, clustersOf, encrypted, isCampusGateway, membersOf, mdnsOf, orgClusters, ssidCluster, tunnelableFrom, tunneledClusters, tunnelsFor, tunnelsOf, uptime } from '../sim/campus.js';
+import { clusterIn, clusterUrl, clustersOf, encrypted, isCampusGateway, membersOf, mdnsOf, newClusterId, orgClusters, ssidCluster, tunnelableFrom, tunneledClusters, tunnelsFor, tunnelsOf, uptime } from '../sim/campus.js';
 import { deviceStatus } from '../sim/outages.js';
 import { isOnline, presenceIn } from '../sim/presence.js';
 import { clientUsage } from '../sim/usage.js';
@@ -179,6 +179,12 @@ function checkCluster(ctx, net, b, self) {
   return { name, uplinks, tunnels, nameservers: { addresses: [...addresses] }, portChannels, devices, notes: b.notes ?? self?.notes ?? '' };
 }
 
+// A gateway leaving its cluster takes its own static address, or its DHCP one.
+function release(dev) {
+  const own = dev.managementInterface?.wan1;
+  dev.lanIp = own?.usingStaticIp ? own.staticIp : (dev.dhcpLanIp ?? dev.lanIp);
+}
+
 function applyCluster(ctx, net, c, checked) {
   for (const p of checked.portChannels) {
     if (p.id) continue;
@@ -187,12 +193,9 @@ function applyCluster(ctx, net, c, checked) {
     do p.id = r.digits(13);
     while (checked.portChannels.some((x) => x !== p && x.id === p.id));
   }
-  // Members leaving go back to their DHCP address; a static uplink gives the
+  // Members leaving go back to their own address; a static uplink gives the
   // others theirs, which every device view then shows.
-  for (const m of membersOf(net, c)) {
-    const own = m.dev.managementInterface?.wan1;
-    if (!checked.devices.some((x) => x.dev === m.dev)) m.dev.lanIp = own?.usingStaticIp ? own.staticIp : (m.dev.dhcpLanIp ?? m.dev.lanIp);
-  }
+  for (const m of membersOf(net, c)) if (!checked.devices.some((x) => x.dev === m.dev)) release(m.dev);
   for (const m of checked.devices) {
     m.dev.dhcpLanIp ??= m.dev.lanIp;
     m.dev.lanIp = m.uplinks[0]?.addresses[0].address ?? m.dev.dhcpLanIp;
@@ -259,14 +262,7 @@ const clusters = collection({
   max: 16,
   required: ['name', 'uplinks', 'tunnels', 'nameservers', 'portChannels'],
   unique: false,
-  nextId: (ctx, store, net) => {
-    store.created++;
-    const r = new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:campusCluster:${net.id}:${store.created}`));
-    let id;
-    do id = r.digits(13);
-    while (id[0] === '0' || clusterIn(net.org, id));
-    return id;
-  },
+  nextId: (ctx, store, net) => newClusterId(ctx.world, net, store),
   check: (ctx, net, b, self) => checkCluster(ctx, net, b, self),
   blank: () => ({ devices: [], failover: { targets: [] } }),
   apply: (c, b, net, ctx, checked) => applyCluster(ctx, net, c, checked),
@@ -292,6 +288,17 @@ createRoute.handler = (ctx) => {
     if (fresh) delete net.campusGatewayClusters;
     throw e;
   }
+};
+
+// A deleted cluster's gateways leave it too.
+const deleteRoute = clusters.routes.find((r) => r.method === 'DELETE');
+const deleteHandler = deleteRoute.handler;
+deleteRoute.handler = (ctx) => {
+  const { parent, item } = clusters.find(ctx);
+  const members = membersOf(parent, item);
+  const out = deleteHandler(ctx);
+  for (const m of members) release(m.dev);
+  return out;
 };
 
 // The org call provisions an existing cluster: the same checks as the

@@ -932,6 +932,22 @@ function repointSm(org, fromId, toId, smId = toId, policyId = toId) {
 
 // Adaptive policy on a split network stays on for every part whose devices tag
 // traffic: switches, access points and appliances.
+// A subscription covers every device of a network it's bound to, so each part
+// of a split stays bound, and a combined network keeps the binding of the first
+// source that had one, since a network is bound to one subscription at a time.
+function splitSubscriptions(org, net, parts) {
+  for (const s of org.subscriptions ?? []) if (s.networkIds.includes(net.id)) s.networkIds = [...s.networkIds.filter((id) => id !== net.id), ...parts.map((p) => p.id)];
+}
+
+function combineSubscriptions(org, sources, target) {
+  const subs = org.subscriptions ?? [];
+  const kept = sources.map((n) => subs.find((s) => s.networkIds.includes(n.id))).find(Boolean);
+  for (const s of subs) {
+    s.networkIds = s.networkIds.filter((id) => !sources.some((n) => n.id === id));
+    if (s === kept) s.networkIds.push(target.id);
+  }
+}
+
 function splitAdaptivePolicy(org, net, parts) {
   const s = org.adaptivePolicySettings;
   const i = s ? s.enabledNetworks.indexOf(net.id) : -1;
@@ -1084,6 +1100,7 @@ export function combineNetworks(world, org, nets, { name, enrollmentString }) {
   const list = brokers.flatMap((b) => b.list).filter((x) => !seen.has(x.id) && seen.add(x.id));
   target.mqttBrokers = brokers.length ? { created: Math.max(...brokers.map((b) => b.created)), list } : undefined;
   if (enrollmentString !== undefined) target.enrollmentString = enrollmentString;
+  combineSubscriptions(org, sources, target);
 
   for (const n of sources) {
     if (n === target) continue;
@@ -1145,6 +1162,7 @@ export function splitNetwork(world, net) {
   if (wl) repointWireless(org, net.id, wl.id);
   if (cam) repointCamera(org, net.id, cam.id);
   splitAdaptivePolicy(org, net, parts);
+  splitSubscriptions(org, net, parts);
   repointSm(org, net.id, main.id, partFor('systemsManager')?.id ?? null, (wl ?? partFor('appliance'))?.id ?? null);
   repoint(org, net.id, main.id);
   dropCaches(org);
