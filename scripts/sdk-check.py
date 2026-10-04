@@ -2459,7 +2459,52 @@ def campusgateway():
         check("deleteNetworkCampusGatewayCluster", len(cg.getOrganizationCampusGatewayClusters(lab)["items"]) == 1)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase, integrations, smdevices, smactions, smorg, campusgateway]
+@scenario
+def wirelesscontroller():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o, wc = d.organizations, d.wirelessController
+        lab = {x["name"]: x["id"] for x in o.getOrganizations()}["Acme Test Lab"]
+        hfx = {x["name"]: x["id"] for x in o.getOrganizationNetworks(lab)}["Lab - Halifax"]
+
+        ov = wc.getOrganizationWirelessControllerOverviewByDevice(lab, total_pages="all", perPage=3)["items"]
+        roles = {x["redundancy"]["role"]: x for x in ov}
+        check("getOrganizationWirelessControllerOverviewByDevice", sorted(roles) == ["Active", "Standby hot"] and roles["Active"]["counts"]["connections"]["total"] == 6, ov)
+        active, standby = roles["Active"]["serial"], roles["Standby hot"]["serial"]
+        aps = d.wireless.getOrganizationWirelessDevicesWirelessControllersByDevice(lab, total_pages="all", perPage=3)["items"]
+        check(f"getOrganizationWirelessDevicesWirelessControllersByDevice ({len(aps)} APs)", len(aps) == 6 and all(a["controller"]["serial"] == active for a in aps), aps[:1])
+        conns = wc.getOrganizationWirelessControllerConnections(lab, total_pages="all", perPage=3, networkIds=[hfx])["items"]
+        check("getOrganizationWirelessControllerConnections", [c["serial"] for c in conns] == [a["serial"] for a in aps], conns[:1])
+        st = wc.getOrganizationWirelessControllerDevicesRedundancyStatuses(lab, total_pages="all", perPage=3)["items"]
+        check("getOrganizationWirelessControllerDevicesRedundancyStatuses", all(x["enabled"] and x["failover"]["counts"]["total"] == 1 for x in st), st)
+        fo = wc.getOrganizationWirelessControllerDevicesRedundancyFailoverHistory(lab, timespan=2678400)
+        page = fo[0] if isinstance(fo, list) else fo
+        check("getOrganizationWirelessControllerDevicesRedundancyFailoverHistory", [x["serial"] for x in page["items"]] == [active] and page["items"][0]["ts"] == st[0]["failover"]["last"]["ts"], fo)
+        av = wc.getOrganizationWirelessControllerAvailabilitiesChangeHistory(lab, total_pages="all", timespan=2678400)["items"]
+        check("getOrganizationWirelessControllerAvailabilitiesChangeHistory", [x["serial"] for x in av] == [active] and av[0]["changes"][0]["startTs"] == page["items"][0]["ts"], av)
+        hist = wc.getOrganizationWirelessControllerClientsOverviewHistoryByDeviceByInterval(lab, total_pages="all", perPage=3, timespan=3600, resolution=300)["items"]
+        last = next(x for x in hist if x["serial"] == active)["readings"][-1]["counts"]["byStatus"]["online"]
+        check("getOrganizationWirelessControllerClientsOverviewHistoryByDeviceByInterval", last == roles["Active"]["counts"]["clients"]["byStatus"]["online"], hist[:1])
+        l2 = wc.getOrganizationWirelessControllerDevicesInterfacesL2ByDevice(lab, total_pages="all", perPage=3)["items"]
+        check("getOrganizationWirelessControllerDevicesInterfacesL2ByDevice", all(len(x["interfaces"]) == 6 for x in l2), l2[:1])
+        l3 = wc.getOrganizationWirelessControllerDevicesInterfacesL3ByDevice(lab, total_pages="all", serials=[standby])["items"]
+        check("getOrganizationWirelessControllerDevicesInterfacesL3ByDevice", [i["name"] for i in l3[0]["interfaces"]] == ["Vlan1", "GigabitEthernet0"], l3)
+        ch2 = wc.getOrganizationWirelessControllerDevicesInterfacesL2StatusesChangeHistoryByDevice(lab, total_pages="all", timespan=2678400, serials=[standby])["items"]
+        check("getOrganizationWirelessControllerDevicesInterfacesL2StatusesChangeHistoryByDevice", len(ch2[0]["interfaces"]) == 3, ch2)
+        ch3 = wc.getOrganizationWirelessControllerDevicesInterfacesL3StatusesChangeHistoryByDevice(lab, total_pages="all", includeInterfacesWithoutChanges=True)["items"]
+        check("getOrganizationWirelessControllerDevicesInterfacesL3StatusesChangeHistoryByDevice", all(len(x["interfaces"]) == 2 for x in ch3), ch3)
+        u2 = wc.getOrganizationWirelessControllerDevicesInterfacesL2UsageHistoryByInterval(lab, total_pages="all", timespan=86400, serials=[active])["items"][0]["readings"]
+        u3 = wc.getOrganizationWirelessControllerDevicesInterfacesL3UsageHistoryByInterval(lab, total_pages="all", timespan=86400, serials=[active])["items"][0]["readings"]
+        check("getOrganizationWirelessControllerDevicesInterfacesL2/L3UsageHistoryByInterval", abs(u3[0]["recv"] - u2[0]["recv"] - u2[1]["recv"]) <= 1, u3)
+        rates = wc.getOrganizationWirelessControllerDevicesInterfacesUsageHistoryByInterval(lab, total_pages="all", timespan=3600, names=["RedundancyPort"])["items"]
+        check("getOrganizationWirelessControllerDevicesInterfacesUsageHistoryByInterval", all(len(x["intervals"]) == 12 for x in rates), rates[0]["intervals"][:1])
+        pk = wc.getOrganizationWirelessControllerDevicesInterfacesPacketsOverviewByDevice(lab, total_pages="all", serials=[active], names=["TenGigabitEthernet0/0/0"])["items"]
+        check("getOrganizationWirelessControllerDevicesInterfacesPacketsOverviewByDevice", [r["name"] for r in pk[0]["interfaces"][0]["readings"]] == ["Total", "Unicast", "Broadcast", "Multicast"], pk)
+        cpu = wc.getOrganizationWirelessControllerDevicesSystemUtilizationHistoryByInterval(lab, total_pages="all", perPage=3, timespan=86400)["items"]
+        check("getOrganizationWirelessControllerDevicesSystemUtilizationHistoryByInterval", all(len(x["intervals"]) == 288 and len(x["intervals"][0]["byCore"]) == 8 for x in cpu), cpu[0]["intervals"][:1])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase, integrations, smdevices, smactions, smorg, campusgateway, wirelesscontroller]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

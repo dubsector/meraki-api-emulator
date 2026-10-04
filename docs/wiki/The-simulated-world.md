@@ -11,6 +11,7 @@
 | | Lab - Kingston | MG | Two cellular gateways: a 5G MG52 with a SIM and an eSIM, and a single-SIM LTE MG21, each SIM on its own Canadian carrier |
 | | Lab - Systems Manager | SM | No Meraki hardware: 13 enrolled devices (iPhones, iPads, Macs, Windows laptops, Android phones and a Chromebook), their 7 owners and 6 profiles |
 | | Lab - Calgary | MR, campus gateway | Three CW9166I APs whose two SSIDs tunnel through one cluster of two CW9800H1 campus gateways, about 15 clients, Mountain time |
+| | Lab - Halifax | Wireless LAN controller | Two Catalyst 9800-40 controllers in an SSO pair with six Catalyst APs joined to it (records on the pair, not devices) and about 50 clients at peak, Atlantic time |
 
 Everything is generated from a seed and the clock:
 

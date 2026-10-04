@@ -33,11 +33,11 @@ function summaryNetworks(ctx, org) {
 }
 
 // Devices of one product type in those networks, or every type but cameras,
-// sensors, cellular and campus gateways, narrowed by deviceTag.
+// sensors, cellular and campus gateways and controllers, narrowed by deviceTag.
 function summaryDevices(ctx, org, productType) {
   const nets = new Set(summaryNetworks(ctx, org));
   const tag = ctx.query.get('deviceTag');
-  return org.devices.filter((d) => nets.has(d.net) && (productType ? d.productType === productType : !['camera', 'sensor', 'cellularGateway', 'campusGateway'].includes(d.productType)) && (!tag || d.tags.includes(tag)));
+  return org.devices.filter((d) => nets.has(d.net) && (productType ? d.productType === productType : !['camera', 'sensor', 'cellularGateway', 'campusGateway', 'wirelessController'].includes(d.productType)) && (!tag || d.tags.includes(tag)));
 }
 
 // KB a device carried over [t0, t1), and the clients it served.
