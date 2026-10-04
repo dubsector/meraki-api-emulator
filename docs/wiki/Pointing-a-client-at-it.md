@@ -32,3 +32,22 @@ Three things the SDK does that are easy to trip over:
 python -m pip install --require-hashes -r scripts/sdk-requirements.txt
 python scripts/sdk-check.py
 ```
+
+### The official Go SDK
+
+[dashboard-api-go](https://github.com/meraki/dashboard-api-go) builds its paths on `/api/v1` itself, so give it the emulator's address without the path:
+
+```go
+client, err := meraki.NewClientWithOptions("http://127.0.0.1:8765", "any-key", "false", "my-app")
+```
+
+The SDK ignores JSON it can't decode into its types, so a type mismatch shows up as empty fields rather than an error. Its types differ from the spec in a few places, for example VLAN IDs as integers, syslog ports as strings and the latency stats traffic classes as strings, so those fields stay empty whenever an answer follows the spec.
+
+[scripts/go-sdk-check](https://github.com/dubsector/meraki-api-emulator/tree/main/scripts/go-sdk-check) calls every GET in the SDK with the emulator's sample IDs and decodes each answer again into the SDK's type, reporting any mismatch. Known differences are listed in it with their reasons. CI runs it with the SDK version pinned in its `go.mod`. To run it yourself:
+
+```sh
+cd scripts/go-sdk-check
+go run .
+```
+
+Add `-fields` to also list answer fields the SDK's types don't have yet.

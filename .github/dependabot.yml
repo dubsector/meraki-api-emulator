@@ -21,3 +21,9 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+  - package-ecosystem: gomod
+    directory: /scripts/go-sdk-check
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
