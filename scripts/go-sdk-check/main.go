@@ -134,7 +134,8 @@ func main() {
 		problem, extra := call(client, m, sample)
 		_, isKnown := known[m.name]
 		switch {
-		case problem == skipped:
+		case strings.HasPrefix(problem, skipped):
+			fmt.Println("SKIP", m.name, sample, strings.TrimPrefix(problem, skipped+" "))
 			skips++
 		case problem != "" && isKnown:
 			knownHits++
@@ -208,7 +209,7 @@ func call(client *meraki.Client, m method, sample string) (problem, extra string
 		// A sample that fails without the SDK too only needs data the
 		// default world doesn't have.
 		if status, err := rawStatus(resp.Request.URL, sample); err == nil && status == resp.StatusCode() {
-			return skipped, ""
+			return skipped + " " + firstLine(string(resp.Body())), ""
 		}
 		return fmt.Sprintf("%d %s %s", resp.StatusCode(), resp.Request.URL, firstLine(string(resp.Body()))), ""
 	}
@@ -412,12 +413,17 @@ func startEmulator() (string, map[string]string, func(), error) {
 		return "", nil, nil, fmt.Errorf("emulator did not start: %w", err)
 	}
 	var info struct {
-		Base    string            `json:"base"`
-		Samples map[string]string `json:"samples"`
+		Base        string            `json:"base"`
+		Samples     map[string]string `json:"samples"`
+		SetupErrors []string          `json:"setupErrors"`
 	}
 	if err := json.Unmarshal(line, &info); err != nil {
 		stop()
 		return "", nil, nil, err
+	}
+	if len(info.SetupErrors) > 0 {
+		stop()
+		return "", nil, nil, fmt.Errorf("setting up items to read failed:\n  %s", strings.Join(info.SetupErrors, "\n  "))
 	}
 	return info.Base, info.Samples, stop, nil
 }

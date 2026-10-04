@@ -43,7 +43,7 @@ client, err := meraki.NewClientWithOptions("http://127.0.0.1:8765", "any-key", "
 
 The SDK ignores JSON it can't decode into its types, so a type mismatch shows up as empty fields rather than an error. Its types differ from the spec in a few places, for example VLAN IDs as integers, syslog ports as strings and the latency stats traffic classes as strings, so those fields stay empty whenever an answer follows the spec.
 
-[scripts/go-sdk-check](https://github.com/dubsector/meraki-api-emulator/tree/main/scripts/go-sdk-check) calls every GET in the SDK with the emulator's sample IDs and decodes each answer again into the SDK's type, reporting any mismatch. Known differences are listed in it with their reasons. CI runs it with the SDK version pinned in its `go.mod`. To run it yourself:
+[scripts/go-sdk-check](https://github.com/dubsector/meraki-api-emulator/tree/main/scripts/go-sdk-check) creates the items that single-item reads need, such as a branding policy or a switch stack, then calls every GET in the SDK with the emulator's sample IDs and decodes each answer again into the SDK's type, reporting any mismatch. Known differences are listed in it with their reasons. CI runs it with the SDK version pinned in its `go.mod`. To run it yourself:
 
 ```sh
 cd scripts/go-sdk-check
