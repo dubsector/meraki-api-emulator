@@ -44,9 +44,12 @@ describe('Secure Access', () => {
     assert.deepEqual(hq, { networkId: net('HQ - San Francisco').id, type: 'Meraki hub', name: 'HQ - San Francisco', region: { name: 'US West' }, device: { primary: { model: 'MX250' } }, address: { street: 'San Francisco, CA, USA' }, vpn: { type: 'hub' }, routing: { defaultRoute: { enabled: true } } });
     assert.equal(rows.find((r) => r.name === 'Remote - London').region.name, 'EU West');
     assert.deepEqual((await ok(sb.get(`${O}/networks/eligible?search=reno`))).items.map((r) => r.name), ['Warehouse - Reno']);
-    // Acme Test Lab's only MX is Ottawa's MX68W.
+    // Acme Test Lab's appliances are Ottawa's MX68W and Winnipeg's Secure Router.
     const labRows = (await ok(sb.get(`/organizations/${lab.id}/sase/networks/eligible`))).items;
-    assert.deepEqual(labRows.map((r) => [r.name, r.device.primary.model, r.vpn.type, r.region.name]), [['Lab - Ottawa', 'MX68W', 'off', 'Canada Central']]);
+    assert.deepEqual(labRows.map((r) => [r.name, r.device.primary.model, r.vpn.type, r.region.name]), [
+      ['Lab - Ottawa', 'MX68W', 'off', 'Canada Central'],
+      ['Lab - Winnipeg', 'C8455-G2-MX', 'off', 'Canada Central'],
+    ]);
     const regions = await ok(sb.get(`${O}/regions`));
     assert.equal(regions.items.length, regions.meta.counts.items.total);
     assert.ok(regions.items.every((r) => r.connector.id === null && r.type === 'Cloud Native Head End'));

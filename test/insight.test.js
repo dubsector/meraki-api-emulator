@@ -40,8 +40,8 @@ describe('Insight, organization tools and auto locate views', () => {
     assert.deepEqual(m365.thresholds.byNetwork.map((t) => t.networkId).sort(), mxIds.sort());
     for (const t of m365.thresholds.byNetwork) assert.ok(Number.isInteger(t.goodput) && Number.isInteger(t.responseDuration));
     const lab = sb.world.orgs.find((o) => o.name === 'Acme Test Lab');
-    const ottawa = lab.networks.find((n) => n.code === 'OTT');
-    assert.deepEqual((await ok(sb.get(`/organizations/${lab.id}/insight/applications`)))[0].thresholds.byNetwork.map((t) => t.networkId), [ottawa.id]);
+    const labMx = lab.networks.filter((n) => n.code === 'OTT' || n.code === 'WPG').map((n) => n.id);
+    assert.deepEqual((await ok(sb.get(`/organizations/${lab.id}/insight/applications`)))[0].thresholds.byNetwork.map((t) => t.networkId), labMx.sort());
   });
 
   test('application health agrees with the traffic analysis rows', async () => {

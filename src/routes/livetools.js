@@ -10,7 +10,9 @@ import { Rand, gauss, hashStr, unit } from '../rng.js';
 import { linkSample, pathLatency, vpnReachable } from '../sim/links.js';
 import { activeUplink, isDown } from '../sim/outages.js';
 import { isOnline } from '../sim/presence.js';
+import { isSecureRouter, routingEntries } from '../sim/router.js';
 import { isoMicro } from '../time.js';
+import { ipInCidr, parseCidr, parseIp } from '../validate.js';
 import { callbacksOf, newCallback, sendCallback } from '../webhooks.js';
 import { devOf, round } from './common.js';
 import { multicastState } from './routing.js';
@@ -227,6 +229,70 @@ function throughput(mx, t) {
   return { speeds: { downstream: round(mbps, 6) } };
 }
 
+// ── Routing table (Secure Routers) ──
+
+const VRFS = ['default'];
+const ROUTE_TYPES = ['BGP', 'EIGRP', 'HSRP', 'IGRP', 'ISIS', 'LISP', 'NAT', 'ND', 'NHRP', 'OMP', 'OSPF', 'RIP', 'default WAN', 'direct', 'static'];
+const firstRouter = (world) => world.devices.find(isSecureRouter)?.serial;
+
+// The filters as the job echoes them. Each object is checked before the job is made.
+function lookupRequest(dev, b) {
+  const out = {};
+  if (b.type != null) {
+    if (!ROUTE_TYPES.includes(b.type)) throw badRequest(`'type' must be one of ${ROUTE_TYPES.join(', ')}`);
+    out.type = b.type;
+  }
+  if (b.destination != null) {
+    const { address, subnet } = b.destination;
+    if (address != null && !isIP(String(address))) throw badRequest("'destination.address' must be an IPv4 or IPv6 address");
+    if (subnet != null && !parseCidr(subnet)) throw badRequest("'destination.subnet' must be an IPv4 CIDR such as 192.168.0.0/24");
+    out.destination = { ...(address != null && { address }), ...(subnet != null && { subnet }) };
+  }
+  if (b.nextHop != null) {
+    if (b.nextHop.address != null && !isIP(String(b.nextHop.address))) throw badRequest("'nextHop.address' must be an IPv4 or IPv6 address");
+    out.nextHop = b.nextHop.address != null ? { address: b.nextHop.address } : {};
+  }
+  if (b.vpn != null) {
+    const id = b.vpn.peer?.id;
+    if (id != null && !dev.net.org.networks.some((n) => n.id === id)) throw badRequest(`'vpn.peer.id' ${id} is not a network in this organization`);
+    out.vpn = b.vpn.peer != null ? { peer: id != null ? { id } : {} } : {};
+  }
+  if (b.vrf != null) {
+    for (const name of b.vrf.names ?? []) if (!VRFS.includes(name)) throw badRequest(`VRF '${name}' is not configured on this device`);
+    out.vrf = b.vrf.names != null ? { names: [...b.vrf.names] } : {};
+  }
+  return out;
+}
+
+const prefixOf = (subnet) => parseCidr(subnet)?.[1] ?? -1;
+
+// An address finds its longest prefix match; a subnet finds the routes inside it.
+function lookupEntries(dev, req) {
+  let rows = routingEntries(dev);
+  if (req.type) rows = rows.filter((e) => e.type === req.type);
+  if (req.vrf?.names) rows = rows.filter((e) => req.vrf.names.includes(e.vrf.name));
+  if (req.nextHop?.address) rows = rows.filter((e) => e.nextHops.some((h) => h.address === req.nextHop.address));
+  if (req.vpn?.peer?.id) rows = rows.filter((e) => e.nextHops.some((h) => h.vpn?.peer.id === req.vpn.peer.id));
+  const want = req.destination?.subnet && parseCidr(req.destination.subnet);
+  if (want) rows = rows.filter((e) => prefixOf(e.subnet) >= want[1] && ipInCidr(e.subnet.split('/')[0], req.destination.subnet));
+  const address = req.destination?.address;
+  if (address != null) {
+    rows = parseIp(address) == null ? [] : rows.filter((e) => ipInCidr(address, e.subnet));
+    const best = Math.max(-1, ...rows.map((e) => prefixOf(e.subnet)));
+    rows = rows.filter((e) => prefixOf(e.subnet) === best);
+  }
+  return rows;
+}
+
+function routeCounts(dev) {
+  const rows = routingEntries(dev);
+  const byVrf = VRFS.map((name) => {
+    const own = rows.filter((e) => e.vrf.name === name);
+    return { name, byProtocol: { ipv4: { total: own.filter((e) => e.ipVersion === 'ipv4').length }, ipv6: { total: own.filter((e) => e.ipVersion === 'ipv6').length } } };
+  });
+  return { total: rows.length, byVrf };
+}
+
 function wakeOnLanVlans(dev) {
   return dev.productType === 'appliance' ? applianceVlans(dev) : switchVlans(dev);
 }
@@ -357,6 +423,28 @@ const TOOLS = {
     },
     post: ['result', 'error'],
   },
+  'routingTable/lookups': {
+    name: 'RoutingTableLookup',
+    id: 'lookupId',
+    param: 'id',
+    kinds: ['appliance'],
+    only: isSecureRouter,
+    serial: firstRouter,
+    seconds: 3,
+    request: lookupRequest,
+    result: (dev, job, t, ok) => (ok ? { entries: lookupEntries(dev, job.request), errors: [] } : { errors: [UNREACHABLE] }),
+  },
+  'routingTable/summaries': {
+    name: 'RoutingTableSummary',
+    id: 'summaryId',
+    param: 'id',
+    kinds: ['appliance'],
+    only: isSecureRouter,
+    serial: firstRouter,
+    seconds: 3,
+    noRequest: true,
+    result: (dev, job, t, ok) => (ok ? { counts: routeCounts(dev), errors: [] } : { errors: [UNREACHABLE] }),
+  },
   wakeOnLan: {
     name: 'WakeOnLan',
     id: 'wakeOnLanId',
@@ -385,7 +473,8 @@ function outcome(dev, tool, job) {
 }
 
 function jobJson(dev, tool, job, now, { post = false } = {}) {
-  const out = { [tool.id]: job.id, url: `/devices/${dev.serial}/liveTools/${job.path}/${job.id}`, request: { serial: dev.serial, ...job.request } };
+  const out = { [tool.id]: job.id, url: `/devices/${dev.serial}/liveTools/${job.path}/${job.id}` };
+  if (!tool.noRequest) out.request = { serial: dev.serial, ...structuredClone(job.request) };
   let status = statusOf(job, now);
   if (status === 'complete') {
     const { failed, fields } = outcome(dev, tool, job);
@@ -401,6 +490,7 @@ function jobJson(dev, tool, job, now, { post = false } = {}) {
 function createJob(ctx, path, tool) {
   const dev = devOf(ctx);
   if (tool.kinds) requireKind(dev, tool.kinds);
+  if (tool.only && !tool.only(dev)) throw badRequest('Only Cisco Secure Routers are supported');
   const b = ctx.body;
   const request = tool.request ? tool.request(dev, b) : {};
   const callback = newCallback(ctx, dev.net, b.callback);
@@ -436,11 +526,11 @@ const LIMITS = { 'leds/blink': [10, 1], throughputTest: [5, 1] };
 
 export default [
   ...Object.entries(TOOLS).flatMap(([path, tool]) => [
-    { op: `createDeviceLiveTools${tool.name}`, method: 'POST', path: `/devices/{serial}/liveTools/${path}`, sample: { serial: tool.kinds?.[0] }, perDevice: LIMITS[path] ?? [5, 5], handler: (ctx) => createJob(ctx, path, tool) },
+    { op: `createDeviceLiveTools${tool.name}`, method: 'POST', path: `/devices/{serial}/liveTools/${path}`, sample: { serial: tool.serial ?? tool.kinds?.[0] }, perDevice: LIMITS[path] ?? [5, 5], handler: (ctx) => createJob(ctx, path, tool) },
     {
       op: `getDeviceLiveTools${tool.name}`,
       path: `/devices/{serial}/liveTools/${path}/{${tool.param}}`,
-      sample: { [tool.param]: '1284392014819', status: 404, serial: tool.kinds?.[0] },
+      sample: { [tool.param]: '1284392014819', status: 404, serial: tool.serial ?? tool.kinds?.[0] },
       handler: (ctx) => jobOf(ctx, path, tool),
     },
   ]),

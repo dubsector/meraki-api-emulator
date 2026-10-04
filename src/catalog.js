@@ -45,6 +45,8 @@ export const MODELS = {
   CW9800H1: { productType: 'campusGateway', firmware: 'campusGateway-31-1-6', ram: 32768 },
   // Catalyst 9800 wireless LAN controllers, monitored from the cloud. cores: CPU cores.
   'C9800-40': { productType: 'wirelessController', firmware: 'wirelessController-17-15-3', ram: 32768, cores: 8 },
+  // Cisco Secure Routers run as appliances. sfp: SFP+ ports; optics: the module seated in each.
+  'C8455-G2-MX': { productType: 'appliance', firmware: 'wired-18-211-2', throughput: 5000, lan: [3, 10], ram: 16384, secureRouter: true, sfp: [1, 2, 3, 4], optics: { 1: 'SFP-10G-LR-S', 3: 'SFP-10G-SR-S' } },
 };
 
 export const VMX_SIZES = { small: 'VMX-S', medium: 'VMX-M', large: 'VMX-L', xlarge: 'VMX-XL', 100: 'VMX100' };
@@ -245,6 +247,11 @@ export const LAB_NETWORKS = [
     // An SSO pair of controllers with Catalyst APs joined to it (sim/wlc.js).
     controllers: [{ model: 'C9800-40', name: '01' }, { model: 'C9800-40', name: '02' }],
     catalystAps: ['C9130AXI-A', 'C9130AXI-A', 'C9120AXI-A', 'C9120AXI-A', 'C9136I-A', 'C9115AXI-A'],
+    clients: {},
+  },
+  {
+    code: 'WPG', name: 'Lab - Winnipeg', kind: 'office', tz: 'America/Winnipeg', address: 'Winnipeg, MB, Canada', lat: 49.8951, lng: -97.1384, tags: ['lab'],
+    mx: { model: 'C8455-G2-MX', wan: ['fiber', 'cable'] },
     clients: {},
   },
 ];
