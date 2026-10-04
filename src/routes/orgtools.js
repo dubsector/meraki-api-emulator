@@ -29,8 +29,9 @@ function pipelineJobs(ctx) {
 // ── Clone ──
 
 // Organization settings that network settings can name (policy objects,
-// adaptive policy groups, splash themes) and plain sign-in settings.
-const CLONED = ['policyObjects', 'policyObjectGroups', 'adaptivePolicyGroups', 'adaptivePolicyAcls', 'adaptivePolicies', 'adaptivePolicySettings', 'splashThemes', 'loginSecurity', 'snmp'];
+// adaptive policy groups, splash themes) or that name networks (Sentry
+// policies), and plain ones such as sign-in rules and Systems Manager roles.
+const CLONED = ['policyObjects', 'policyObjectGroups', 'adaptivePolicyGroups', 'adaptivePolicyAcls', 'adaptivePolicies', 'adaptivePolicySettings', 'splashThemes', 'loginSecurity', 'snmp', 'smAdminRoles', 'smSentryPolicies'];
 
 // The new organization gets the source's settings and a copy of each network
 // (name, product types, tags, time zone and settings) with no devices,
