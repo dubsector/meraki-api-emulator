@@ -205,8 +205,9 @@ describe('organization device views', () => {
     assert.deepEqual(one, [{ network: { id: hq.id }, servers }]);
     const tor = lab.networks[0];
     const roles = (await sb.get(`/organizations/${lab.id}/devices/syslog/servers/roles/byNetwork`)).body.items;
-    assert.deepEqual(roles, [{ network: { id: tor.id }, available: syslogRolesFor(tor).map(({ name, value }) => ({ name, value })) }]);
-    assert.ok(roles[0].available.every((x) => x.value.startsWith('wireless')));
+    const byId = [...lab.networks].sort((x, y) => x.id.localeCompare(y.id));
+    assert.deepEqual(roles, byId.map((n) => ({ network: { id: n.id }, available: syslogRolesFor(n).map(({ name, value }) => ({ name, value })) })));
+    assert.ok(roles.find((x) => x.network.id === tor.id).available.every((x) => x.value.startsWith('wireless')));
   });
 
   test('the EOX overview counts what inventory reports', async () => {

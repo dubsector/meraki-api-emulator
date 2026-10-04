@@ -31,6 +31,23 @@ describe('world', () => {
     assert.deepEqual(a.devices.map((d) => d.name), b.devices.map((d) => d.name));
   });
 
+  test('Acme Test Lab networks come after the base build and leave it alone', () => {
+    const w = buildWorld({ seed: 1, bootTime: BOOT });
+    const lab = w.orgs[1];
+    const ottawa = lab.networks.find((n) => n.code === 'OTT');
+    assert.deepEqual([ottawa.name, ottawa.productTypes, ottawa.mx.model, ottawa.devices.length, ottawa.clients.length, ottawa.vpn], ['Lab - Ottawa', ['appliance'], 'MX68W', 1, 0, null]);
+    assert.deepEqual([ottawa.switches, ottawa.aps, ottawa.cameras], [[], [], []]);
+    assert.equal(w.networkById.get(ottawa.id), ottawa);
+    assert.equal(w.deviceBySerial.get(ottawa.mx.serial), ottawa.mx);
+    assert.ok(lab.devices.includes(ottawa.mx) && !lab.baseNetworks.includes(ottawa));
+    const license = lab.licenses.find((l) => l.deviceSerial === ottawa.mx.serial);
+    assert.equal(license.networkId, ottawa.id);
+    assert.ok(ottawa.mx.orderNumber && ottawa.mx.claimedAt < license.activationDate);
+    const taken = [...w.orgs.flatMap((o) => o.spares), ...w.unclaimed.devices].map((s) => s.serial);
+    assert.equal(new Set(w.devices.map((d) => d.serial)).size, w.devices.length);
+    assert.ok(!taken.includes(ottawa.mx.serial));
+  });
+
   test('every wired client has a switch port', () => {
     const w = buildWorld({ seed: 1, bootTime: 1.79e9 });
     for (const c of w.clients) if (c.wired) assert.ok(c.switchPort, c.description);

@@ -15,7 +15,8 @@ describe('MX Wi-Fi and vMX tokens', () => {
     assert.equal((await sb.reset()).status, 204);
   });
   after(() => sb.close());
-  // No seeded MX has a radio, so London's MX68 becomes an MX68W in this world only.
+  // London's MX68 becomes an MX68W in this world only, so the Wi-Fi routes run on
+  // a network with switches, APs and VLANs. Lab - Ottawa's seeded MX68W has none.
   const fresh = () => {
     org = sb.world.orgs.find((o) => o.name === 'Acme Corporation');
     london = org.networks.find((n) => n.name === 'Remote - London');
@@ -49,6 +50,18 @@ describe('MX Wi-Fi and vMX tokens', () => {
     assert.match(await errorOf(sb.put(`/networks/${hq.id}/appliance/ssids/1`, { enabled: true })), /no wireless radio/);
     const lab = sb.world.orgs.find((o) => o.name === 'Acme Test Lab').networks[0];
     assert.match(await errorOf(sb.get(`/networks/${lab.id}/appliance/ssids`)), /product type 'appliance'/);
+  });
+
+  test("Lab - Ottawa's seeded MX68W answers the Wi-Fi routes as after a claim", async () => {
+    const ottawa = sb.world.orgs.find((o) => o.name === 'Acme Test Lab').networks.find((n) => n.name === 'Lab - Ottawa');
+    assert.equal(ottawa.mx.model, 'MX68W');
+    assert.deepEqual(await ok(sb.get(`/networks/${ottawa.id}/appliance/rfProfiles`)), { assigned: [] });
+    const ssids = await ok(sb.get(`/networks/${ottawa.id}/appliance/ssids`));
+    assert.deepEqual(ssids.map((x) => [x.number, x.name, x.enabled]), [1, 2, 3, 4].map((n) => [n, `Unconfigured SSID ${n}`, false]));
+    assert.deepEqual(await ok(sb.get(`/networks/${ottawa.id}/appliance/ssids/1`)), ssids[0]);
+    const settings = await ok(sb.get(`/devices/${ottawa.mx.serial}/appliance/radio/settings`));
+    assert.deepEqual([settings.serial, settings.rfProfileId], [ottawa.mx.serial, null]);
+    assert.equal((await sb.put(`/networks/${ottawa.id}/appliance/ssids/2`, { name: 'Lab', enabled: true, authMode: 'open' })).status, 200);
   });
 
   test('RF profiles take defaults, check their fields and refuse delete while assigned', async () => {
@@ -147,6 +160,9 @@ describe('MX Wi-Fi and vMX tokens', () => {
     await ok(sb.put(`/networks/${london.id}/appliance/vlans/settings`, { vlansEnabled: false }));
     assert.match(await errorOf(sb.put(`${S()}/1`, { defaultVlanId: 10 })), /VLANs are enabled/);
     assert.equal((await ok(sb.get(`${S()}/1`))).defaultVlanId, 1);
+    // The single LAN's VLAN 1 comes back as it reads, and is not stored.
+    assert.equal((await ok(sb.put(`${S()}/1`, { defaultVlanId: 1 }))).defaultVlanId, 1);
+    assert.equal(london.config.applianceSsids.find((x) => x.number === 1).defaultVlanId, 20);
   });
 
   test('a network bound to a template takes the template RF profiles and SSIDs', async () => {

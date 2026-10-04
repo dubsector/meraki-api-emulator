@@ -9,7 +9,7 @@ import { uplinkBytes } from '../sim/traffic.js';
 import { WAN_RECV, WAN_SENT, WD_RECV, WD_SENT, WL_RECV, WL_SENT, networkTotals } from '../sim/usage.js';
 import { DAY, HOUR, MIN, iso, isoMicro } from '../time.js';
 import { validTimeZone } from '../validate.js';
-import { addNetwork, addOrganization, removeOrganization } from '../world.js';
+import { addNetwork, addOrganization, dropSwitchSerials, removeOrganization } from '../world.js';
 import { byId, bySerial, filterDevices, orgOf, round } from './common.js';
 import { managementInterface } from './networkwide.js';
 
@@ -27,7 +27,7 @@ function createNetwork(ctx) {
   if (b.copyFromNetworkId && !source) throw notFound('Network to copy from');
   const net = addNetwork(ctx.world, org, { name: b.name, productTypes: [...new Set(b.productTypes)], tags: b.tags, timeZone: b.timeZone, notes: b.notes });
   // Copying takes the source's settings, with its network ID swapped for the new one.
-  if (source) net.config = JSON.parse(JSON.stringify(configOf(source)).replaceAll(source.id, net.id));
+  if (source) net.config = dropSwitchSerials(JSON.parse(JSON.stringify(configOf(source)).replaceAll(source.id, net.id)));
   return networkJson(net);
 }
 

@@ -236,4 +236,28 @@ describe('switch STP, MTU, storm control, link aggregation and warm spare', () =
     assert.deepEqual(await ok(sb.get(`/networks/${net.id}/switch/linkAggregations`)), [g]);
     assert.deepEqual(await ok(sb.get(`/networks/${net.id}/switch/alternateManagementInterface`)), ami);
   });
+  test("copies, templates and clones keep the source's stacks but none of its switches", async () => {
+    fresh();
+    const stack = await stackOf([f2.serial, f3.serial]);
+    await ok(sb.put(`${N()}/stp`, { stpBridgePriority: [{ switches: [core.serial], stpPriority: 4096 }, { stacks: [stack.id], stpPriority: 8192 }] }));
+    await ok(sb.put(`${N()}/mtu`, { overrides: [{ switches: [core.serial], mtuSize: 1500 }] }));
+    await ok(sb.put(`${N()}/routing/multicast`, { overrides: [{ switches: [core.serial], igmpSnoopingEnabled: false, floodUnknownMulticastTrafficEnabled: false }] }));
+    const kept = (c) => [c.switchStp.stpBridgePriority, c.switchMtu.overrides, c.switchMulticast.overrides];
+    const stale = [[{ stacks: [stack.id], stpPriority: 8192 }], [], []];
+
+    const copy = await ok(sb.post(`/organizations/${corp.id}/networks`, { name: 'HQ copy', productTypes: ['switch'], copyFromNetworkId: hq.id }), 201);
+    assert.deepEqual(kept(sb.world.networkById.get(copy.id).config), stale);
+    const t = await ok(sb.post(`/organizations/${corp.id}/configTemplates`, { name: 'HQ', copyFromNetworkId: hq.id }), 201);
+    assert.deepEqual(kept(corp.configTemplates.list.find((x) => x.id === t.id).config), stale);
+    const clone = await ok(sb.post(`/organizations/${corp.id}/clone`, { name: 'Acme Copy' }), 201);
+    const cloned = sb.world.orgById.get(clone.id).networks.find((n) => n.name === hq.name);
+    assert.deepEqual(kept(cloned.config), stale);
+    assert.deepEqual(kept(hq.config)[1], [{ switches: [core.serial], mtuSize: 1500 }]);
+
+    // The source's switch claimed into the copy starts without the source's settings.
+    assert.equal((await sb.post(`/networks/${hq.id}/devices/remove`, { serial: core.serial })).status, 204);
+    await ok(sb.post(`/networks/${copy.id}/devices/claim`, { serials: [core.serial] }));
+    assert.deepEqual((await ok(sb.get(`${N(sb.world.networkById.get(copy.id))}/mtu`))).overrides, []);
+    assert.deepEqual((await ok(sb.get(`${N(sb.world.networkById.get(copy.id))}/stp`))).stpBridgePriority, []);
+  });
 });

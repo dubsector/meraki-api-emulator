@@ -1,6 +1,6 @@
 // Builds the static world (orgs, networks, devices, clients, switch ports) from a seed.
 
-import { CLIENT_PROFILES, DEVICE_OUI, FIRST_NAMES, ISPS, KINDS, LAST_NAMES, MODELS, ORGS, SERIAL_PREFIX, SSIDS } from './catalog.js';
+import { CLIENT_PROFILES, DEVICE_OUI, FIRST_NAMES, ISPS, KINDS, LAB_NETWORKS, LAST_NAMES, MODELS, ORGS, SERIAL_PREFIX, SSIDS } from './catalog.js';
 import { configOf, rebase, settingProduct, syslogRolesFor } from './config.js';
 import { Rand, derive, hashStr } from './rng.js';
 import { DAY, Zone } from './time.js';
@@ -75,6 +75,7 @@ export function buildWorld({ seed = 1, bootTime = Date.now() / 1000 } = {}) {
   }
   buildAdminData(world, seed, bootTime);
   buildInventory(world, seed);
+  buildLab(world, seed, bootTime);
   return world;
 }
 
@@ -196,6 +197,48 @@ function buildInventory(world, seed) {
     });
     world.unclaimed.devices.push(...devices);
     if (org.licensing === 'co-term') world.unclaimed.licenses.push({ ...license(devices, 1095, world.bootDay - 3 * DAY), orderNumber, claimedAt: null });
+  }
+}
+
+// Acme Test Lab networks from LAB_NETWORKS, after the admin and inventory
+// streams have run. Each network draws from its own stream, so appending one
+// never moves the IDs of those before it.
+function buildLab(world, seed, bootTime) {
+  const lab = world.orgs[1];
+  const bootDay = Math.floor(bootTime / DAY) * DAY;
+  const used = new Set([...world.networkById.keys(), ...world.deviceBySerial.keys(), ...world.devices.map((d) => d.mac), ...world.clients.flatMap((c) => [c.id, c.mac])]);
+  for (const s of [...world.orgs.flatMap((o) => o.spares), ...world.unclaimed.devices]) used.add(s.serial).add(s.mac);
+  for (const l of lab.licenses) used.add(l.id).add(l.licenseKey);
+  for (const tpl of LAB_NETWORKS) {
+    const r = new Rand(hashStr(`meraki-api-emulator:${seed}:lab:${tpl.code}`));
+    const unique = (make) => {
+      for (;;) {
+        const v = make();
+        if (!used.has(v)) return used.add(v), v;
+      }
+    };
+    const net = buildNetwork(r, unique, lab, tpl, world.networks.length + 1);
+    // Left out of baseNetworks, so the synthetic change history stays Toronto's.
+    for (const list of [lab.networks, world.networks]) list.push(net);
+    world.networkById.set(net.id, net);
+    const order = `4C${r.digits(7)}`;
+    const claimed = Date.UTC(2025, 0, 1) / 1000 + r.int(0, 500) * DAY + r.int(15, 23) * 3600;
+    for (const d of net.devices) {
+      Object.assign(d, { orderNumber: order, claimedAt: claimed + r.int(0, 300) });
+      world.devices.push(d);
+      world.deviceBySerial.set(d.serial, d);
+      lab.devices.push(d);
+    }
+    for (const c of net.clients) {
+      world.clients.push(c);
+      world.clientById.set(c.id, c);
+    }
+    const licenseOrder = `4C${r.digits(7)}`;
+    for (const d of net.devices) {
+      const id = unique(() => r.digits(6));
+      const licenseKey = unique(() => `Z2${r.chars(10, SERIAL_CHARS)}`);
+      lab.licenses.push({ id, licenseType: 'ENT', licenseKey, orderNumber: licenseOrder, deviceSerial: d.serial, networkId: net.id, claimDate: d.claimedAt, activationDate: d.claimedAt + 3600, expirationDate: bootDay + r.int(300, 700) * DAY });
+    }
   }
 }
 
@@ -675,6 +718,19 @@ export function removeDevice(world, dev) {
 // Switch settings that list switches by serial: STP priorities, MTU and
 // multicast overrides. A swapped switch keeps its place in them.
 const SERIAL_LISTS = [['switchStp', 'stpBridgePriority'], ['switchMtu', 'overrides'], ['switchMulticast', 'overrides']];
+
+// A copied config (a new network, a template or a cloned organization) has none
+// of the source's switches, so its entries drop them, and an entry left with no
+// switches, stacks or switch profiles goes.
+export function dropSwitchSerials(config) {
+  for (const [key, list] of SERIAL_LISTS) {
+    const entries = config?.[key]?.[list];
+    if (!entries) continue;
+    for (const e of entries) delete e.switches;
+    config[key][list] = entries.filter((e) => e.stacks?.length || e.switchProfiles?.length);
+  }
+  return config;
+}
 
 function renameSwitch(net, from, to) {
   const c = net.template ? net.template.config : net.config;

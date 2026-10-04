@@ -1822,7 +1822,7 @@ def mxwireless():
         rows = a.getOrganizationApplianceDevicesRedundancyByNetwork(org, total_pages="all", perPage=5)
         check(f"getOrganizationApplianceDevicesRedundancyByNetwork perPage=5, all pages ({len(rows)} networks)", len(rows) == 5 and next(x for x in rows if x["networkId"] == hq) == r, rows)
 
-        # No seeded MX has a radio, so the Wi-Fi routes answer 400 on them.
+        # HQ's MX250 has no radio, so the Wi-Fi routes answer 400 on it.
         for name, call in [
             ("getDeviceApplianceRadioSettings", lambda: a.getDeviceApplianceRadioSettings(mx)),
             ("updateDeviceApplianceRadioSettings", lambda: a.updateDeviceApplianceRadioSettings(mx, rfProfileId=None)),
@@ -1840,6 +1840,23 @@ def mxwireless():
                 check(f"{name} on an MX without a radio raises", False)
             except meraki.APIError as e:
                 check(f"{name} on an MX without a radio raises 400", e.status == 400 and "radio" in str(e.message), (e.status, e.message))
+
+        # Lab - Ottawa's MX68W has one.
+        lab = next(o["id"] for o in d.organizations.getOrganizations() if o["name"] == "Acme Test Lab")
+        ott = next(x["id"] for x in d.organizations.getOrganizationNetworks(lab) if x["name"] == "Lab - Ottawa")
+        w = next(x["serial"] for x in d.networks.getNetworkDevices(ott) if x["model"] == "MX68W")
+        p = a.createNetworkApplianceRfProfile(ott, "Lab", fiveGhzSettings={"minBitrate": 24})
+        check("createNetworkApplianceRfProfile on the MX68W", p["networkId"] == ott and p["fiveGhzSettings"]["minBitrate"] == 24 and a.getNetworkApplianceRfProfile(ott, p["id"]) == p, p)
+        up = a.updateNetworkApplianceRfProfile(ott, p["id"], name="Lab 2")
+        check("updateNetworkApplianceRfProfile", up["name"] == "Lab 2" and a.getNetworkApplianceRfProfiles(ott)["assigned"] == [up], up)
+        r = a.updateDeviceApplianceRadioSettings(w, rfProfileId=p["id"])
+        check("updateDeviceApplianceRadioSettings", r["rfProfileId"] == p["id"] and a.getDeviceApplianceRadioSettings(w) == r, r)
+        ssids = a.getNetworkApplianceSsids(ott)
+        s1 = a.updateNetworkApplianceSsid(ott, "1", name="Lab", enabled=True, authMode="psk", psk="secret123", encryptionMode="wpa")
+        check("getNetworkApplianceSsids and updateNetworkApplianceSsid", [x["number"] for x in ssids] == [1, 2, 3, 4] and s1["name"] == "Lab" and s1["enabled"] and a.getNetworkApplianceSsid(ott, "1") == s1, (ssids, s1))
+        a.updateDeviceApplianceRadioSettings(w, rfProfileId=None)
+        a.deleteNetworkApplianceRfProfile(ott, p["id"])
+        check("deleteNetworkApplianceRfProfile", a.getNetworkApplianceRfProfiles(ott)["assigned"] == [])
 
         try:
             a.createDeviceApplianceVmxAuthenticationToken(mx)
