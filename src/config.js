@@ -327,7 +327,9 @@ function ssidJson(net, number) {
       radiusLoadBalancingPolicy: 'Round robin',
     });
   }
-  if (!s.nat) Object.assign(out, { useVlanTagging: true, defaultVlanId: s.vlan });
+  // Lab SSIDs seeded with a campus gateway cluster tunnel through it.
+  if (s.cluster) Object.assign(out, { ipAssignmentMode: 'Campus Gateway', campusGateway: { cluster: { id: s.cluster } } });
+  else if (!s.nat) Object.assign(out, { useVlanTagging: true, defaultVlanId: s.vlan });
   return shapeSsid(out);
 }
 

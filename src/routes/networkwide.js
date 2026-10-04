@@ -4,6 +4,7 @@
 import { SNMP_V3, SYSLOG_ROLES, configOf, syslogRolesFor } from '../config.js';
 import { arrayParam, badRequest, notFound, paginate, paginateItems } from '../http.js';
 import { LOOKBACK } from '../sim/alerts.js';
+import { clusterWan } from '../sim/campus.js';
 import { changesOnDay } from '../sim/changes.js';
 import { eachFailover, eachVpnChange, securityEventsOnDay } from '../sim/events.js';
 import { deviceStatus, eachOutage, lastReportedAt } from '../sim/outages.js';
@@ -88,6 +89,8 @@ function shapeWan(w, mx) {
 
 // MX WAN addressing; other devices use DHCP on the management VLAN until a PUT says otherwise.
 export function managementInterface(dev) {
+  const cluster = clusterWan(dev);
+  if (cluster) return { wan1: shapeWan(cluster, false) };
   const mx = dev.productType === 'appliance';
   let wans = dev.managementInterface;
   if (!wans && !mx) wans = { wan1: shapeWan({ usingStaticIp: false }, false) };
@@ -119,6 +122,12 @@ function ipDevice(ctx) {
 function updateManagementInterface(ctx) {
   const dev = ipDevice(ctx);
   if (dev.productType === 'cellularGateway' && ctx.body.wan1?.usingStaticIp) throw badRequest('Cellular gateways take their address from the carrier and cannot use a static IP');
+  // A cluster member's uplink comes from its cluster; sending it back unchanged is fine.
+  if (clusterWan(dev)) {
+    const current = managementInterface(dev);
+    if (ctx.body.wan2 || JSON.stringify(shapeWan({ ...current.wan1, ...ctx.body.wan1 }, false)) !== JSON.stringify(current.wan1)) throw badRequest(`Campus gateway ${dev.serial} takes its uplink settings from its cluster; change them there`);
+    return current;
+  }
   const mx = dev.productType === 'appliance';
   if (!mx && ctx.body.wan2) throw badRequest("'wan2' is only supported on MX appliances");
   const current = managementInterface(dev);

@@ -2072,7 +2072,7 @@ def zigbee():
         check(f"getOrganizationWirelessZigbeeByNetwork perPage=3, all pages ({len(rows)} networks)", any(r["network"]["id"] == mtl and r["enabled"] and r["iotController"]["serial"] == ap for r in rows), rows)
         r = w.updateNetworkWirelessZigbee(mtl, lockManagement={"address": "10.0.40.20", "username": "locks", "password": "secret"}, defaults={"transmitPowerLevel": 12, "channel": "15"})
         check("updateNetworkWirelessZigbee", r["defaults"] == {"transmitPowerLevel": 12, "channel": "15"} and r["lockManagement"]["address"] == "10.0.40.20" and "password" not in r["lockManagement"], r)
-        gw = w.getOrganizationWirelessZigbeeDevices(lab, total_pages="all", perPage=3)
+        gw = w.getOrganizationWirelessZigbeeDevices(lab, total_pages="all", perPage=3, networkIds=[mtl])
         check(f"getOrganizationWirelessZigbeeDevices ({len(gw)} gateways)", [x["gateway"]["serial"] for x in gw] == [ap] and gw[0]["transmitPowerLevel"] == 12, gw)
         g = w.updateOrganizationWirelessZigbeeDevice(lab, ap, True, channel="20")
         check("updateOrganizationWirelessZigbeeDevice", g["enrolled"] and g["channel"] == "20", g)
@@ -2413,7 +2413,53 @@ def smorg():
         check("deleteNetworkPiiRequest", n.getNetworkPiiRequests(net) == [gone])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase, integrations, smdevices, smactions, smorg]
+@scenario
+def campusgateway():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o, cg = d.organizations, d.campusGateway
+        lab = {x["name"]: x["id"] for x in o.getOrganizations()}["Acme Test Lab"]
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(lab)}
+        cal, tor = nets["Lab - Calgary"], nets["Lab - Toronto"]
+
+        clusters = cg.getOrganizationCampusGatewayClusters(lab, total_pages="all", perPage=3)["items"]
+        check("getOrganizationCampusGatewayClusters", len(clusters) == 1 and len(clusters[0]["devices"]) == 2, clusters)
+        seeded = clusters[0]["clusterId"]
+        uplinks = [{"interface": "man1", "vlan": 5, "addresses": [{"assignmentMode": "dynamic"}]}]
+        new = cg.createNetworkCampusGatewayCluster(cal, "North Campus", uplinks, [{"uplink": {"interface": "man1"}}], {"addresses": ["8.8.8.8"]}, [{"name": "Port-channel1", "vlan": 5, "allowedVlans": "5,10-20"}])
+        check("createNetworkCampusGatewayCluster", new["name"] == "North Campus" and new["devices"] == [], new)
+        upd = cg.updateNetworkCampusGatewayCluster(cal, new["clusterId"], notes="Backup")
+        check("updateNetworkCampusGatewayCluster", upd["notes"] == "Backup" and upd["portChannels"] == new["portChannels"], upd)
+        prov = cg.provisionOrganizationCampusGatewayClusters(lab, seeded, {"id": cal}, clusters[0]["name"], clusters[0]["uplinks"], clusters[0]["tunnels"], clusters[0]["nameservers"], clusters[0]["portChannels"], devices=[{"serial": x["serial"]} for x in clusters[0]["devices"]], failover={"targets": [{"clusterId": new["clusterId"], "priority": 1}]})
+        check("provisionOrganizationCampusGatewayClusters", prov["failover"]["targets"][0]["clusterId"] == new["clusterId"], prov["failover"])
+        targets = cg.getOrganizationCampusGatewayClustersFailoverTargets(lab, total_pages="all", perPage=3)
+        check("getOrganizationCampusGatewayClustersFailoverTargets", next(t for t in targets if t["clusterId"] == seeded)["failover"] == prov["failover"], targets)
+        by = cg.getOrganizationCampusGatewayClustersFailoverTargetsByCluster(lab, clusterIds=[seeded])
+        check("getOrganizationCampusGatewayClustersFailoverTargetsByCluster", [a["clusterId"] for a in by["items"][0]["available"]] == [new["clusterId"]], by)
+        d.wireless.updateNetworkWirelessSsid(tor, "1", ipAssignmentMode="Campus Gateway", campusGateway={"cluster": {"id": seeded}})
+        ssids = cg.getOrganizationCampusGatewayClustersSsids(lab, total_pages="all", perPage=3)["items"]
+        check(f"getOrganizationCampusGatewayClustersSsids ({len(ssids)} SSIDs)", len(ssids) == 3 and ssids == cg.getOrganizationCampusGatewayClustersSsids(lab)["items"], ssids[:1])
+        tun = cg.getOrganizationCampusGatewayClustersTunnelable(lab, [tor])["items"]
+        check("getOrganizationCampusGatewayClustersTunnelable", sorted(x["clusterId"] for x in tun) == sorted([seeded, new["clusterId"]]), tun)
+        ov = cg.getOrganizationCampusGatewayClustersNetworksOverviews(lab, total_pages="all", perPage=3)["items"]
+        check("getOrganizationCampusGatewayClustersNetworksOverviews", sorted(x["networkId"] for x in ov) == sorted([cal, tor]), ov)
+        enc = cg.batchOrganizationCampusGatewayClustersTunnelingUpdate(lab, [{"cluster": {"id": seeded}, "network": {"id": tor}, "data": {"encryption": {"enabled": True}}}])
+        rows = cg.getOrganizationCampusGatewayClustersTunnelingByClusterByNetwork(lab, total_pages="all", perPage=3)["items"]
+        check("batchOrganizationCampusGatewayClustersTunnelingUpdate and its list", enc["items"][0]["data"]["encryption"]["enabled"] and len(rows) == 2, rows)
+        mdns = cg.updateNetworkCampusGatewaySsidMdns(tor, "1", enabled=True, rules=[{"services": ["airplay"]}])
+        check("updateNetworkCampusGatewaySsidMdns", mdns == {"enabled": True, "rules": [{"services": ["airplay"]}]}, mdns)
+        conns = cg.getOrganizationCampusGatewayConnections(lab, total_pages="all", perPage=3)["items"]
+        overview = cg.getOrganizationCampusGatewayConnectionsOverview(lab)
+        check(f"getOrganizationCampusGatewayConnections ({len(conns)} APs)", len(conns) == 5 and conns == cg.getOrganizationCampusGatewayConnections(lab)["items"] and overview["counts"]["total"] == 5, overview)
+        usage = cg.getOrganizationCampusGatewayClientsUsageByNetworkByCluster(lab, total_pages="all", perPage=3, timespan=86400)["items"]
+        check("getOrganizationCampusGatewayClientsUsageByNetworkByCluster", len(usage) == 2 and all(u["cluster"]["id"] == seeded for u in usage), usage[:1])
+        local = cg.getOrganizationCampusGatewayDevicesUplinksLocalOverridesByDevice(lab, total_pages="all")["items"]
+        check("getOrganizationCampusGatewayDevicesUplinksLocalOverridesByDevice", local == [], local)
+        cg.deleteNetworkCampusGatewayCluster(cal, new["clusterId"])
+        check("deleteNetworkCampusGatewayCluster", len(cg.getOrganizationCampusGatewayClusters(lab)["items"]) == 1)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase, integrations, smdevices, smactions, smorg, campusgateway]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

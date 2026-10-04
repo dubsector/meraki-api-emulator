@@ -85,9 +85,9 @@ describe('licensing and inventory', () => {
 
   test('per-device license states agree with the overview', async () => {
     const licenses = (await sb.get(`/organizations/${lab.id}/licenses`)).body;
-    assert.deepEqual(licenses.map((l) => l.state).sort(), [...Array(14).fill('active'), 'expiring', 'unused']);
+    assert.deepEqual(licenses.map((l) => l.state).sort(), [...Array(19).fill('active'), 'expiring', 'unused']);
     const overview = (await sb.get(`/organizations/${lab.id}/licenses/overview`)).body;
-    assert.equal(overview.licenseCount, 16);
+    assert.equal(overview.licenseCount, 21);
     assert.equal(overview.states.expiring.count, 1);
     assert.equal(overview.states.unused.count, 1);
     const ap = lab.devices[0];

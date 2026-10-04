@@ -9,7 +9,7 @@ import { eachOutage } from './outages.js';
 
 export const SAMPLE = 300;
 const PER_DAY = DAY / SAMPLE;
-const BASE = { appliance: 0.42, switch: 0.5, wireless: 0.38, camera: 0.55, sensor: 0.3, cellularGateway: 0.35 };
+const BASE = { appliance: 0.42, switch: 0.5, wireless: 0.38, camera: 0.55, sensor: 0.3, cellularGateway: 0.35, campusGateway: 0.45 };
 
 export const ramKb = (dev) => dev.info.ram * 1024;
 

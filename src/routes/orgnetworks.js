@@ -4,6 +4,7 @@
 import { networkJson } from '../format.js';
 import { arrayParam, badRequest, notFound, paginateItems } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
+import { usesCampusGateway } from '../sim/campus.js';
 import { deviceStatus } from '../sim/outages.js';
 import { presenceIn } from '../sim/presence.js';
 import { WD_RECV, WD_SENT, WL_RECV, WL_SENT, networkTotals } from '../sim/usage.js';
@@ -128,6 +129,7 @@ function moveProblem(org, net, dest) {
   if (usesDataProfiles(net)) return "Cannot move network: The network's cellular gateways are assigned cellular data profiles of the source organization.";
   if (usesSase(net)) return 'Cannot move network: The network is attached to Secure Access in the source organization.';
   if (usesSentry(net)) return 'Cannot move network: Systems Manager Sentry policies of the source organization name the network.';
+  if (usesCampusGateway(net)) return 'Cannot move network: SSIDs or failover targets link the network with campus gateway clusters of other networks.';
   if (dest.networks.some((n) => n.name === net.name)) return 'Cannot move network: A network with the same name already exists in the target organization.';
   if (dest.networks.length >= MAX_NETWORKS) return 'Cannot move network: The target organization has reached its network limit.';
   return null;

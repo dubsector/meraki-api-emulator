@@ -69,7 +69,9 @@ const CONDITIONAL = [
   [/^\.paths\..*\.(description|examples)$/, 'getOrganizationOpenapiSpec', "operation descriptions and examples (the emulator's document only lists its operations)"],
   [/^(\[\]|\[\]\.readings\[\])\.(button|door|no2|o3|pm10|rawTemperature)$/, /^getOrganizationSensorReadings/, 'events in the sample window, or metrics no seeded sensor reports'],
   [/^(\[\])?\.schedule$/, /SensorAlertsProfile/, 'sensor schedules, which the emulator has none of'],
-  [/^\[\]\.(contentToken|vppServiceToken)$/, 'getOrganizationSmVppAccounts', 'the VPP token, which only the single account shows']
+  [/^\[\]\.(contentToken|vppServiceToken)$/, 'getOrganizationSmVppAccounts', 'the VPP token, which only the single account shows'],
+  [/^\.items\[\]\.tunnels\[\]\.(interface|vlan|addresses)$/, 'getOrganizationCampusGatewayClusters', 'a tunnel with its own interface'],
+  [/^\.items\[\]\.site$/, 'getOrganizationCampusGatewayClustersNetworksOverviews', 'networks in a network group']
 ];
 
 // Objects keyed by name rather than by field, checked only for the keys the example shares.

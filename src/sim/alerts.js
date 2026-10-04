@@ -8,7 +8,7 @@ import { eachOutage, eachUplinkFailure, isDown } from './outages.js';
 
 export const LOOKBACK = 31 * DAY;
 const GRACE = 300;
-export const DEVICE_TYPE = { appliance: 'MX', switch: 'MS', wireless: 'MR', camera: 'MV', sensor: 'MT', cellularGateway: 'MG' };
+export const DEVICE_TYPE = { appliance: 'MX', switch: 'MS', wireless: 'MR', camera: 'MV', sensor: 'MT', cellularGateway: 'MG', campusGateway: 'Campus Gateway' };
 
 // The alert types the sim raises, as the taxonomy endpoint lists them.
 // Unreachable's device types are the spec's example.

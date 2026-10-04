@@ -5,6 +5,7 @@
 
 import { configOf } from '../config.js';
 import { arrayParam, badRequest, boolParam, intParam, paginate, paginateItems, timeWindow } from '../http.js';
+import { tunnelsOf } from '../sim/campus.js';
 import { CPU_COUNT, cpuSamples } from '../sim/memory.js';
 import { eachOutage, isDown } from '../sim/outages.js';
 import { presenceIn } from '../sim/presence.js';
@@ -41,16 +42,17 @@ function usageScope(ctx) {
   const { t0, t1 } = timeWindow(q, ctx.now, { maxSpan: 7 * DAY, minSpan: HOUR, defaultSpan: 2 * HOUR, lookback: 8 * DAY });
   const units = q.get('usageUnits') ?? 'MB';
   if (!UNITS[units]) throw badRequest("'usageUnits' must be one of: GB, KB, MB, TB");
-  // There are no campus gateways, so no client is tunneled to one.
-  const nets = arrayParam(q, 'gatewayNetworkIds').length ? [] : wirelessNets(ctx);
-  return { t0, t1, nets, units };
+  // With gatewayNetworkIds, only SSIDs tunneling to clusters in those networks count.
+  const gateways = arrayParam(q, 'gatewayNetworkIds');
+  const only = new Map(wirelessNets(ctx).map((net) => [net, gateways.length ? new Set(tunnelsOf(net).filter((t) => gateways.includes(t.net.id)).map((t) => t.number)) : null]));
+  return { t0, t1, nets: [...only.keys()].filter((n) => only.get(n)?.size !== 0), units, only };
 }
 
 // Clients seen and KB each way per SSID number, counted like the top SSIDs summary.
-function ssidUsage(net, t0, t1) {
+function ssidUsage(net, t0, t1, only = null) {
   const by = new Map();
   for (const c of net.clients) {
-    if (c.wired || !c.ap || !presenceIn(c, t0, t1)) continue;
+    if (c.wired || !c.ap || (only && !only.has(c.ssid.number)) || !presenceIn(c, t0, t1)) continue;
     const u = clientUsage(c, t0, t1);
     const r = by.get(c.ssid.number) ?? { clients: 0, sent: 0, recv: 0 };
     r.clients++;
@@ -62,9 +64,9 @@ function ssidUsage(net, t0, t1) {
 }
 
 // SSIDs that are enabled or carried clients in the window, by number.
-function ssidsOf(net, by) {
+function ssidsOf(net, by, only = null) {
   const config = configOf(net).ssids;
-  const numbers = new Set([...config.flatMap((s, n) => (s.enabled ? [n] : [])), ...by.keys()]);
+  const numbers = new Set([...config.flatMap((s, n) => (s.enabled && (!only || only.has(n)) ? [n] : [])), ...by.keys()]);
   return [...numbers].sort((a, b) => a - b).map((n) => ({ number: n, name: config[n].name, aps: config[n].enabled ? net.aps.length : 0 }));
 }
 
@@ -82,10 +84,10 @@ function usagePage(ctx, rows, keyOf, units) {
 }
 
 function usageByNetwork(ctx) {
-  const { t0, t1, nets, units } = usageScope(ctx);
+  const { t0, t1, nets, units, only } = usageScope(ctx);
   const rows = nets.map((net) => {
     const total = { ...EMPTY };
-    for (const r of ssidUsage(net, t0, t1).values()) for (const k of ['clients', 'sent', 'recv']) total[k] += r[k];
+    for (const r of ssidUsage(net, t0, t1, only.get(net)).values()) for (const k of ['clients', 'sent', 'recv']) total[k] += r[k];
     return { network: { id: net.id, name: net.name }, clients: { total: total.clients }, devices: { byProductType: { wireless: net.aps.length } }, usage: usageJson(total, units) };
   });
   rows.sort((a, b) => byUsage(a, b) || (a.network.id < b.network.id ? -1 : 1));
@@ -93,19 +95,21 @@ function usageByNetwork(ctx) {
 }
 
 function usageByNetworkBySsid(ctx) {
-  const { t0, t1, nets, units } = usageScope(ctx);
+  const { t0, t1, nets, units, only } = usageScope(ctx);
   const ids = arrayParam(ctx.query, 'ssidIds');
   const names = arrayParam(ctx.query, 'ssidNames');
   const rows = [];
   for (const net of nets) {
-    const by = ssidUsage(net, t0, t1);
-    for (const s of ssidsOf(net, by)) {
+    const by = ssidUsage(net, t0, t1, only.get(net));
+    const tunnels = tunnelsOf(net);
+    for (const s of ssidsOf(net, by, only.get(net))) {
       const id = ssidId(net, s.number);
+      const tunnel = tunnels.find((t) => t.number === s.number);
       if ((ids.length && !ids.includes(id)) || (names.length && !names.includes(s.name))) continue;
       const r = by.get(s.number) ?? EMPTY;
       rows.push({
         network: { id: net.id, name: net.name },
-        ssid: { id, number: s.number, name: s.name, tunneledTo: null },
+        ssid: { id, number: s.number, name: s.name, tunneledTo: tunnel ? { network: { id: tunnel.net.id, name: tunnel.net.name }, cluster: { id: tunnel.cluster.clusterId, name: tunnel.cluster.name } } : null },
         clients: { total: r.clients },
         devices: { byProductType: { wireless: s.aps } },
         usage: usageJson(r, units),
@@ -118,12 +122,12 @@ function usageByNetworkBySsid(ctx) {
 
 // SSIDs across networks share a row when they share a name, as in the top SSIDs summary.
 function usageBySsid(ctx) {
-  const { t0, t1, nets, units } = usageScope(ctx);
+  const { t0, t1, nets, units, only } = usageScope(ctx);
   const names = arrayParam(ctx.query, 'ssidNames');
   const byName = new Map();
   for (const net of nets) {
-    const by = ssidUsage(net, t0, t1);
-    for (const s of ssidsOf(net, by)) {
+    const by = ssidUsage(net, t0, t1, only.get(net));
+    for (const s of ssidsOf(net, by, only.get(net))) {
       if (names.length && !names.includes(s.name)) continue;
       const row = byName.get(s.name) ?? { ...EMPTY, aps: 0 };
       const r = by.get(s.number) ?? EMPTY;
