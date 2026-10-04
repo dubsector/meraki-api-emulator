@@ -110,6 +110,14 @@ export function simSettings(dev) {
 
 export const primarySlot = (dev) => simSettings(dev).order[0];
 
+// The slot that was primary at t. Changes are kept as { at, from, to }.
+export function primaryAt(dev, t) {
+  const changes = dev.cellularPrimaryChanges ?? [];
+  let slot = changes[0]?.from ?? primarySlot(dev);
+  for (const c of changes) if (c.at <= t) slot = c.to;
+  return slotsOf(dev).includes(slot) ? slot : primarySlot(dev);
+}
+
 // The 5G modem rides 5G non-standalone, the LTE one LTE.
 export const signalType = (dev) => (dev.info.signalTypes.includes('5GNSA') ? '5GNSA' : 'LTE');
 
@@ -181,4 +189,18 @@ export function usageBetween(dev, a, b, now) {
     for (; t < stop; t += SLOT) total += slots[(t - day * DAY) / SLOT];
   }
   return total;
+}
+
+// Bytes each slot carried in [a, b): data goes over the SIM that was primary
+// at the time, so a later change of primary doesn't move it.
+export function usageBySlot(dev, a, b, now) {
+  const out = new Map(slotsOf(dev).map((s) => [s, 0]));
+  const cuts = (dev.cellularPrimaryChanges ?? []).map((c) => c.at).filter((t) => t > a && t < b);
+  let from = a;
+  for (const to of [...cuts, b]) {
+    const slot = primaryAt(dev, from);
+    out.set(slot, out.get(slot) + usageBetween(dev, from, to, now));
+    from = to;
+  }
+  return out;
 }

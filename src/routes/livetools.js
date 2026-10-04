@@ -66,7 +66,7 @@ function lanHost(net, ip) {
 // Round trips in ms for `count` pings sent a second apart from t, null for a lost one.
 function pingTimes(dev, target, t, count) {
   const net = dev.net;
-  const hop = dev.productType === 'appliance' ? 0 : 0.4;
+  const hop = dev.productType === 'appliance' || dev.productType === 'cellularGateway' ? 0 : 0.4;
   const key = hashStr(`${dev.serial}:${target}`);
   const times = [];
   const local = lanHost(net, target);
@@ -87,6 +87,8 @@ function pingTimes(dev, target, t, count) {
 }
 
 function internet(dev, target, at, key, hop) {
+  // An MG has its own cellular uplink, slower and jumpier than a wired one.
+  if (dev.productType === 'cellularGateway') return isDown(dev, at) ? null : 38 + (hashStr(target) % 12) + Math.abs(gauss(key, at)) * 8;
   const mx = dev.net.mx;
   if (!mx) return 12 + (hashStr(target) % 5) + hop + Math.abs(gauss(key, at)) * 1.5;
   const uplink = isDown(mx, at) ? null : activeUplink(mx, at);
@@ -113,7 +115,7 @@ function pingResults(times) {
 // The cloud pinging the device, through its network's MX when it has one.
 function pingDeviceTimes(dev, t, count) {
   const key = hashStr(`${dev.serial}:cloud`);
-  const hop = dev.productType === 'appliance' ? 0 : 0.4;
+  const hop = dev.productType === 'appliance' || dev.productType === 'cellularGateway' ? 0 : 0.4;
   return Array.from({ length: count }, (_, i) => {
     const at = t + i;
     if (isDown(dev, at)) return null;
@@ -232,7 +234,7 @@ function wakeOnLanVlans(dev) {
 // ── The tools ──
 
 // Sensors have no IP address of their own, so they can't ping or be pinged.
-const IP_KINDS = ['appliance', 'switch', 'wireless', 'camera'];
+const IP_KINDS = ['appliance', 'switch', 'wireless', 'camera', 'cellularGateway'];
 
 // Each tool: the ID field in its answers, the path param of its GET, the
 // device kinds it runs on, how long it runs, its request fields and what

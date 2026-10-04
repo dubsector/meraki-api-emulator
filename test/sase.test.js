@@ -244,6 +244,29 @@ describe('Secure Access', () => {
     await ok(sb.del(`/organizations/${corp.id}/configTemplates/${t.id}`), 204);
     assert.deepEqual((await ok(sb.get(`${O}/sites`))).items.map((s) => s.network.id), [mxPart.id]);
   });
+
+  test('a site stays while its network has no MX or is bound to a template, holding its connector', async () => {
+    fresh();
+    await ok(sb.post(`${O}/integrations`, KEYS), 201);
+    const austin = net('Branch - Austin');
+    const reno = net('Warehouse - Reno');
+    await attach([austin, 'us-east-1'], [reno, 'us-west-1']);
+    const connectors = (await ok(sb.get(`${O}/connectors`))).items;
+    const mx = austin.mx;
+    await ok(sb.post(`/networks/${austin.id}/devices/remove`, { serial: mx.serial }), 204);
+    const t = await ok(sb.post(`/organizations/${corp.id}/configTemplates`, { name: 'Warehouses', copyFromNetworkId: reno.id }), 201);
+    await ok(sb.post(`/networks/${reno.id}/bind`, { configTemplateId: t.id }));
+    const sites = (await ok(sb.get(`${O}/sites`))).items;
+    assert.deepEqual(sites.map((s) => [s.network.id, s.model]), [[austin.id, null], [reno.id, reno.mx.model]]);
+    assert.equal((await ok(sb.get(`${O}/sites?status=offline`))).items[0].network.id, austin.id);
+    assert.deepEqual((await ok(sb.get(`${O}/sites/connectivity/overview`))).counts, { byStatus: { healthy: { total: 1 }, degraded: { total: 0 }, offline: { total: 1 } }, total: 2 });
+    for (const c of connectors) assert.match(await errorOf(sb.post(`${O}/connectors/batchDelete`, { items: [{ connectorId: c.id }] })), /still has sites/);
+    // The MX coming back finds its site and connector as they were.
+    await ok(sb.post(`/networks/${austin.id}/devices/claim`, { serials: [mx.serial] }));
+    const back = (await ok(sb.get(`${O}/sites`))).items.find((s) => s.network.id === austin.id);
+    assert.deepEqual([back.siteId, back.model], [sites[0].siteId, mx.model]);
+    assert.deepEqual((await ok(sb.get(`${O}/connectors`))).items.map((c) => c.counts.sitesConnected.total), [1, 1]);
+  });
 });
 
 describe('Secure Access in Acme Test Lab', () => {

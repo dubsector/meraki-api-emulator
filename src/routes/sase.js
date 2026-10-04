@@ -53,13 +53,21 @@ function nearestRegion(net) {
   return REGIONS.reduce((a, b) => (dist(b) < dist(a) ? b : a));
 }
 
-// What a site or eligible network is: an MX network not bound to a template,
-// or a template with the appliance product.
-function targetOf(org, id) {
+// What a site names: a network of the organization or a template. A network
+// keeps its site while it has no MX (offline) or is bound to a template.
+function siteTarget(org, id) {
   const net = org.networks.find((n) => n.id === id);
-  if (net) return net.mx && !net.template ? { net } : null;
-  const t = org.configTemplates?.list.find((x) => x.id === id);
-  return t?.productTypes.includes('appliance') ? { template: t } : null;
+  if (net) return { net };
+  const template = org.configTemplates?.list.find((x) => x.id === id);
+  return template ? { template } : null;
+}
+
+// What can be attached: an MX network not bound to a template, or a template
+// with the appliance product.
+function targetOf(org, id) {
+  const x = siteTarget(org, id);
+  if (x?.net) return x.net.mx && !x.net.template ? x : null;
+  return x?.template.productTypes.includes('appliance') ? x : null;
 }
 
 function targets(org) {
@@ -82,7 +90,7 @@ const subnetsOf = (x) => {
 // Sites whose network or template is still there, with what they name.
 function liveSites(org) {
   return (org.sase?.sites ?? []).flatMap((s) => {
-    const x = targetOf(org, s.networkId);
+    const x = siteTarget(org, s.networkId);
     return x ? [{ s, ...x }] : [];
   });
 }

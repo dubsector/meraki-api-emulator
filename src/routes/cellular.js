@@ -6,7 +6,7 @@ import { firmwareName } from './firmware.js';
 import { deviceUrl } from '../format.js';
 import { arrayParam, badRequest, boolParam, intParam, notFound, paginateItems, timeWindow } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
-import { BANDS, REFRESH, SLOT, isGateway, locationAt, logicalSlot, primarySlot, simOf, simSettings, simUsable, slotsOf, towerOf, usageBetween } from '../sim/cellular.js';
+import { BANDS, REFRESH, SLOT, isGateway, locationAt, logicalSlot, simOf, simSettings, simUsable, slotsOf, towerOf, usageBySlot } from '../sim/cellular.js';
 import { buckets } from '../sim/usage.js';
 import { lastReportedAt } from '../sim/outages.js';
 import { DAY, iso, weekday } from '../time.js';
@@ -18,6 +18,7 @@ const SLOTS = ['sim1', 'sim2', 'esim'];
 const INTERVALS = [300, 1200, 14400, 86400];
 const MAX_PROFILES = 100;
 const MAX_ASSIGNMENTS = 100;
+const KEEP_CHANGES = 400 * DAY;
 // Which start value goes with each reset term.
 const STARTS = { daily: 'hourOfDay', weekly: 'dayOfWeek', monthly: 'dayOfMonth' };
 
@@ -40,7 +41,11 @@ function gatewayOf(ctx) {
   return dev;
 }
 
-const assignmentOf = (org, dev) => storeOf(org).assignments.find((a) => a.dev === dev);
+// Assignments of devices still in the organization: a removed MG's drops out.
+const assignmentsOf = (org) => storeOf(org).assignments.filter((a) => org.devices.includes(a.dev));
+const assignmentOf = (org, dev) => assignmentsOf(org).find((a) => a.dev === dev);
+// A network whose MGs have a profile of the organization can't leave it.
+export const usesDataProfiles = (net) => !!net.org.cellularData?.assignments.some((a) => net.devices.includes(a.dev));
 
 // The usage term a device's profile sets for a slot, or the calendar month.
 // Returns [start, end) and the rule's cap in bytes, if any.
@@ -173,6 +178,11 @@ function updateSims(ctx) {
     if (timeout != null) failover.timeout = timeout;
   }
   if (!simUsable(dev, order[0], ctx.now)) throw badRequest(`The eSIM in ${order[0]} is deactivated, so it can't be the primary SIM`);
+  if (order[0] !== cur.order[0]) {
+    // Changes older than any term or history window reads are dropped.
+    const kept = (dev.cellularPrimaryChanges ?? []).filter((c) => c.at > ctx.now - KEEP_CHANGES);
+    dev.cellularPrimaryChanges = [...kept, { at: ctx.now, from: cur.order[0], to: order[0] }];
+  }
   dev.cellularSims = { order, apns, failover };
   return simsJson(dev, ctx.now);
 }
@@ -238,27 +248,26 @@ function dataDeviceJson(org, d, now) {
   };
 }
 
-// Usage per slot over the current term: only the primary SIM carries data.
+// Usage per slot over its current term, carried by whichever SIM was primary.
 function usageJson(org, d, now) {
-  const primary = primarySlot(d);
   const last = Math.min(Math.floor(now / SLOT) * SLOT, lastReportedAt(d, now));
   return {
     serial: d.serial,
     bySlot: slotsOf(d).map((slot) => {
       const name = logicalSlot(d, slot);
       const { start, end, cap } = termOf(org, d, name, now);
-      return { slot: name, isActive: simUsable(d, slot, now), total: String(slot === primary ? usageBetween(d, start, end, now) : 0), lastUpdatedAt: iso(last), startTs: iso(start), endTs: iso(end - 1), limit: cap == null ? null : String(cap) };
+      return { slot: name, isActive: simUsable(d, slot, now), total: String(usageBySlot(d, start, end, now).get(slot)), lastUpdatedAt: iso(last), startTs: iso(start), endTs: iso(end - 1), limit: cap == null ? null : String(cap) };
     }),
   };
 }
 
 function usageHistory(d, t0, t1, interval, now) {
-  const primary = primarySlot(d);
   return {
     serial: d.serial,
     intervals: buckets(t0, t1, interval).map(([s, e]) => {
-      const total = usageBetween(d, Math.max(s, t0), Math.min(e, t1), now);
-      return { startTs: iso(s), endTs: iso(e), usage: { total, bySim: slotsOf(d).map((name) => ({ name, total: name === primary ? total : 0 })) } };
+      const bySlot = usageBySlot(d, Math.max(s, t0), Math.min(e, t1), now);
+      const total = [...bySlot.values()].reduce((a, x) => a + x, 0);
+      return { startTs: iso(s), endTs: iso(e), usage: { total, bySim: slotsOf(d).map((name) => ({ name, total: bySlot.get(name) })) } };
     }),
   };
 }
@@ -368,7 +377,7 @@ export default [
       const store = storeOf(org);
       const ids = arrayParam(ctx.query, 'profileIds');
       const serials = arrayParam(ctx.query, 'serials');
-      const assigned = (p) => store.assignments.filter((a) => a.profile === p);
+      const assigned = (p) => assignmentsOf(org).filter((a) => a.profile === p);
       const rows = store.profiles.filter((p) => (!ids.length || ids.includes(p.profileId)) && (!serials.length || assigned(p).some((a) => serials.includes(a.dev.serial))));
       return paginateItems(ctx, rows, (p) => p.profileId, { def: 100, max: 1000 }, (p) => {
         const { rules, ...rest } = profileJson(p);
@@ -396,7 +405,7 @@ export default [
       const org = orgOf(ctx);
       const ids = arrayParam(ctx.query, 'profileIds');
       const serials = arrayParam(ctx.query, 'serials');
-      const rows = storeOf(org).assignments.filter((a) => (!ids.length || ids.includes(a.profile.profileId)) && (!serials.length || serials.includes(a.dev.serial)));
+      const rows = assignmentsOf(org).filter((a) => (!ids.length || ids.includes(a.profile.profileId)) && (!serials.length || serials.includes(a.dev.serial)));
       return paginateItems(ctx, rows, (a) => a.assignmentId, { def: 100, max: 1000 }, (a) => ({ assignmentId: a.assignmentId, profile: { id: a.profile.profileId }, device: { serial: a.dev.serial } }));
     },
   },
@@ -410,7 +419,7 @@ export default [
       const org = orgOf(ctx);
       const store = storeOf(org);
       const made = assignmentItems(org, ctx.body.items).map(({ profile, dev }) => {
-        store.assignments = store.assignments.filter((a) => a.dev !== dev);
+        store.assignments = assignmentsOf(org).filter((a) => a.dev !== dev);
         const a = { assignmentId: nextId(ctx, org, 'cellularAssignment'), profile, dev };
         store.assignments.push(a);
         return { assignmentId: a.assignmentId, profile: { id: profile.profileId }, device: { serial: dev.serial } };
