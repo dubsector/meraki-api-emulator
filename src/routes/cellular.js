@@ -6,7 +6,7 @@ import { firmwareName } from './firmware.js';
 import { deviceUrl } from '../format.js';
 import { arrayParam, badRequest, boolParam, intParam, notFound, paginateItems, timeWindow } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
-import { BANDS, REFRESH, SLOT, isGateway, locationAt, primarySlot, simOf, simSettings, slotsOf, towerOf, usageBetween } from '../sim/cellular.js';
+import { BANDS, REFRESH, SLOT, isGateway, locationAt, logicalSlot, primarySlot, simOf, simSettings, simUsable, slotsOf, towerOf, usageBetween } from '../sim/cellular.js';
 import { buckets } from '../sim/usage.js';
 import { lastReportedAt } from '../sim/outages.js';
 import { DAY, iso, weekday } from '../time.js';
@@ -92,12 +92,13 @@ function apnJson(a) {
   return { name: a.name, allowedIpTypes: a.allowedIpTypes, authentication: auth };
 }
 
-function simsJson(dev) {
+function simsJson(dev, now) {
   const s = simSettings(dev);
   return {
     sims: slotsOf(dev).map((slot) => {
-      const sim = simOf(dev, slot);
-      return { slot, iccid: sim.iccid, imsi: sim.imsi, msisdn: sim.msisdn, isPrimary: slot === s.order[0], status: slot === s.order[0] ? 'active' : 'standby', apns: (s.apns[slot] ?? []).map(apnJson) };
+      const sim = simOf(dev, slot, now);
+      const status = !simUsable(dev, slot, now) ? 'not inserted' : slot === s.order[0] ? 'active' : 'standby';
+      return { slot, iccid: sim.iccid, imsi: sim.imsi, msisdn: sim.msisdn, isPrimary: slot === s.order[0], status, apns: (s.apns[slot] ?? []).map(apnJson) };
     }),
     simOrdering: s.order,
     simFailover: s.failover,
@@ -171,8 +172,9 @@ function updateSims(ctx) {
     if (enabled != null) failover.enabled = enabled;
     if (timeout != null) failover.timeout = timeout;
   }
+  if (!simUsable(dev, order[0], ctx.now)) throw badRequest(`The eSIM in ${order[0]} is deactivated, so it can't be the primary SIM`);
   dev.cellularSims = { order, apns, failover };
-  return simsJson(dev);
+  return simsJson(dev, ctx.now);
 }
 
 function updateBandMasks(ctx) {
@@ -216,7 +218,7 @@ function dataDevices(ctx, org) {
       (!profiles.length || (p && profiles.includes(p.profileId))) &&
       (!p || !noProfiles.includes(p.profileId)) &&
       (!types.length || types.includes(d.model.toLowerCase()) || types.includes(d.productType.toLowerCase())) &&
-      slots.every((s) => slotsOf(d).includes(s)) &&
+      slots.every((s) => slotsOf(d).some((x) => logicalSlot(d, x) === s)) &&
       (!name || (d.name ?? '').toLowerCase().includes(name))
     );
   });
@@ -230,7 +232,7 @@ function dataDeviceJson(org, d, now) {
     url: deviceUrl(d),
     model: d.model.toLowerCase(),
     software: { currentVersion: { shortName: firmwareName(d, now) } },
-    modems: [{ index: 0, sims: slotsOf(d).map((slot) => ({ slot, type: 'sim', active: true })) }],
+    modems: [{ index: 0, sims: slotsOf(d).map((slot) => ({ slot: logicalSlot(d, slot), type: slot === d.info.esim ? 'esim' : 'sim', active: simUsable(d, slot, now) })) }],
     profile: { assigned: !!p, id: p?.profileId ?? null, name: p?.name ?? null },
     network: { name: d.net.name, id: d.net.id },
   };
@@ -243,8 +245,9 @@ function usageJson(org, d, now) {
   return {
     serial: d.serial,
     bySlot: slotsOf(d).map((slot) => {
-      const { start, end, cap } = termOf(org, d, slot, now);
-      return { slot, isActive: true, total: String(slot === primary ? usageBetween(d, start, end, now) : 0), lastUpdatedAt: iso(last), startTs: iso(start), endTs: iso(end - 1), limit: cap == null ? null : String(cap) };
+      const name = logicalSlot(d, slot);
+      const { start, end, cap } = termOf(org, d, name, now);
+      return { slot: name, isActive: simUsable(d, slot, now), total: String(slot === primary ? usageBetween(d, start, end, now) : 0), lastUpdatedAt: iso(last), startTs: iso(start), endTs: iso(end - 1), limit: cap == null ? null : String(cap) };
     }),
   };
 }
@@ -490,7 +493,7 @@ export default [
       return { enabled: ctx.body.enabled };
     },
   },
-  { op: 'getDeviceCellularSims', path: '/devices/{serial}/cellular/sims', sample: { org: 1, serial: 'cellularGateway' }, handler: (ctx) => simsJson(gatewayOf(ctx)) },
+  { op: 'getDeviceCellularSims', path: '/devices/{serial}/cellular/sims', sample: { org: 1, serial: 'cellularGateway' }, handler: (ctx) => simsJson(gatewayOf(ctx), ctx.now) },
   { op: 'updateDeviceCellularSims', method: 'PUT', path: '/devices/{serial}/cellular/sims', sample: { org: 1, serial: 'cellularGateway' }, handler: updateSims },
   {
     op: 'createDeviceCellularUplinksBandsMasksUpdate',

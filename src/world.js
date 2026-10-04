@@ -769,6 +769,7 @@ export function swapDevice(world, dev, spare, afterAction) {
   delete dev.readingsCache;
   delete dev.sensorCommands;
   delete dev.cellularUsageCache; // its rate depends on the model's modem
+  delete dev.esim; // the eSIM's profiles stay on the old hardware
   if (dev.productType === 'wireless' && !iotCapable(dev)) for (const k of ['zigbeeLocks', 'zigbeeGateway', 'zigbeeEnrollments', 'wirelessEsl']) delete dev[k];
   world.deviceBySerial.set(dev.serial, dev);
   if (dev.productType === 'switch') renameSwitch(dev.net, old.serial, dev.serial);

@@ -2131,7 +2131,49 @@ def cellulargateway():
         u = d.cellularGateway.updateNetworkCellularGatewayUplink(kgn, bandwidthLimits={"limitUp": 51200, "limitDown": None})
         check("updateNetworkCellularGatewayUplink and getNetworkCellularGatewayUplink", u == {"bandwidthLimits": {"limitUp": 51200, "limitDown": None}} and d.cellularGateway.getNetworkCellularGatewayUplink(kgn) == u, u)
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway]
+@scenario
+def mgnetwork():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        cg = d.cellularGateway
+        lab = next(o["id"] for o in d.organizations.getOrganizations() if o["name"] == "Acme Test Lab")
+        kgn = next(x["id"] for x in d.organizations.getOrganizationNetworks(lab) if x["name"] == "Lab - Kingston")
+        mg52 = next(x["serial"] for x in d.networks.getNetworkDevices(kgn) if x["model"] == "MG52")
+
+        pool = cg.updateNetworkCellularGatewaySubnetPool(kgn, cidr="10.20.0.0/16", mask=24)
+        lan = cg.getDeviceCellularGatewayLan(mg52)
+        check("updateNetworkCellularGatewaySubnetPool moves each MG's LAN", pool["subnets"][0]["subnet"] == "10.20.1.0/24" and lan["deviceSubnet"] == "10.20.1.0/24" and cg.getNetworkCellularGatewaySubnetPool(kgn) == pool, pool)
+        dhcp = cg.updateNetworkCellularGatewayDhcp(kgn, dhcpLeaseTime="4 hours", dnsNameservers="custom", dnsCustomNameservers=["172.16.2.111"])
+        check("updateNetworkCellularGatewayDhcp and getNetworkCellularGatewayDhcp", dhcp == {"dhcpLeaseTime": "4 hours", "dnsNameservers": "custom", "dnsCustomNameservers": ["172.16.2.111"]} and cg.getNetworkCellularGatewayDhcp(kgn) == dhcp, dhcp)
+        dest = cg.updateNetworkCellularGatewayConnectivityMonitoringDestinations(kgn, destinations=[{"ip": "1.2.3.4", "description": "Lab", "default": True}])
+        check("updateNetworkCellularGatewayConnectivityMonitoringDestinations and its GET", dest == {"destinations": [{"ip": "1.2.3.4", "description": "Lab", "default": True}]} and cg.getNetworkCellularGatewayConnectivityMonitoringDestinations(kgn) == dest, dest)
+
+        inv = cg.getOrganizationCellularGatewayEsimsInventory(lab)
+        eid = inv["items"][0]["eid"]
+        check("getOrganizationCellularGatewayEsimsInventory", len(inv["items"]) == 1 and inv["items"][0]["device"]["serial"] == mg52, inv)
+        off = cg.updateOrganizationCellularGatewayEsimsInventory(lab, eid, status="deactivated")
+        sims = d.devices.getDeviceCellularSims(mg52)
+        check("updateOrganizationCellularGatewayEsimsInventory shows in the SIMs view", off["profiles"][0]["status"] == "deactivated" and sims["sims"][1]["status"] == "not inserted", off)
+        cg.updateOrganizationCellularGatewayEsimsInventory(lab, eid, status="activated")
+        providers = cg.getOrganizationCellularGatewayEsimsServiceProviders(lab)
+        check(f"getOrganizationCellularGatewayEsimsServiceProviders ({len(providers['items'])} providers)", any(p["name"] == "AT&T" for p in providers["items"]), providers["items"][:1])
+        acct = cg.createOrganizationCellularGatewayEsimsServiceProvidersAccount(lab, "0987654321", "secret", {"name": "AT&T"}, "My AT&T account", "MerakiUser")
+        listed = cg.getOrganizationCellularGatewayEsimsServiceProvidersAccounts(lab, accountIds=[987654321])
+        check("createOrganizationCellularGatewayEsimsServiceProvidersAccount and the accounts list", "apiKey" not in acct and listed[0]["items"] == [acct], listed)
+        acct = cg.updateOrganizationCellularGatewayEsimsServiceProvidersAccount(lab, "0987654321", title="Lab AT&T", apiKey="other")
+        check("updateOrganizationCellularGatewayEsimsServiceProvidersAccount", acct["title"] == "Lab AT&T", acct)
+        comm = cg.getOrganizationCellularGatewayEsimsServiceProvidersAccountsCommunicationPlans(lab, ["0987654321"])
+        rates = cg.getOrganizationCellularGatewayEsimsServiceProvidersAccountsRatePlans(lab, ["0987654321"])
+        check(f"communication and rate plans ({len(comm['items'])} and {len(rates['items'])})", len(comm["items"]) == 2 and len(rates["items"]) == 3, comm)
+        swap = cg.createOrganizationCellularGatewayEsimsSwap(lab, [{"eid": eid, "target": {"accountId": "0987654321", "communicationPlan": comm["items"][1]["name"], "ratePlan": rates["items"][2]["name"]}}])
+        status = cg.updateOrganizationCellularGatewayEsimsSwap(eid, lab)
+        sims = d.devices.getDeviceCellularSims(mg52)
+        check("createOrganizationCellularGatewayEsimsSwap and updateOrganizationCellularGatewayEsimsSwap", swap["status"] == "Completed" and status == swap and sims["sims"][1]["iccid"] == swap["iccid"], status)
+        cg.deleteOrganizationCellularGatewayEsimsServiceProvidersAccount(lab, "0987654321")
+        check("deleteOrganizationCellularGatewayEsimsServiceProvidersAccount", cg.getOrganizationCellularGatewayEsimsServiceProvidersAccounts(lab)[0]["items"] == [], None)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

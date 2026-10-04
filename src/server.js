@@ -23,6 +23,7 @@ import orgTools from './routes/orgtools.js';
 import captures from './routes/captures.js';
 import cellular from './routes/cellular.js';
 import cellularGateway from './routes/cellulargateway.js';
+import esims from './routes/esims.js';
 import appliance from './routes/appliance.js';
 import shaping from './routes/shaping.js';
 import firewall from './routes/firewall.js';
@@ -88,14 +89,14 @@ const GLUED_URL = new RegExp(`^${API_PREFIX}https?://`, 'i');
 export const SDK_HINT = 'This path has a full URL appended to the base URL. The Meraki Python SDK sends that when paging from a host outside meraki.com: use base_url="http://emulator.meraki.com/api/v1" with requests_proxy set to the emulator (see the README)';
 export const CONNECT_HINT = 'The emulator speaks plain HTTP, use an http:// base URL';
 
-export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...orgSecurity, ...branding, ...insight, ...orgTools, ...licenses, ...templates, ...policyObjects, ...globalFirewall, ...globalGroups, ...adaptivePolicy, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...cellularGateway, ...clients, ...networkwide, ...reporting, ...authUsers, ...firmware, ...floorplans, ...appliance, ...firewall, ...vpn, ...dns, ...mxInterfaces, ...mxWireless, ...shaping, ...switches, ...switchports, ...stacks, ...vlanProfiles, ...routing, ...switchPolicies, ...switchSettings, ...switchDhcp, ...wireless, ...wirelessstats, ...orgwireless, ...wirelessRadio, ...wirelessLocation, ...airMarshal, ...ssids, ...ssidProfiles, ...splash, ...wirelessDevices, ...devices, ...camera, ...cameraRoles, ...cameraAnalytics, ...sensors, ...zigbee, ...livetools, ...webhooks, ...actionBatches, ...identities].map((r) => ({ method: 'GET', ...r }));
+export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin, ...orgSecurity, ...branding, ...insight, ...orgTools, ...licenses, ...templates, ...policyObjects, ...globalFirewall, ...globalGroups, ...adaptivePolicy, ...alerts, ...networks, ...provisioning, ...captures, ...cellular, ...cellularGateway, ...esims, ...clients, ...networkwide, ...reporting, ...authUsers, ...firmware, ...floorplans, ...appliance, ...firewall, ...vpn, ...dns, ...mxInterfaces, ...mxWireless, ...shaping, ...switches, ...switchports, ...stacks, ...vlanProfiles, ...routing, ...switchPolicies, ...switchSettings, ...switchDhcp, ...wireless, ...wirelessstats, ...orgwireless, ...wirelessRadio, ...wirelessLocation, ...airMarshal, ...ssids, ...ssidProfiles, ...splash, ...wirelessDevices, ...devices, ...camera, ...cameraRoles, ...cameraAnalytics, ...sensors, ...zigbee, ...livetools, ...webhooks, ...actionBatches, ...identities].map((r) => ({ method: 'GET', ...r }));
 
 // Network settings that come from the config template a network is bound to.
 // Warm spare (and its redundancy view) names the network's own MXes, so it stays local, as do switch
 // link aggregations, the switch and wireless alternate management interfaces,
 // AP port profiles (their assignments name APs), multicast rendezvous points and
 // VLAN profile assignments.
-const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance(?!\/warmSpare|\/devices\/redundancy)|wireless(?!\/alternateManagementInterface|\/ethernet|\/zigbee|\/electronicShelfLabel)|switch\/(?:settings|accessControlLists|accessPolicies|qosRules|dscpToCosMappings|routing\/(?:ospf|multicast(?!\/rendezvousPoints))|stp|mtu|stormControl|dhcpServerPolicy|portSchedules)|cellularGateway\/uplink|groupPolicies|netflow|trafficAnalysis|vlanProfiles(?!\/assignments)|syslogServers|devices\/syslog|snmp|alerts|webhooks\/(?:httpServers|payloadTemplates)|settings)\b/;
+const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance(?!\/warmSpare|\/devices\/redundancy)|wireless(?!\/alternateManagementInterface|\/ethernet|\/zigbee|\/electronicShelfLabel)|switch\/(?:settings|accessControlLists|accessPolicies|qosRules|dscpToCosMappings|routing\/(?:ospf|multicast(?!\/rendezvousPoints))|stp|mtu|stormControl|dhcpServerPolicy|portSchedules)|cellularGateway\/(?:uplink|dhcp|subnetPool|connectivityMonitoringDestinations)|groupPolicies|netflow|trafficAnalysis|vlanProfiles(?!\/assignments)|syslogServers|devices\/syslog|snmp|alerts|webhooks\/(?:httpServers|payloadTemplates)|settings)\b/;
 
 // One entry per path template, holding a route per method.
 function compile(routes) {
