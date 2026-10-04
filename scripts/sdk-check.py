@@ -2173,7 +2173,43 @@ def mgnetwork():
         check("deleteOrganizationCellularGatewayEsimsServiceProvidersAccount", cg.getOrganizationCellularGatewayEsimsServiceProvidersAccounts(lab)[0]["items"] == [], None)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork]
+@scenario
+def sase():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o = d.organizations
+        org = next(x["id"] for x in o.getOrganizations() if x["name"] == "Acme Corporation")
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        hq, lon = nets["HQ - San Francisco"], nets["Remote - London"]
+
+        eligible = o.getOrganizationSaseNetworksEligible(org, total_pages="all", perPage=3)
+        check(f"getOrganizationSaseNetworksEligible pages ({len(eligible['items'])} networks)", sorted(x["networkId"] for x in eligible["items"]) == sorted(i for n, i in nets.items()), eligible["meta"])
+        regions = o.getOrganizationSaseRegions(org)
+        check(f"getOrganizationSaseRegions ({len(regions['items'])} regions)", all(r["connector"]["id"] is None for r in regions["items"]), regions["items"][:1])
+        made = o.createOrganizationSaseIntegration(org, {"key": "k", "secret": "s"})
+        got = o.getOrganizationSaseIntegration(org, made["integrationId"])
+        check("createOrganizationSaseIntegration and getOrganizationSaseIntegration", got == made and "secret" not in str(made), made)
+        job = o.attachOrganizationSaseSites(org, [{"network": {"id": hq}, "region": {"slug": "us-west-1"}}, {"network": {"id": lon}, "region": {"slug": "eu-west-1"}}])
+        check("attachOrganizationSaseSites", job["status"] == "completed" and job["counts"]["jobs"]["byStatus"]["completed"] == 5, job)
+        sites = o.getOrganizationSaseSites(org, total_pages="all", perPage=3)
+        check(f"getOrganizationSaseSites ({len(sites['items'])} sites)", [x["network"]["id"] for x in sites["items"]] == [hq, lon], sites["meta"])
+        site = sites["items"][0]["siteId"]
+        upd = o.updateOrganizationSaseSite(org, site, routing={"defaultRoute": {"enabled": False}})
+        check("updateOrganizationSaseSite", upd["routing"]["defaultRoute"]["enabled"] is False and o.getOrganizationSaseSites(org, siteId=site)["items"][0]["routing"] == upd["routing"], upd)
+        hist = o.getOrganizationSaseSitesConnectivityHistoryBySite(org, siteIds=[site], timespan="-2hours")
+        check("getOrganizationSaseSitesConnectivityHistoryBySite", len(hist["items"]) == 1 and len(hist["items"][0]["history"]) == 25, hist["items"][0]["history"][-1:])
+        over = o.getOrganizationSaseSitesConnectivityOverview(org)
+        check("getOrganizationSaseSitesConnectivityOverview", over["counts"]["total"] == 2, over)
+        conns = o.getOrganizationSaseConnectors(org)["items"]
+        check(f"getOrganizationSaseConnectors ({len(conns)} connectors)", [c["region"]["slug"] for c in conns] == ["us-west-1", "eu-west-1"], conns[:1])
+        o.detachOrganizationSaseSites(org, items=[{"siteId": sites["items"][1]["siteId"]}])
+        gone = o.batchOrganizationSaseConnectorsDelete(org, items=[{"connectorId": conns[1]["id"]}])
+        check("detachOrganizationSaseSites and batchOrganizationSaseConnectorsDelete", gone["counts"]["jobs"]["total"] == 1 and len(o.getOrganizationSaseConnectors(org)["items"]) == 1, gone)
+        o.deleteOrganizationSaseIntegration(org, made["integrationId"])
+        check("deleteOrganizationSaseIntegration detaches every site", o.getOrganizationSaseSites(org)["items"] == [], None)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

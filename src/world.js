@@ -849,6 +849,14 @@ function repointDns(org, fromId, toId) {
   }
 }
 
+// Secure Access sites. A network attached once already keeps its own site.
+function repointSase(org, fromId, toId) {
+  const s = org.sase;
+  if (!s) return;
+  const taken = s.sites.some((x) => x.networkId === toId);
+  s.sites = s.sites.flatMap((x) => (x.networkId !== fromId ? [x] : toId && !taken ? [Object.assign(x, { networkId: toId })] : []));
+}
+
 // Adaptive policy on a split network stays on for every part whose devices tag
 // traffic: switches, access points and appliances.
 function splitAdaptivePolicy(org, net, parts) {
@@ -862,7 +870,8 @@ function splitAdaptivePolicy(org, net, parts) {
 // Points what names a network at its new ID, or drops it when toId is null:
 // admin and SAML role privileges, network groups, camera roles, networks with
 // adaptive policy enabled, early access opt-ins, branding policies, firewall rule
-// VLANs, group policy VLAN assignments, DNS profile assignments and spokes' VPN hubs.
+// VLANs, group policy VLAN assignments, DNS profile assignments, Secure Access
+// sites and spokes' VPN hubs.
 function repoint(org, fromId, toId) {
   const swap = (list, idOf, make) => {
     const i = list.findIndex((x) => idOf(x) === fromId);
@@ -883,6 +892,7 @@ function repoint(org, fromId, toId) {
   repointFirewallRules(org, fromId, toId);
   repointGroupPolicies(org, fromId, toId);
   repointDns(org, fromId, toId);
+  repointSase(org, fromId, toId);
   for (const n of org.networks) {
     const s2s = n.config?.siteToSite;
     if (!s2s?.hubs.length) continue;
