@@ -1,6 +1,6 @@
 {
   "name": "meraki-api-emulator",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A local stand-in for the Cisco Meraki Dashboard API v1 with simulated networks, devices and traffic",
   "type": "module",
   "bin": {
