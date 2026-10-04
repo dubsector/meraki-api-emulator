@@ -28,12 +28,21 @@ export const MODELS = {
   MR78: { productType: 'wireless', firmware: 'wireless-31-1-6', watts: 15, speed: '1 Gbps', bands: ['2.4', '5'], ram: 512 },
   MV22: { productType: 'camera', firmware: 'camera-6-3', watts: 7, speed: '1 Gbps', ram: 2048 },
   MV72: { productType: 'camera', firmware: 'camera-6-3', watts: 11, speed: '1 Gbps', ram: 2048 },
+  // Sensors report these metrics through a gateway AP. battery: runs on batteries.
+  MT10: { productType: 'sensor', firmware: 'sensor-2-6', ram: 64, metrics: ['temperature', 'humidity'], battery: true },
+  MT11: { productType: 'sensor', firmware: 'sensor-2-6', ram: 64, metrics: ['temperature'], battery: true },
+  MT12: { productType: 'sensor', firmware: 'sensor-2-6', ram: 64, metrics: ['water'], battery: true },
+  MT14: { productType: 'sensor', firmware: 'sensor-2-6', ram: 128, metrics: ['temperature', 'humidity', 'tvoc', 'pm25', 'noise', 'indoorAirQuality'] },
+  MT15: { productType: 'sensor', firmware: 'sensor-2-6', ram: 128, metrics: ['temperature', 'humidity', 'co2', 'tvoc', 'pm25', 'noise', 'indoorAirQuality'] },
+  MT20: { productType: 'sensor', firmware: 'sensor-2-6', ram: 64, metrics: ['door'], battery: true },
+  MT30: { productType: 'sensor', firmware: 'sensor-2-6', ram: 64, metrics: ['button'], battery: true },
+  MT40: { productType: 'sensor', firmware: 'sensor-2-6', ram: 128, metrics: ['realPower', 'apparentPower', 'current', 'voltage', 'frequency', 'powerFactor', 'downstreamPower', 'remoteLockoutSwitch'] },
 };
 
 export const VMX_SIZES = { small: 'VMX-S', medium: 'VMX-M', large: 'VMX-L', xlarge: 'VMX-XL', 100: 'VMX100' };
 
-export const SERIAL_PREFIX ={ appliance: 'Q2PN', switch: 'Q2HP', wireless: 'Q3AC', camera: 'Q2FV' };
-export const DEVICE_OUI = { appliance: 'e0:55:3d', switch: 'e0:cb:bc', wireless: '0c:8d:db', camera: '34:56:fe' };
+export const SERIAL_PREFIX = { appliance: 'Q2PN', switch: 'Q2HP', wireless: 'Q3AC', camera: 'Q2FV', sensor: 'Q3CA' };
+export const DEVICE_OUI = { appliance: 'e0:55:3d', switch: 'e0:cb:bc', wireless: '0c:8d:db', camera: '34:56:fe', sensor: 'c4:8b:a3' };
 
 // Link profiles: baseline RTT to 8.8.8.8 in ms, and loss/latency behaviour.
 export const ISPS = {
@@ -178,6 +187,17 @@ export const LAB_NETWORKS = [
   {
     code: 'OTT', name: 'Lab - Ottawa', kind: 'office', tz: 'America/Toronto', address: 'Ottawa, ON, Canada', lat: 45.4215, lng: -75.6972, tags: ['lab'],
     mx: { model: 'MX68W', wan: ['cable'] },
+    clients: {},
+  },
+  {
+    code: 'MTL', name: 'Lab - Montreal', kind: 'office', tz: 'America/Toronto', address: 'Montreal, QC, Canada', lat: 45.5019, lng: -73.5674, tags: ['lab'],
+    aps: { model: 'CW9166I', names: ['01'] },
+    ssids: ['iot'],
+    sensors: [
+      { model: 'MT10', name: 'Server-Room' }, { model: 'MT10', name: 'Office' }, { model: 'MT11', name: 'Freezer' }, { model: 'MT12', name: 'Server-Floor' },
+      { model: 'MT14', name: 'Meeting-Room' }, { model: 'MT15', name: 'Open-Area' }, { model: 'MT20', name: 'Back-Door' }, { model: 'MT30', name: 'Help-Desk' },
+      { model: 'MT40', name: 'Rack-PDU' },
+    ],
     clients: {},
   },
 ];

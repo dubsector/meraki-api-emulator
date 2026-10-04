@@ -47,6 +47,7 @@ function powerSupplies(d, status) {
 // Other devices list their management address, behind the MX's NAT, on the
 // management VLAN.
 function uplinkAddresses(d) {
+  if (d.productType === 'sensor') return [];
   const mgmt = managementInterface(d);
   const ipv4 = (w, dhcp) => ({
     protocol: 'ipv4',
@@ -135,7 +136,8 @@ function memoryHistory(ctx) {
     t1 = Math.floor(ctx.now / interval) * interval;
     t0 = t1 - 24 * interval;
   }
-  const devices = filterDevices(q, orgOf(ctx).devices).sort(bySerial);
+  // Sensors don't report memory.
+  const devices = filterDevices(q, orgOf(ctx).devices.filter((d) => d.productType !== 'sensor')).sort(bySerial);
   return paginateItems(ctx, devices, (d) => d.serial, { def: 10, max: 20 }, (d) => memoryItem(d, t0, t1, interval));
 }
 
@@ -299,19 +301,21 @@ export default [
         .sort(bySerial)
         .map((d) => {
           const status = deviceStatus(d, ctx.now);
+          // Sensors reach the cloud through a gateway AP and have no addressing of their own.
+          const ip = d.productType !== 'sensor';
           const out = {
             name: d.name,
             serial: d.serial,
             mac: d.mac,
-            publicIp: publicIpOf(d),
+            publicIp: ip ? publicIpOf(d) : null,
             networkId: d.net.id,
             status,
             lastReportedAt: iso(lastReportedAt(d, ctx.now)),
             lanIp: d.lanIp ?? null,
-            gateway: d.productType === 'appliance' ? d.uplinks[0].gateway : `${d.net.subnet(1)}.1`,
-            ipType: d.productType === 'appliance' ? 'static' : 'dhcp',
-            primaryDns: d.productType === 'appliance' ? '8.8.8.8' : `${d.net.subnet(1)}.1`,
-            secondaryDns: '8.8.4.4',
+            gateway: !ip ? null : d.productType === 'appliance' ? d.uplinks[0].gateway : `${d.net.subnet(1)}.1`,
+            ipType: !ip ? null : d.productType === 'appliance' ? 'static' : 'dhcp',
+            primaryDns: !ip ? null : d.productType === 'appliance' ? '8.8.8.8' : `${d.net.subnet(1)}.1`,
+            secondaryDns: ip ? '8.8.4.4' : null,
             productType: d.productType,
             model: d.model,
             tags: d.tags,

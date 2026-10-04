@@ -107,9 +107,16 @@ export function managementInterface(dev) {
   };
 }
 
+// Sensors reach the cloud through a gateway AP, so they have no IP settings.
+function ipDevice(ctx) {
+  const dev = devOf(ctx);
+  if (dev.productType === 'sensor') throw badRequest('Sensors have no management interface; they connect through a gateway');
+  return dev;
+}
+
 // A static IP on a switch, AP or camera becomes its LAN IP.
 function updateManagementInterface(ctx) {
-  const dev = devOf(ctx);
+  const dev = ipDevice(ctx);
   const mx = dev.productType === 'appliance';
   if (!mx && ctx.body.wan2) throw badRequest("'wan2' is only supported on MX appliances");
   const current = managementInterface(dev);
@@ -438,7 +445,7 @@ export default [
     op: 'getDeviceManagementInterface',
     path: '/devices/{serial}/managementInterface',
     sample: { serial: 'appliance' },
-    handler: (ctx) => managementInterface(devOf(ctx)),
+    handler: (ctx) => managementInterface(ipDevice(ctx)),
   },
   {
     op: 'updateDeviceManagementInterface',
