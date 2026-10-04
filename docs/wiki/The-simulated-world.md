@@ -8,6 +8,7 @@
 | Acme Test Lab | Lab - Toronto | MR | Wireless only |
 | | Lab - Ottawa | MX | One MX68W with Wi-Fi on a single cable uplink, no clients and no VPN |
 | | Lab - Montreal | MR, MT | One CW9166I as the sensor gateway and Zigbee IoT controller (two door locks, ESL on) and nine sensors: two MT10, an MT11 freezer probe, MT12, MT14, MT15, MT20 door, MT30 button and MT40 power monitor |
+| | Lab - Kingston | MG | Two cellular gateways: a dual-SIM 5G MG52 and a single-SIM LTE MG21, each SIM on its own Canadian carrier |
 
 Everything is generated from a seed and the clock:
 

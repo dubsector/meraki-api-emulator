@@ -1,6 +1,7 @@
 import { configOf, exportedSubnets } from '../config.js';
 import { deviceJson, networkJson, networkRef, orgJson } from '../format.js';
 import { arrayParam, badRequest, hasTags, notFound, paginate, paginateItems, timeWindow } from '../http.js';
+import { isGateway, uplinkState } from '../sim/cellular.js';
 import { linkAverage, linkSample, pathLatency, vpnReachable } from '../sim/links.js';
 import { memorySamples, ramKb } from '../sim/memory.js';
 import { deviceStatus, lastReportedAt, statusChanges, uplinkStatus } from '../sim/outages.js';
@@ -36,7 +37,8 @@ function createNetwork(ctx) {
 }
 
 // The address the cloud sees a device on: its MX's WAN 1, or a stand-in without an MX.
-function publicIpOf(d) {
+function publicIpOf(d, now) {
+  if (isGateway(d)) return uplinkState(d, now).publicIp;
   const mx = d.net.mx;
   return mx ? mx.uplinks[0].publicIp : `192.0.2.${40 + d.net.siteIndex}`;
 }
@@ -49,9 +51,13 @@ function powerSupplies(d, status) {
 
 // An MX lists each WAN with the address its management interface gives it.
 // Other devices list their management address, behind the MX's NAT, on the
-// management VLAN.
-function uplinkAddresses(d) {
+// management VLAN. A cellular gateway lists its cellular address.
+function uplinkAddresses(d, now) {
   if (d.productType === 'sensor') return [];
+  if (isGateway(d)) {
+    const u = uplinkState(d, now);
+    return [{ interface: 'cellular', addresses: [{ protocol: 'ipv4', assignmentMode: 'dynamic', address: u.ip, gateway: u.gateway, nameservers: { addresses: [...u.carrier.dns] }, public: { address: u.publicIp } }] }];
+  }
   const mgmt = managementInterface(d);
   const ipv4 = (w, dhcp) => ({
     protocol: 'ipv4',
@@ -67,7 +73,7 @@ function uplinkAddresses(d) {
   const w = mgmt.wan1;
   const lan = `${d.net.subnet(1)}.1`;
   const vlan = w.vlan ?? (d.productType === 'switch' ? configOf(d.net).switchSettings.vlan : 1);
-  return [{ interface: 'man1', addresses: [{ ...ipv4(w, { address: d.lanIp, gateway: lan, nameservers: { addresses: [lan, '8.8.4.4'] } }), public: { address: publicIpOf(d) }, vlan: { id: String(vlan) } }] }];
+  return [{ interface: 'man1', addresses: [{ ...ipv4(w, { address: d.lanIp, gateway: lan, nameservers: { addresses: [lan, '8.8.4.4'] } }), public: { address: publicIpOf(d, now) }, vlan: { id: String(vlan) } }] }];
 }
 
 const MEMORY_INTERVALS = [300, 1200, 3600, 14400];
@@ -158,7 +164,8 @@ function uplinkJson(mx, u, now) {
   };
 }
 
-function uplinkStatuses(ctx) {
+// One row per MX, and with cellular set, per MG with its one cellular uplink.
+function uplinkStatuses(ctx, cellular = false) {
   const org = orgOf(ctx);
   const networkIds = arrayParam(ctx.query, 'networkIds');
   const serials = arrayParam(ctx.query, 'serials');
@@ -171,8 +178,16 @@ function uplinkStatuses(ctx) {
       lastReportedAt: iso(lastReportedAt(n.mx, ctx.now)),
       highAvailability: { enabled: false, role: 'primary' },
       uplinks: n.mx.uplinks.map((u) => uplinkJson(n.mx, u, ctx.now)),
-    }))
-    .sort((a, b) => (a.serial < b.serial ? -1 : 1));
+    }));
+  if (cellular) {
+    for (const d of org.devices) {
+      if (!isGateway(d) || (networkIds.length && !networkIds.includes(d.net.id)) || (serials.length && !serials.includes(d.serial))) continue;
+      const u = uplinkState(d, ctx.now);
+      const uplink = { interface: 'cellular', status: u.down ? 'not connected' : 'active', ip: u.ip, gateway: u.gateway, publicIp: u.publicIp, primaryDns: u.carrier.dns[0], secondaryDns: u.carrier.dns[1], ipAssignedBy: 'dhcp' };
+      rows.push({ networkId: d.net.id, serial: d.serial, model: d.model, lastReportedAt: iso(lastReportedAt(d, ctx.now)), highAvailability: { enabled: false, role: 'primary' }, uplinks: [uplink] });
+    }
+  }
+  rows.sort((a, b) => (a.serial < b.serial ? -1 : 1));
   return paginate(ctx, rows, (r) => r.serial, { def: 1000, max: 1000 });
 }
 
@@ -311,7 +326,7 @@ export default [
             name: d.name,
             serial: d.serial,
             mac: d.mac,
-            publicIp: ip ? publicIpOf(d) : null,
+            publicIp: ip ? publicIpOf(d, ctx.now) : null,
             networkId: d.net.id,
             status,
             lastReportedAt: iso(lastReportedAt(d, ctx.now)),
@@ -324,6 +339,11 @@ export default [
             model: d.model,
             tags: d.tags,
           };
+          if (isGateway(d)) {
+            // Cellular gateways take their address and DNS from the carrier.
+            const u = uplinkState(d, ctx.now);
+            Object.assign(out, { gateway: u.gateway, ipType: 'dhcp', primaryDns: u.carrier.dns[0], secondaryDns: u.carrier.dns[1] });
+          }
           if (d.info.psus) {
             out.components = { powerSupplies: powerSupplies(d, status).map(({ up, ...p }) => ({ ...p, status: up ? 'powering' : 'disconnected', poe: { unit: 'watts', maximum: 740 } })) };
           }
@@ -374,7 +394,7 @@ export default [
     handler: (ctx) => {
       const rows = filterDevices(ctx.query, orgOf(ctx).devices)
         .sort(bySerial)
-        .map((d) => ({ mac: d.mac, name: d.name, network: { id: d.net.id }, productType: d.productType, serial: d.serial, tags: d.tags, uplinks: uplinkAddresses(d) }));
+        .map((d) => ({ mac: d.mac, name: d.name, network: { id: d.net.id }, productType: d.productType, serial: d.serial, tags: d.tags, uplinks: uplinkAddresses(d, ctx.now) }));
       return paginate(ctx, rows, (d) => d.serial, { def: 1000, max: 1000 });
     },
   },
@@ -413,7 +433,7 @@ export default [
   {
     op: 'getOrganizationUplinksStatuses',
     path: '/organizations/{organizationId}/uplinks/statuses',
-    handler: uplinkStatuses,
+    handler: (ctx) => uplinkStatuses(ctx, true),
   },
   {
     op: 'getOrganizationApplianceVpnStatuses',

@@ -37,12 +37,15 @@ export const MODELS = {
   MT20: { productType: 'sensor', firmware: 'sensor-2-6', ram: 64, metrics: ['door'], battery: true },
   MT30: { productType: 'sensor', firmware: 'sensor-2-6', ram: 64, metrics: ['button'], battery: true },
   MT40: { productType: 'sensor', firmware: 'sensor-2-6', ram: 128, metrics: ['realPower', 'apparentPower', 'current', 'voltage', 'frequency', 'powerFactor', 'downstreamPower', 'remoteLockoutSwitch'] },
+  // Cellular gateways. sims: physical SIM slots; signalTypes: what the modem can use.
+  MG21: { productType: 'cellularGateway', firmware: 'cellularGateway-26-1-120', ram: 256, sims: ['sim1'], signalTypes: ['LTE'] },
+  MG52: { productType: 'cellularGateway', firmware: 'cellularGateway-26-1-120', ram: 1024, sims: ['sim1', 'sim2'], signalTypes: ['LTE', '5GNSA', '5GSA'] },
 };
 
 export const VMX_SIZES = { small: 'VMX-S', medium: 'VMX-M', large: 'VMX-L', xlarge: 'VMX-XL', 100: 'VMX100' };
 
-export const SERIAL_PREFIX = { appliance: 'Q2PN', switch: 'Q2HP', wireless: 'Q3AC', camera: 'Q2FV', sensor: 'Q3CA' };
-export const DEVICE_OUI = { appliance: 'e0:55:3d', switch: 'e0:cb:bc', wireless: '0c:8d:db', camera: '34:56:fe', sensor: 'c4:8b:a3' };
+export const SERIAL_PREFIX = { appliance: 'Q2PN', switch: 'Q2HP', wireless: 'Q3AC', camera: 'Q2FV', sensor: 'Q3CA', cellularGateway: 'Q2ZY' };
+export const DEVICE_OUI = { appliance: 'e0:55:3d', switch: 'e0:cb:bc', wireless: '0c:8d:db', camera: '34:56:fe', sensor: 'c4:8b:a3', cellularGateway: '2c:3f:0b' };
 
 // Link profiles: baseline RTT to 8.8.8.8 in ms, and loss/latency behaviour.
 export const ISPS = {
@@ -200,6 +203,11 @@ export const LAB_NETWORKS = [
     ],
     zigbee: { locks: ['Front Door', 'Storage Room'] },
     esl: { hostname: 'esl.acme-lab.example.com', mode: 'high frequency' },
+    clients: {},
+  },
+  {
+    code: 'KGN', name: 'Lab - Kingston', kind: 'office', tz: 'America/Toronto', address: 'Kingston, ON, Canada', lat: 44.2312, lng: -76.486, tags: ['lab'],
+    gateways: [{ model: 'MG52', name: '01' }, { model: 'MG21', name: '02' }],
     clients: {},
   },
 ];

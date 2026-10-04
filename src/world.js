@@ -255,7 +255,7 @@ function buildLab(world, seed, bootTime) {
 export function splitLicense(world, l, counts) {
   world.licenseKeys = (world.licenseKeys ?? 0) + 1;
   const r = new Rand(hashStr(`meraki-api-emulator:${world.seed}:cotermLicense:${world.licenseKeys}`));
-  const types = (m) => (m.startsWith('MR') ? 'wireless' : m === 'MV' ? 'camera' : m === 'MT' ? 'sensor' : m.startsWith('MX') ? 'appliance' : 'switch');
+  const types = (m) => (m.startsWith('MR') ? 'wireless' : m === 'MV' ? 'camera' : m === 'MT' ? 'sensor' : m.startsWith('MG') ? 'cellularGateway' : m.startsWith('MX') ? 'appliance' : 'switch');
   const editions = [...new Set(counts.map((c) => types(c.model)))].map((productType) => l.editions.find((e) => e.productType === productType) ?? { edition: 'Enterprise', productType });
   return { key: newLicenseKey(world, r), duration: l.duration, mode: l.mode, startedAt: l.startedAt, claimedAt: l.claimedAt, invalidatedAt: null, counts, editions };
 }
@@ -277,6 +277,7 @@ function buildNetwork(r, unique, org, tpl, siteIndex) {
   if (tpl.aps) productTypes.push('wireless');
   if (tpl.cameras) productTypes.push('camera');
   if (tpl.sensors) productTypes.push('sensor');
+  if (tpl.gateways) productTypes.push('cellularGateway');
   const combined = productTypes.length > 1;
 
   const net = {
@@ -319,7 +320,7 @@ function buildNetwork(r, unique, org, tpl, siteIndex) {
       lat: tpl.lat + (r.next() - 0.5) * 0.002,
       lng: tpl.lng + (r.next() - 0.5) * 0.002,
       key: hashStr(serial),
-      outageRate: { appliance: 0.004, switch: 0.008, wireless: 0.02, camera: 0.03, sensor: 0.01 }[info.productType],
+      outageRate: { appliance: 0.004, switch: 0.008, wireless: 0.02, camera: 0.03, sensor: 0.01, cellularGateway: 0.006 }[info.productType],
       ...extra,
     };
     net.devices.push(dev);
@@ -356,6 +357,8 @@ function buildNetwork(r, unique, org, tpl, siteIndex) {
     : [];
   // Sensors talk to a gateway AP over Bluetooth, so they have no LAN IP.
   for (const s of tpl.sensors ?? []) addDevice(s.model, `MT-${tpl.code}-${s.name}`, { lanIp: null });
+  // Cellular gateways face the WAN like an MX, with a LAN of their own.
+  for (const g of tpl.gateways ?? []) addDevice(g.model, `MG-${tpl.code}-${g.name}`, { lanIp: null });
 
   buildClients(r, unique, net, tpl);
   buildSwitchPorts(r, net);
@@ -651,7 +654,7 @@ export function claimDevice(world, net, spare) {
     outageRate: 0,
     orderNumber: spare.orderNumber,
     claimedAt: spare.claimedAt,
-    lanIp: pt === 'appliance' || pt === 'sensor' ? null : nextLanIp(net),
+    lanIp: pt === 'appliance' || pt === 'sensor' || pt === 'cellularGateway' ? null : nextLanIp(net),
   };
   if (pt === 'appliance') {
     const host = 10 + (net.siteIndex % 240);
@@ -765,6 +768,7 @@ export function swapDevice(world, dev, spare, afterAction) {
   // A new sensor has its own readings and commands, and Zigbee and ESL need a CW916x.
   delete dev.readingsCache;
   delete dev.sensorCommands;
+  delete dev.cellularUsageCache; // its rate depends on the model's modem
   if (dev.productType === 'wireless' && !iotCapable(dev)) for (const k of ['zigbeeLocks', 'zigbeeGateway', 'zigbeeEnrollments', 'wirelessEsl']) delete dev[k];
   world.deviceBySerial.set(dev.serial, dev);
   if (dev.productType === 'switch') renameSwitch(dev.net, old.serial, dev.serial);

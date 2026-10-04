@@ -2096,7 +2096,42 @@ def zigbee():
         check("getNetworkWirelessElectronicShelfLabelConfiguredDevices", cd == [{"hostname": "esl.example.com", "enabled": False, "mode": "Bluetooth", "sepioo": {"hostname": "esl.example.com"}}], cd)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee]
+
+@scenario
+def cellulargateway():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        lab = next(o["id"] for o in d.organizations.getOrganizations() if o["name"] == "Acme Test Lab")
+        kgn = next(x["id"] for x in d.organizations.getOrganizationNetworks(lab) if x["name"] == "Lab - Kingston")
+        mgs = {x["model"]: x["serial"] for x in d.networks.getNetworkDevices(kgn)}
+        mg52, mg21 = mgs["MG52"], mgs["MG21"]
+
+        rows = d.cellularGateway.getOrganizationCellularGatewayUplinkStatuses(lab, total_pages="all", perPage=3)
+        check(f"getOrganizationCellularGatewayUplinkStatuses perPage=3, all pages ({len(rows)} gateways)", sorted(r["serial"] for r in rows) == sorted([mg52, mg21]) and all(r["uplinks"][0]["interface"] == "cellular" for r in rows), rows)
+        sims = d.devices.getDeviceCellularSims(mg52)
+        check("getDeviceCellularSims", [x["slot"] for x in sims["sims"]] == ["sim1", "sim2"] and sims["sims"][0]["isPrimary"], sims)
+        apn = {"name": "internet", "allowedIpTypes": ["ipv4"], "authentication": {"type": "pap", "username": "lab", "password": "secret"}}
+        r = d.devices.updateDeviceCellularSims(mg52, sims=[{"slot": "sim2", "isPrimary": True, "apns": [apn]}], simFailover={"enabled": True, "timeout": 120})
+        up = next(x for x in d.cellularGateway.getOrganizationCellularGatewayUplinkStatuses(lab) if x["serial"] == mg52)["uplinks"][0]
+        check("updateDeviceCellularSims moves the uplink to the new primary", r["simOrdering"] == ["sim2", "sim1"] and up["iccid"] == r["sims"][1]["iccid"] and up["apn"] == "internet", r)
+        b = d.devices.createDeviceCellularUplinksBandsMasksUpdate(mg52, "sim1", "LTE", ["2", "71"])
+        view = d.organizations.getOrganizationDevicesCellularUplinksBandsByDevice(lab, serials=[mg52])
+        check("createDeviceCellularUplinksBandsMasksUpdate", b["bySlot"][0]["bySignalType"][0]["masked"] == ["2", "71"] and view["items"][0]["bySlot"] == b["bySlot"], b["bySlot"][0])
+        g = d.devices.updateDeviceCellularGeolocations(mg21, False)
+        geo = d.organizations.getOrganizationDevicesCellularGeolocations(lab, total_pages="all", perPage=3, serials=[mg21])
+        check("updateDeviceCellularGeolocations", g == {"enabled": False} and geo["items"][0]["geolocation"]["latitude"] is None, geo)
+        usage = d.organizations.getOrganizationDevicesCellularDataUsageByDevice(lab, total_pages="all", perPage=3)
+        check(f"getOrganizationDevicesCellularDataUsageByDevice ({len(usage['items'])} gateways)", len(usage["items"]) == 2 and any(int(s["total"]) > 0 for s in usage["items"][0]["bySlot"]), usage["items"][:1])
+
+        lan = d.cellularGateway.updateDeviceCellularGatewayLan(mg52, fixedIpAssignments=[{"name": "Camera", "ip": "192.168.0.40", "mac": "00:11:22:33:44:55"}], reservedIpRanges=[{"start": "192.168.0.50", "end": "192.168.0.55", "comment": "Spare"}])
+        check("updateDeviceCellularGatewayLan and getDeviceCellularGatewayLan", lan["deviceSubnet"] == "192.168.0.32/27" and d.cellularGateway.getDeviceCellularGatewayLan(mg52) == lan, lan)
+        rules = [{"name": "Web", "lanIp": "192.168.0.40", "publicPort": "8080", "localPort": "80", "protocol": "tcp", "access": "restricted", "allowedIps": ["203.0.113.0/24"]}]
+        pf = d.cellularGateway.updateDeviceCellularGatewayPortForwardingRules(mg52, rules=rules)
+        check("updateDeviceCellularGatewayPortForwardingRules and getDeviceCellularGatewayPortForwardingRules", pf["rules"] == rules and d.cellularGateway.getDeviceCellularGatewayPortForwardingRules(mg52) == pf, pf)
+        u = d.cellularGateway.updateNetworkCellularGatewayUplink(kgn, bandwidthLimits={"limitUp": 51200, "limitDown": None})
+        check("updateNetworkCellularGatewayUplink and getNetworkCellularGatewayUplink", u == {"bandwidthLimits": {"limitUp": 51200, "limitDown": None}} and d.cellularGateway.getNetworkCellularGatewayUplink(kgn) == u, u)
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
