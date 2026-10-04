@@ -6,14 +6,13 @@ import { stored, uuid } from '../config.js';
 import { arrayParam, badRequest, boolParam, notFound, paginate, paginateItems, timeWindow } from '../http.js';
 import { Rand, hashStr } from '../rng.js';
 import { DAY } from '../time.js';
-import { inRange, ipInCidr, isIpv6, parseIp } from '../validate.js';
+import { inRange, ipInCidr, isIpv6, isMac, parseIp } from '../validate.js';
 import { checkHttpUrl } from '../webhooks.js';
 import { byId, collection, devOf, orgOf, requireModel } from './common.js';
 import { isMask, prefixOf } from './switchsettings.js';
 import { wirelessNet, wirelessNets } from './wireless.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MAC_RE = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i;
 const MAX_INT = 2147483647;
 const BY_NETWORK = { def: 50, max: 250 };
 
@@ -339,7 +338,7 @@ function mqttJson(ctx, net) {
 }
 
 function checkMacs(list, name) {
-  for (const mac of list ?? []) if (!MAC_RE.test(mac)) throw badRequest(`'${name}' must hold MAC addresses like 00:11:22:33:44:55`);
+  for (const mac of list ?? []) if (!isMac(mac)) throw badRequest(`'${name}' must hold MAC addresses like 00:11:22:33:44:55`);
 }
 
 function checkTelemetry(x, name) {

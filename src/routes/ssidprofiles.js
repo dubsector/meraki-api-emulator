@@ -5,7 +5,7 @@
 import { configOf } from '../config.js';
 import { arrayParam, badRequest, boolParam, paginate, paginateItems } from '../http.js';
 import { iso } from '../time.js';
-import { inRange, isAddress, isHostname, merge } from '../validate.js';
+import { inRange, isAddress, isHostname, isMac, merge } from '../validate.js';
 import { checkHttpUrl } from '../webhooks.js';
 import { collection, orgOf } from './common.js';
 import { groupOfNetwork } from './orgnetworks.js';
@@ -16,7 +16,6 @@ import { ssidId } from './wirelessstats.js';
 const PAGE = { def: 1000, max: 1000 };
 const MAX_PROFILES = 100;
 const MAX_ENTRIES = 1000;
-const MAC_RE = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i;
 const WPA3 = /^WPA3/;
 
 // Drops nulls inside objects, so a null leaves a profile field as it was.
@@ -305,7 +304,7 @@ function entryJson(e, org) {
 function checkEntry(ctx, org, b, self) {
   const mac = b.client?.mac;
   if (!self && mac == null) throw badRequest("'client.mac' is required");
-  if (mac != null && !MAC_RE.test(mac)) throw badRequest("'client.mac' must be a MAC address like 00:11:22:33:44:55");
+  if (mac != null && !isMac(mac)) throw badRequest("'client.mac' must be a MAC address like 00:11:22:33:44:55");
   let net = null;
   let number = self?.number;
   if (!self) {

@@ -14,7 +14,7 @@ import { clientUsage } from '../sim/usage.js';
 import { DAY, HOUR, iso, isoMicro } from '../time.js';
 import { merge } from '../validate.js';
 import { checkGroupId } from './adaptivepolicy.js';
-import { bySerial, devOf, l7Rules, netOf, orgOf, requireModel, requireProduct, round } from './common.js';
+import { bySerial, devOf, l7Rules, orgOf, productNet, requireModel, round } from './common.js';
 import { themeIn } from './splash.js';
 
 export const BANDS = ['2.4', '5', '6'];
@@ -23,11 +23,7 @@ const REGULATORY = { 'Europe/London': ['ETSI', 'GB'], 'America/Toronto': ['ISED'
 export const FIVE_GHZ = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165];
 export const SIX_GHZ = Array.from({ length: 59 }, (_, i) => 1 + i * 4);
 
-export function wirelessNet(ctx) {
-  const net = netOf(ctx);
-  requireProduct(net, 'wireless');
-  return net;
-}
+export const wirelessNet = (ctx) => productNet(ctx, 'wireless');
 
 export function bandParam(q) {
   const band = q.get('band');
@@ -248,13 +244,13 @@ function updateRadio(ctx) {
 }
 
 // Average utilization over the chosen APs and bands.
-function averageUtilization(aps, bands, t0, t1) {
+function averageUtilization(aps, bands, t0, t1, radios) {
   let n = 0;
   const sum = { wifi: 0, nonWifi: 0, total: 0 };
   for (const ap of aps) {
     for (const band of ap.info.bands) {
       if (bands && !bands.includes(band)) continue;
-      const u = channelUtilization(ap, band, t0, t1);
+      const u = channelUtilization(ap, band, t0, t1, radios);
       sum.wifi += u.wifi;
       sum.nonWifi += u.nonWifi;
       sum.total += u.total;
@@ -264,10 +260,10 @@ function averageUtilization(aps, bands, t0, t1) {
   return n ? { wifi: round(sum.wifi / n, 2), nonWifi: round(sum.nonWifi / n, 2), total: round(sum.total / n, 2) } : null;
 }
 
-export function byBand(aps, t0, t1) {
+export function byBand(aps, t0, t1, radios) {
   const bands = BANDS.filter((b) => aps.some((a) => a.info.bands.includes(b)));
   return bands.map((band) => {
-    const u = averageUtilization(aps, [band], t0, t1);
+    const u = averageUtilization(aps, [band], t0, t1, radios);
     return { band, wifi: { percentage: u.wifi }, nonWifi: { percentage: u.nonWifi }, total: { percentage: u.total } };
   });
 }
@@ -296,8 +292,9 @@ function utilizationHistory(ctx) {
     aps = [c.ap];
     bands = [c.band];
   }
+  const radios = new Map();
   return historyWindow(ctx, [600, 1200, 3600, 14400, 86400]).map(([s, e, a, b]) => {
-    const u = averageUtilization(aps, bands, a, b) ?? { wifi: 0, nonWifi: 0, total: 0 };
+    const u = averageUtilization(aps, bands, a, b, radios) ?? { wifi: 0, nonWifi: 0, total: 0 };
     return { startTs: iso(s), endTs: iso(e), utilizationTotal: u.total, utilization80211: u.wifi, utilizationNon80211: u.nonWifi };
   });
 }

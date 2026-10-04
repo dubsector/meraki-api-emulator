@@ -3,9 +3,8 @@
 // only; DNS answers in the sim don't change.
 
 import { arrayParam, badRequest } from '../http.js';
-import { Rand, hashStr } from '../rng.js';
 import { isHostname, parseIp } from '../validate.js';
-import { collection, orgOf } from './common.js';
+import { collection, countingId, orgOf } from './common.js';
 
 const DNS = '/organizations/{organizationId}/appliance/dns';
 const MAX_PROFILES = 1000;
@@ -13,11 +12,7 @@ const MAX_RECORDS = 10000;
 const MAX_HOSTNAMES = 100;
 const MAX_ASSIGN = 1000;
 
-// IDs count up from a seeded start, so creation order is ID order.
-function nextId(ctx, store, org, kind) {
-  const start = new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:${kind}:${org.id}`)).int(100000, 899999);
-  return String(start + ++store.created);
-}
+const nextId = (ctx, store, org, kind) => countingId(ctx, store, kind, org.id, 6);
 
 const KINDS = {
   local: { what: 'local DNS profile', profiles: 'applianceDnsLocalProfiles', assignments: 'applianceDnsLocalAssignments' },

@@ -9,6 +9,7 @@ import { START, presenceIn, sessions } from '../sim/presence.js';
 import { clientApps } from '../sim/traffic.js';
 import { clientUsage } from '../sim/usage.js';
 import { DAY, iso, isoMicro } from '../time.js';
+import { isMac } from '../validate.js';
 import { byId, findClient, netOf, orgOf } from './common.js';
 
 const HISTORY_DAYS = 30;
@@ -17,7 +18,6 @@ const POLICIES = ['Whitelisted', 'Allowed', 'Blocked', 'Normal', 'Group policy']
 // Provisioning takes other names for two of the policies a GET reports.
 const SHOWN_AS = { Allowed: 'Whitelisted', 'Per connection': 'Different policies by SSID' };
 const BLOCKED_MESSAGE = 'This device has been blocked by the network administrator.';
-const MAC = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/;
 const MINUTES = { minute: 1, hour: 60, day: 1440, week: 10080, month: 43200 };
 
 function clientOf(ctx) {
@@ -122,7 +122,7 @@ function provision(ctx) {
   if (!b.clients.length) throw badRequest("'clients' must not be empty");
   const list = b.clients.map((x, i) => {
     const mac = String(x.mac ?? '').toLowerCase();
-    if (!MAC.test(mac)) throw badRequest(`'clients[${i}].mac' must be a MAC address like 00:11:22:33:44:55`);
+    if (!isMac(mac)) throw badRequest(`'clients[${i}].mac' must be a MAC address like 00:11:22:33:44:55`);
     return { mac, name: x.name };
   });
   const policy = { devicePolicy: SHOWN_AS[b.devicePolicy] ?? b.devicePolicy, ...groupPolicyOf(net, b.devicePolicy, b.groupPolicyId) };

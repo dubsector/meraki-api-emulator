@@ -219,7 +219,8 @@ function utilizationByDevice(ctx) {
   const aps = orgAps(ctx);
   const rows = utilizationIntervals(ctx).flatMap((b) => aps.map((ap) => ({ b, ap })));
   const page = paginate(ctx, rows, (r) => `${r.b[0]}:${r.ap.serial}`, { def: 1000, max: 1000 });
-  return page.map(({ b: [s, e, a, z], ap }) => ({ startTs: iso(s), endTs: iso(e), serial: ap.serial, mac: ap.mac, network: { id: ap.net.id }, byBand: byBand([ap], a, z) }));
+  const radios = new Map();
+  return page.map(({ b: [s, e, a, z], ap }) => ({ startTs: iso(s), endTs: iso(e), serial: ap.serial, mac: ap.mac, network: { id: ap.net.id }, byBand: byBand([ap], a, z, radios) }));
 }
 
 function utilizationByNetwork(ctx) {
@@ -227,11 +228,12 @@ function utilizationByNetwork(ctx) {
   const nets = [...new Set(aps.map((a) => a.net))].sort((a, b) => (a.id < b.id ? -1 : 1));
   const rows = utilizationIntervals(ctx).flatMap((b) => nets.map((net) => ({ b, net })));
   const page = paginate(ctx, rows, (r) => `${r.b[0]}:${r.net.id}`, { def: 1000, max: 1000 });
+  const radios = new Map();
   return page.map(({ b: [s, e, a, z], net }) => ({
     startTs: iso(s),
     endTs: iso(e),
     network: { id: net.id },
-    byBand: byBand(aps.filter((ap) => ap.net === net), a, z),
+    byBand: byBand(aps.filter((ap) => ap.net === net), a, z, radios),
   }));
 }
 

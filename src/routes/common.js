@@ -30,11 +30,15 @@ export function requireProduct(net, productType) {
   if (!net.productTypes.includes(productType)) throw badRequest(`This endpoint requires a network with product type '${productType}'`);
 }
 
-export function mxNet(ctx) {
+// The network in the path, refusing one without the product.
+export function productNet(ctx, productType) {
   const net = netOf(ctx);
-  requireProduct(net, 'appliance');
+  requireProduct(net, productType);
   return net;
 }
+
+export const mxNet = (ctx) => productNet(ctx, 'appliance');
+export const switchNet = (ctx) => productNet(ctx, 'switch');
 
 // The organization's networks with an MX, by ID, for the org byNetwork reads.
 export const mxNets = (org, ids) => org.networks.filter((n) => n.productTypes.includes('appliance') && (!ids.length || ids.includes(n.id))).sort(byId);
@@ -54,6 +58,14 @@ export function newId(ctx, store, kind, parentId, key = 'id') {
   do id = r.digits(18);
   while (store.list.some((x) => x[key] === id));
   return id;
+}
+
+// An ID counting up from a seeded start `digits` long, so creation order is ID
+// order, for stores whose IDs are short numbers.
+export function countingId(ctx, store, kind, parentId, digits) {
+  const low = 10 ** (digits - 1);
+  const start = new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:${kind}:${parentId}`)).int(low, 9 * low - 1);
+  return String(start + ++store.created);
 }
 
 export function requireModel(dev, productType) {

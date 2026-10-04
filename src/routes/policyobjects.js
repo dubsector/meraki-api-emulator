@@ -4,10 +4,9 @@
 // both sides' networkIds are worked out on read.
 
 import { badRequest, paginate } from '../http.js';
-import { Rand, hashStr } from '../rng.js';
 import { iso } from '../time.js';
 import { isAddress, isHostname, parseCidr } from '../validate.js';
-import { collection, orgOf } from './common.js';
+import { collection, countingId, orgOf } from './common.js';
 import { firewallRuleNaming } from './globalfirewall.js';
 
 const OBJECTS = '/organizations/{organizationId}/policyObjects';
@@ -23,11 +22,7 @@ const MISSING = { policyObjectId: '1000000', policyObjectGroupId: '1000000', sta
 const objectsOf = (org) => (org.policyObjects ??= { created: 0, list: [] });
 const groupsOf = (org) => (org.policyObjectGroups ??= { created: 0, list: [] });
 
-// IDs count up from a seeded start, so creation order is ID order.
-function nextId(ctx, store, org, kind) {
-  const start = new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:${kind}:${org.id}`)).int(1000000, 8999999);
-  return String(start + ++store.created);
-}
+const nextId = (ctx, store, org, kind) => countingId(ctx, store, kind, org.id, 7);
 
 // ── References from firewall rules ──
 

@@ -8,7 +8,8 @@ import { isDown } from '../sim/outages.js';
 import { addDoorLock, iotCapable, lockLive, lockSeen, locksOf } from '../sim/zigbee.js';
 import { iso } from '../time.js';
 import { isAddress, isHostname } from '../validate.js';
-import { bySerial, devOf, netOf, orgOf, requireProduct } from './common.js';
+import { bySerial, devOf, orgOf } from './common.js';
+import { wirelessNet } from './wireless.js';
 
 // Seconds a gateway listens for a new lock, and how long a disenrollment takes.
 const ENROLL_SECONDS = 30;
@@ -25,12 +26,6 @@ const netRef = (net) => ({ id: net.id, name: net.name });
 // The IoT controller, while it is still a CW916x in the network.
 const alive = (world, net, dev) => dev && world.deviceBySerial.get(dev.serial) === dev && dev.net === net && iotCapable(dev);
 const status = (dev, now) => (isDown(dev, now) ? 'offline' : 'online');
-
-function wirelessNet(ctx) {
-  const net = netOf(ctx);
-  requireProduct(net, 'wireless');
-  return net;
-}
 
 function iotAp(ctx, what) {
   const dev = devOf(ctx);

@@ -53,8 +53,23 @@ export function weekday(day) {
   return (((day + 4) % 7) + 7) % 7;
 }
 
+// Heavy reads format hundreds of thousands of timestamps in order, so the date
+// part of the last day asked for is kept and the time of day is put together
+// by hand. Years outside 0000 to 9999 take the slow path like before.
+const TWO = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
+let lastDay = NaN;
+let lastDate = '';
+
 export function iso(t) {
-  return new Date(Math.floor(t) * 1000).toISOString().slice(0, 19) + 'Z';
+  const s = Math.floor(t);
+  if (!(s >= -62167219200 && s < 253402300800)) return new Date(s * 1000).toISOString().slice(0, 19) + 'Z';
+  const day = Math.floor(s / DAY);
+  if (day !== lastDay) {
+    lastDate = new Date(day * DAY * 1000).toISOString().slice(0, 11);
+    lastDay = day;
+  }
+  const r = s - day * DAY;
+  return `${lastDate}${TWO[Math.floor(r / HOUR)]}:${TWO[Math.floor((r % HOUR) / MIN)]}:${TWO[r % MIN]}Z`;
 }
 
 // Microsecond precision, the format Meraki uses on event timestamps.

@@ -5,10 +5,10 @@
 
 import { badRequest, notFound } from '../http.js';
 import { smOf } from '../sim/sm.js';
+import { isMac } from '../validate.js';
 import { netOf, newId } from './common.js';
 
 const KEYS = ['username', 'email', 'mac', 'serial', 'imei', 'bluetoothMac'];
-const MAC = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/;
 
 // The one identifier a lookup takes, lowercased.
 function keyParam(ctx) {
@@ -75,7 +75,7 @@ function requestJson(r, now) {
 function checkValue(net, key, v) {
   if (typeof v !== 'string' || !v.trim()) throw badRequest(`'${key}' must not be empty`);
   const value = key === 'smDeviceId' || key === 'smUserId' ? v.trim() : v.trim().toLowerCase();
-  if (key === 'mac' && !MAC.test(value)) throw badRequest("'mac' must be a MAC address like 00:11:22:33:44:55");
+  if (key === 'mac' && !isMac(value)) throw badRequest("'mac' must be a MAC address like 00:11:22:33:44:55");
   if (key === 'email' && !/^[^@\s]+@[^@\s]+$/.test(value)) throw badRequest("'email' must be an email address");
   if (key === 'smDeviceId' && !smOf(net).devices.some((d) => d.id === value)) throw badRequest(`'smDeviceId' ${value} is not a Systems Manager device in this network`);
   if (key === 'smUserId' && !smOf(net).users.some((u) => u.id === value)) throw badRequest(`'smUserId' ${value} is not a Systems Manager owner in this network`);

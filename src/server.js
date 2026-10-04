@@ -107,21 +107,27 @@ export const ROUTES = [...organizations, ...summaries, ...orgnetworks, ...admin,
 // VLAN profile assignments.
 const TEMPLATED = /^\/networks\/\{networkId\}\/(appliance(?!\/warmSpare|\/devices\/redundancy)|wireless(?!\/alternateManagementInterface|\/ethernet|\/zigbee|\/electronicShelfLabel)|switch\/(?:settings|accessControlLists|accessPolicies|qosRules|dscpToCosMappings|routing\/(?:ospf|multicast(?!\/rendezvousPoints))|stp|mtu|stormControl|dhcpServerPolicy|portSchedules)|cellularGateway\/(?:uplink|dhcp|subnetPool|connectivityMonitoringDestinations)|campusGateway\/ssids|groupPolicies|netflow|trafficAnalysis|vlanProfiles(?!\/assignments)|syslogServers|devices\/syslog|snmp|alerts|webhooks\/(?:httpServers|payloadTemplates)|settings)\b/;
 
-// One entry per path template, holding a route per method.
+// One entry per path template, holding a route per method. Templates are
+// grouped by segment count and first segment (always a literal), and each group
+// lists the ones with fewer {params} first, so literal segments win.
 function compile(routes) {
   const byPath = new Map();
   for (const r of routes) {
     if (!byPath.has(r.path)) {
-      const names = [];
-      const src = r.path.replace(/\{(\w+)\}/g, (_, n) => {
-        names.push(n);
-        return '([^/]+)';
-      });
-      byPath.set(r.path, { path: r.path, names, re: new RegExp(`^${src}/?$`), methods: {} });
+      const segments = r.path.split('/').map((s) => (s.startsWith('{') ? null : s));
+      if (segments[1] == null) throw new Error(`${r.path} must start with a literal segment`);
+      const names = r.path.split('/').filter((s) => s.startsWith('{')).map((s) => s.slice(1, -1));
+      byPath.set(r.path, { path: r.path, names, segments, methods: {} });
     }
     byPath.get(r.path).methods[r.method] = r;
   }
-  return [...byPath.values()].sort((a, b) => a.names.length - b.names.length); // literal segments win over {params}
+  const groups = new Map();
+  for (const entry of [...byPath.values()].sort((a, b) => a.names.length - b.names.length)) {
+    const key = `${entry.segments.length} ${entry.segments[1]}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  }
+  return groups;
 }
 
 // Action batch operations other than these are a POST to `resource/operation`.
@@ -227,12 +233,20 @@ export function createEmulator(options = {}) {
     return status;
   }
 
+  // The path template a path names and its decoded params (null when the
+  // encoding is malformed). One trailing slash is allowed.
   function match(path) {
-    for (const entry of routes) {
-      const m = entry.re.exec(path);
-      if (m) return { entry, values: m.slice(1) };
+    const parts = (path.endsWith('/') ? path.slice(0, -1) : path).split('/');
+    for (const entry of routes.get(`${parts.length} ${parts[1]}`) ?? []) {
+      const values = [];
+      if (!entry.segments.every((s, i) => (s === null ? parts[i] !== '' && values.push(parts[i]) : s === parts[i]))) continue;
+      try {
+        return { entry, params: Object.fromEntries(entry.names.map((n, i) => [n, decodeURIComponent(values[i])])) };
+      } catch {
+        return { entry, params: null };
+      }
     }
-    return { entry: null, values: [] };
+    return { entry: null, params: {} };
   }
 
   // The organization and network a call belongs to, for the logs.
@@ -254,11 +268,7 @@ export function createEmulator(options = {}) {
     if (!key) return send(res, 401, { errors: [AUTH_ERROR] });
     keys.seen(key, clock());
 
-    const { entry, values } = match(url.pathname.slice(API_PREFIX.length) || '/');
-    let params = null;
-    try {
-      params = entry ? Object.fromEntries(entry.names.map((n, i) => [n, decodeURIComponent(values[i])])) : {};
-    } catch {}
+    const { entry, params } = match(url.pathname.slice(API_PREFIX.length) || '/');
     const route = entry?.methods[req.method === 'HEAD' ? 'GET' : req.method] ?? null;
     const scope = params ? scopeOf(params) : { org: null, net: null };
     const status = await dispatch(req, res, url, key, entry, route, params);
@@ -373,15 +383,10 @@ export function createEmulator(options = {}) {
         if (!/^[A-Za-z]+$/.test(a.operation)) return fail(`'${a.operation}' is not an operation`);
         path += `/${a.operation}`;
       }
-      const { entry, values } = match(path);
+      const { entry, params } = match(path);
       const route = entry?.methods[method];
       if (!route || route.logged === false || route.batch === false || route.perDevice) return fail(`'${a.operation}' is not supported on ${a.resource}`);
-      let params;
-      try {
-        params = Object.fromEntries(entry.names.map((n, j) => [n, decodeURIComponent(values[j])]));
-      } catch {
-        return fail(`'${a.resource}' has malformed URL encoding`);
-      }
+      if (!params) return fail(`'${a.resource}' has malformed URL encoding`);
       const scope = scopeOf(params);
       if ((params.organizationId != null && params.organizationId !== org.id) || (scope.org && scope.org !== org)) return fail(`${a.resource} is not in this organization`);
       try {

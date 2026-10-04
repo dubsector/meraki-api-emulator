@@ -4,9 +4,9 @@
 // networks they cover, which follow split and combine through repoint.
 
 import { badRequest } from '../http.js';
-import { Rand, hashStr } from '../rng.js';
+import { hashStr } from '../rng.js';
 import { iso } from '../time.js';
-import { collection, orgOf } from './common.js';
+import { collection, countingId, orgOf } from './common.js';
 import { base64Of } from './splash.js';
 
 const POLICIES = '/organizations/{organizationId}/brandingPolicies';
@@ -25,10 +25,7 @@ const NEEDS_VALUES = { 'Specific admins...': 'admin IDs', 'All admins of network
 
 const policiesOf = (org) => (org.brandingPolicies ??= { created: 0, list: [] });
 
-function nextPolicyId(ctx, store, org) {
-  const start = new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:brandingPolicy:${org.id}`)).int(100000, 899999);
-  return String(start + ++store.created);
-}
+const nextPolicyId = (ctx, store, org) => countingId(ctx, store, 'brandingPolicy', org.id, 6);
 
 const isNetOrTemplate = (org, id) => org.networks.some((n) => n.id === id) || (org.configTemplates?.list ?? []).some((t) => t.id === id);
 
@@ -157,10 +154,7 @@ const FEATURES_LIST = [
 
 const optInsOf = (org) => (org.earlyAccessOptIns ??= { created: 0, list: [] });
 
-function nextOptInId(ctx, store, org) {
-  const start = new Rand(hashStr(`meraki-api-emulator:${ctx.world.seed}:earlyAccessOptIn:${org.id}`)).int(1000, 8999);
-  return String(start + ++store.created);
-}
+const nextOptInId = (ctx, store, org) => countingId(ctx, store, 'earlyAccessOptIn', org.id, 4);
 
 function checkOptIn(ctx, org, b, self) {
   const f = self ? FEATURES_LIST.find((x) => x.shortName === self.shortName) : FEATURES_LIST.find((x) => x.shortName === b.shortName);

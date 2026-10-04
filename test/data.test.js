@@ -4,7 +4,7 @@ import { Rand, hashStr } from '../src/rng.js';
 import { networkEventsOnDay } from '../src/sim/events.js';
 import { statusChanges } from '../src/sim/outages.js';
 import { clientUsage, eachSlot } from '../src/sim/usage.js';
-import { DAY, HOUR } from '../src/time.js';
+import { DAY, HOUR, iso } from '../src/time.js';
 import { buildWorld } from '../src/world.js';
 import { NOW, collect, relLink, start } from './helpers.js';
 
@@ -254,5 +254,16 @@ describe('events', () => {
     const r = await sb.get(`/networks/${net.id}/events?productType=appliance&perPage=5`);
     const keys = ['occurredAt', 'networkId', 'type', 'description', 'category', 'clientId', 'clientDescription', 'clientMac', 'deviceSerial', 'deviceName', 'ssidNumber', 'eventData'];
     for (const e of r.body.events) assert.deepEqual(Object.keys(e), keys);
+  });
+});
+
+describe('timestamps', () => {
+  test('iso matches toISOString to the second', () => {
+    const slow = (t) => new Date(Math.floor(t) * 1000).toISOString().slice(0, 19) + 'Z';
+    const edges = [0, -0.5, 59.9, 3599, 86399.99, 86400, -86401, BOOT, BOOT + 0.7, -62167219200, -62167219201, 253402300799, 253402300800];
+    const r = new Rand(hashStr('iso'));
+    const random = Array.from({ length: 20000 }, () => (r.next() - 0.2) * 1e11);
+    for (const t of [...edges, ...random]) assert.equal(iso(t), slow(t), String(t));
+    assert.throws(() => iso(NaN), RangeError);
   });
 });

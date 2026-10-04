@@ -5,23 +5,16 @@
 import { stored } from '../config.js';
 import { deviceUrl } from '../format.js';
 import { badRequest, paginate } from '../http.js';
-import { inRange, parseIp } from '../validate.js';
-import { bySerial, collection, netOf, requireProduct } from './common.js';
+import { inRange, isMac, parseIp } from '../validate.js';
+import { bySerial, collection, switchNet } from './common.js';
 import { portConfig } from './switch.js';
 
 const POLICY = '/networks/{networkId}/switch/dhcpServerPolicy';
 const TRUSTED = `${POLICY}/arpInspection/trustedServers`;
 const MAX_SERVERS = 1000;
 const MAX_TRUSTED = 1000;
-const MAC = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i;
 // MS120 and MS125 switches can't run DAI.
 const UNSUPPORTED = ['MS120-8', 'MS120-8LP', 'MS120-8FP', 'MS120-24', 'MS120-24P', 'MS120-48', 'MS120-48LP', 'MS120-48FP', 'MS125-24', 'MS125-24P', 'MS125-48', 'MS125-48LP', 'MS125-48FP'];
-
-function switchNet(ctx) {
-  const net = netOf(ctx);
-  requireProduct(net, 'switch');
-  return net;
-}
 
 const policyOf = (net) =>
   stored(net, 'switchDhcpServerPolicy', () => ({ alerts: { email: { enabled: false } }, defaultPolicy: 'allow', allowedServers: [], blockedServers: [], arpInspection: { enabled: false }, trusted: { created: 0, list: [] } }));
@@ -44,7 +37,7 @@ function policyJson(net) {
 function macList(list, what) {
   if (list.length > MAX_SERVERS) throw badRequest(`'${what}' is limited to ${MAX_SERVERS} entries in the emulator`);
   const out = list.map((m) => {
-    if (typeof m !== 'string' || !MAC.test(m)) throw badRequest(`'${what}' must be a list of MAC addresses like 00:11:22:33:44:55`);
+    if (typeof m !== 'string' || !isMac(m)) throw badRequest(`'${what}' must be a list of MAC addresses like 00:11:22:33:44:55`);
     return m.toLowerCase();
   });
   const dup = out.find((m, i) => out.indexOf(m) !== i);
@@ -73,7 +66,7 @@ function updatePolicy(ctx) {
 
 function checkTrusted(ctx, net, b, self) {
   for (const k of ['mac', 'vlan', 'ipv4']) if (!self && b[k] == null) throw badRequest(`'${k}' is required`);
-  if (b.mac != null && !MAC.test(b.mac)) throw badRequest("'mac' must be a MAC address like 00:11:22:33:44:55");
+  if (b.mac != null && !isMac(b.mac)) throw badRequest("'mac' must be a MAC address like 00:11:22:33:44:55");
   inRange(b.vlan, 1, 4094, 'vlan');
   if (b.ipv4 != null) {
     const a = b.ipv4.address;

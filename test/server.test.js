@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import { after, before, describe, test } from 'node:test';
-import { AUTH_ERROR, CONNECT_HINT, SDK_HINT, VERSION, apiKeyOf } from '../src/server.js';
+import { AUTH_ERROR, CONNECT_HINT, ROUTES, SDK_HINT, VERSION, apiKeyOf } from '../src/server.js';
 import { NOW, collect, relLink, sampleUrls, start } from './helpers.js';
 
 // Sends a request target exactly as given; fetch would normalize or reject it first.
@@ -31,6 +31,20 @@ describe('server', () => {
       const r = await sb.get(url);
       assert.equal(r.status, status, `${url}: ${JSON.stringify(r.body)}`);
       assert.match(r.headers.get('content-type'), /^application\/json/);
+    }
+  });
+
+  test('every path template is reached by its own paths', async () => {
+    // IDs that name nothing, so a template with fewer parameters can't take them.
+    const byPath = new Map();
+    for (const r of ROUTES) byPath.set(r.path, [...(byPath.get(r.path) ?? []), r]);
+    let i = 0;
+    for (const [path, routes] of byPath) {
+      const url = path.replace(/\{\w+\}/g, 'x0') + (i++ % 2 ? '/' : '');
+      const r = await sb.get(url);
+      const get = routes.find((x) => x.method === 'GET');
+      if (get) assert.equal(sb.apiLog.items.at(-1).operationId, get.op, url);
+      else assert.equal(r.headers.get('allow'), routes.map((x) => x.method).join(', '), url);
     }
   });
 
