@@ -25,6 +25,7 @@ const TRAINS = {
   switch: [['switch-16-9-1', 'MS 16.9.1', '2025-03-11'], ['switch-17-1-4', 'MS 17.1.4', '2025-10-28'], ['switch-17-2-1', 'MS 17.2.1', '2026-08-04']],
   wireless: [['wireless-30-7-1', 'MR 30.7.1', '2025-05-06'], ['wireless-31-1-6', 'MR 31.1.6', '2025-12-09'], ['wireless-32-1-2', 'MR 32.1.2', '2026-08-18']],
   camera: [['camera-6-2', 'MV 6.2', '2025-06-10'], ['camera-6-3', 'MV 6.3', '2026-01-13'], ['camera-6-4', 'MV 6.4', '2026-08-25']],
+  cellularGateway: [['cellularGateway-25-2-4', 'MG 25.2.4', '2025-06-17'], ['cellularGateway-26-1-120', 'MG 26.1.120', '2026-01-20'], ['cellularGateway-26-2-1', 'MG 26.2.1', '2026-08-18']],
   sensor: [['sensor-2-5', 'MT 2.5', '2025-05-20'], ['sensor-2-6', 'MT 2.6', '2025-12-02'], ['sensor-2-7', 'MT 2.7', '2026-08-11']],
 };
 const CURRENT = 1;
@@ -61,6 +62,9 @@ function productAt(net, p, t) {
   }
   return { at, last, next, beta: s.beta ?? net.tags.includes('lab'), history };
 }
+
+// The firmware a device runs at t, by its short name.
+export const firmwareName = (dev, t) => version(dev.productType, productAt(dev.net, dev.productType, t).at).shortName;
 
 // A scheduled upgrade that's replaced or called off is kept as canceled.
 function cancelNext(cur, now) {

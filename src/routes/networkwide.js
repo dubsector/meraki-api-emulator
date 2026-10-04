@@ -117,6 +117,7 @@ function ipDevice(ctx) {
 // A static IP on a switch, AP or camera becomes its LAN IP.
 function updateManagementInterface(ctx) {
   const dev = ipDevice(ctx);
+  if (dev.productType === 'cellularGateway' && ctx.body.wan1?.usingStaticIp) throw badRequest('Cellular gateways take their address from the carrier and cannot use a static IP');
   const mx = dev.productType === 'appliance';
   if (!mx && ctx.body.wan2) throw badRequest("'wan2' is only supported on MX appliances");
   const current = managementInterface(dev);

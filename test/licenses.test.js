@@ -92,7 +92,7 @@ describe('per-device licenses', () => {
     assert.deepEqual(moved.map((l) => [l.deviceSerial, l.networkId]), [[ap.serial, null], [ap.serial, null]]);
     assert.equal((await sb.get(`/organizations/${dest.id}/inventory/devices/${ap.serial}`)).body.networkId, null);
     assert.equal((await sb.get(`/devices/${ap.serial}`)).status, 404);
-    assert.equal((await sb.get(L)).body.length, 12);
+    assert.equal((await sb.get(L)).body.length, 14);
     // A non-empty organization keeps its licensing model.
     assert.match(await errorOf(sb.post(`${L}/move`, { destOrganizationId: corp.id, licenseIds: [lab.licenses[0].id] })), /per-device/);
   });

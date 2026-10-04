@@ -66,6 +66,7 @@ export function settingProduct(key) {
   if (key.startsWith('switch')) return 'switch';
   if (WIRELESS_SETTINGS.has(key) || key.startsWith('wireless') || key.startsWith('ssid')) return 'wireless';
   if (key.startsWith('sensor')) return 'sensor';
+  if (key.startsWith('cellularGateway')) return 'cellularGateway';
   return null;
 }
 
