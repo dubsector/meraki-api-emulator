@@ -5,6 +5,7 @@ import { l7Category } from '../catalog.js';
 import { configOf, shapeSsid, stored, usesRadius } from '../config.js';
 import { arrayParam, badRequest, intParam, notFound, paginate, resolutionParam, timeWindow } from '../http.js';
 import { hashStr } from '../rng.js';
+import { clusterIn, ssidCluster, tunnelableFrom } from '../sim/campus.js';
 import { connectFailure, failureTime } from '../sim/events.js';
 import { isDown } from '../sim/outages.js';
 import { START, eachSession, presenceIn } from '../sim/presence.js';
@@ -165,6 +166,19 @@ function splashSettings(net, number) {
 // A deleted splash theme reads as none.
 const splashJson = (net, s) => (s.themeId == null || themeIn(net.org, s.themeId) ? s : { ...s, themeId: null });
 
+// An SSID tunneling through a campus gateway names a cluster of the
+// organization, in the campus gateway network the network's other SSIDs use.
+// One it already names is left alone, so a stale ID can be sent back.
+function checkCampusGateway(net, number, before, next) {
+  if (next.ipAssignmentMode !== 'Campus Gateway') return;
+  const id = ssidCluster(next);
+  if (id == null) throw badRequest("'campusGateway.cluster.id' is required when ipAssignmentMode is 'Campus Gateway'");
+  if (id === ssidCluster(before)) return;
+  const found = clusterIn(net.org, id);
+  if (!found) throw badRequest(`Campus gateway cluster ${id} is not in this organization`);
+  if (!tunnelableFrom(net, number).some((x) => x.cluster === found.cluster)) throw badRequest("A network's SSIDs tunnel through clusters of one campus gateway network");
+}
+
 // Fields that belong to other auth or IP assignment modes are dropped after the
 // merge (see shapeSsid). A new name also renames the SSID the simulated clients use.
 function updateSsid(ctx) {
@@ -179,6 +193,7 @@ function updateSsid(ctx) {
   if (next.radiusServers) {
     next.radiusServers = next.radiusServers.map((s) => ({ id: config.radiusServers?.find((o) => o.host === s.host && o.port === s.port)?.id ?? String(hashStr(`${net.id}:${s.host}:${s.port}`) % 1e9), ...s }));
   }
+  checkCampusGateway(net, number, config, next);
   shapeSsid(next);
   if (patch.name && ssid) ssid.name = patch.name;
   configOf(net).ssids[number] = next;

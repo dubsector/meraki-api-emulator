@@ -5,6 +5,7 @@
 
 import { arrayParam, badRequest, intParam, notFound, paginate, paginateItems, resolutionParam, timeWindow } from '../http.js';
 import { derive, hashStr, unit } from '../rng.js';
+import { tunnelsOf } from '../sim/campus.js';
 import { connectFailure, failureTime } from '../sim/events.js';
 import { END, START, eachSession, isOnline, presenceIn } from '../sim/presence.js';
 import { apChannel, channelUtilization, clientSignal, phyRate } from '../sim/rf.js';
@@ -251,11 +252,11 @@ function impactedBySsid(ctx) {
   return paginateItems(ctx, rows, (r) => `${r.network.id}:${r.ssid.number}`, { def: 100, max: 1000 });
 }
 
-// Clients associated right now. The emulator has no campus gateways, so a
-// cluster filter matches no AP.
+// Clients associated right now. A cluster filter keeps the APs of networks
+// tunneling an SSID through one of those clusters.
 function overviewByDevice(ctx) {
   const clusters = arrayParam(ctx.query, 'campusGatewayClusterIds');
-  const aps = clusters.length ? [] : orgAps(ctx);
+  const aps = orgAps(ctx).filter((ap) => !clusters.length || tunnelsOf(ap.net).some((t) => clusters.includes(t.cluster.clusterId)));
   return paginateItems(ctx, aps, (ap) => ap.serial, { def: 1000, max: 1000 }, (ap) => ({
     network: { id: ap.net.id },
     serial: ap.serial,

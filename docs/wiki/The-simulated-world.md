@@ -10,6 +10,7 @@
 | | Lab - Montreal | MR, MT | One CW9166I as the sensor gateway and Zigbee IoT controller (two door locks, ESL on) and nine sensors: two MT10, an MT11 freezer probe, MT12, MT14, MT15, MT20 door, MT30 button and MT40 power monitor |
 | | Lab - Kingston | MG | Two cellular gateways: a 5G MG52 with a SIM and an eSIM, and a single-SIM LTE MG21, each SIM on its own Canadian carrier |
 | | Lab - Systems Manager | SM | No Meraki hardware: 13 enrolled devices (iPhones, iPads, Macs, Windows laptops, Android phones and a Chromebook), their 7 owners and 6 profiles |
+| | Lab - Calgary | MR, campus gateway | Three CW9166I APs whose two SSIDs tunnel through one cluster of two CW9800H1 campus gateways, about 15 clients, Mountain time |
 
 Everything is generated from a seed and the clock:
 

@@ -26,6 +26,7 @@ const TRAINS = {
   wireless: [['wireless-30-7-1', 'MR 30.7.1', '2025-05-06'], ['wireless-31-1-6', 'MR 31.1.6', '2025-12-09'], ['wireless-32-1-2', 'MR 32.1.2', '2026-08-18']],
   camera: [['camera-6-2', 'MV 6.2', '2025-06-10'], ['camera-6-3', 'MV 6.3', '2026-01-13'], ['camera-6-4', 'MV 6.4', '2026-08-25']],
   cellularGateway: [['cellularGateway-25-2-4', 'MG 25.2.4', '2025-06-17'], ['cellularGateway-26-1-120', 'MG 26.1.120', '2026-01-20'], ['cellularGateway-26-2-1', 'MG 26.2.1', '2026-08-18']],
+  campusGateway: [['campusGateway-30-7-1', 'CG 30.7.1', '2025-05-13'], ['campusGateway-31-1-6', 'CG 31.1.6', '2025-12-16'], ['campusGateway-32-1-2', 'CG 32.1.2', '2026-08-25']],
   sensor: [['sensor-2-5', 'MT 2.5', '2025-05-20'], ['sensor-2-6', 'MT 2.6', '2025-12-02'], ['sensor-2-7', 'MT 2.7', '2026-08-11']],
 };
 const CURRENT = 1;

@@ -55,7 +55,7 @@ describe('Zigbee door locks and electronic shelf labels', () => {
       assert.match(l.eui64, /^[0-9A-F]{16}$/);
       assert.ok(l.enrolledAt <= l.lastSeenAt && l.lastSeenAt <= NOW);
     }
-    const [g] = await ok(sb.get(`${Z()}/devices`));
+    const [g] = await ok(sb.get(`${Z()}/devices?networkIds[]=${mtl.id}`));
     assert.equal(g.gateway.serial, ap.serial);
     assert.equal(g.enrolled, true);
     assert.deepEqual(g.counts, { doorLocks: { byStatus: { online: 2, offline: 0, dormant: 0 } } });
@@ -99,7 +99,7 @@ describe('Zigbee door locks and electronic shelf labels', () => {
     assert.match(await errorOf(sb.put(`/networks/${toronto.id}/wireless/zigbee`, { enabled: true })), /IoT controller/);
     const off = await ok(sb.put(Nz, { enabled: false }), 201);
     assert.equal(off.lockManagement.status, 'offline');
-    assert.equal((await ok(sb.get(`${Z()}/devices`)))[0].transmitPowerLevel, 15);
+    assert.equal((await ok(sb.get(`${Z()}/devices?networkIds[]=${mtl.id}`)))[0].transmitPowerLevel, 15);
   });
 
   test('gateways and door locks update only the fields the spec lists', async () => {
@@ -189,7 +189,7 @@ describe('Zigbee door locks and electronic shelf labels', () => {
     await ok(sb.put(`/devices/${ap.serial}/wireless/electronicShelfLabel`, { channel: '6' }));
     swapDevice(sb.world, ap, { serial: 'Q3AC-TEST-0002', model: 'MR36', mac: '0c:8d:db:00:00:02', orderNumber: null, claimedAt: now - DAY, tags: [], name: null }, 'remove from network');
     assert.deepEqual(await ok(sb.get(`${Z()}/doorLocks`)), []);
-    assert.deepEqual(await ok(sb.get(`${Z()}/devices`)), []);
+    assert.deepEqual(await ok(sb.get(`${Z()}/devices?networkIds[]=${mtl.id}`)), []);
     const row = (await ok(sb.get(`${Z()}/byNetwork?networkIds[]=${mtl.id}`)))[0];
     assert.equal(row.iotController, null);
     assert.match(await errorOf(sb.put(`/networks/${mtl.id}/wireless/zigbee`, { enabled: true })), /IoT controller/);

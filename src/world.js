@@ -6,6 +6,7 @@ import { Rand, derive, hashStr } from './rng.js';
 import { DAY, Zone } from './time.js';
 import { iotCapable, seedIot } from './sim/zigbee.js';
 import { seedSm } from './sim/sm.js';
+import { seedCampus } from './sim/campus.js';
 
 const SERIAL_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
 
@@ -252,6 +253,7 @@ function buildLab(world, seed, bootTime) {
     }
     seedIot(world, net, tpl);
     seedSm(world, net, tpl);
+    seedCampus(world, net, tpl);
   }
 }
 
@@ -259,7 +261,7 @@ function buildLab(world, seed, bootTime) {
 export function splitLicense(world, l, counts) {
   world.licenseKeys = (world.licenseKeys ?? 0) + 1;
   const r = new Rand(hashStr(`meraki-api-emulator:${world.seed}:cotermLicense:${world.licenseKeys}`));
-  const types = (m) => (m.startsWith('MR') ? 'wireless' : m === 'MV' ? 'camera' : m === 'MT' ? 'sensor' : m.startsWith('MG') ? 'cellularGateway' : m.startsWith('MX') ? 'appliance' : 'switch');
+  const types = (m) => (m.startsWith('MR') ? 'wireless' : m === 'MV' ? 'camera' : m === 'MT' ? 'sensor' : m.startsWith('MG') ? 'cellularGateway' : m.startsWith('CW98') ? 'campusGateway' : m.startsWith('MX') ? 'appliance' : 'switch');
   const editions = [...new Set(counts.map((c) => types(c.model)))].map((productType) => l.editions.find((e) => e.productType === productType) ?? { edition: 'Enterprise', productType });
   return { key: newLicenseKey(world, r), duration: l.duration, mode: l.mode, startedAt: l.startedAt, claimedAt: l.claimedAt, invalidatedAt: null, counts, editions };
 }
@@ -282,6 +284,7 @@ function buildNetwork(r, unique, org, tpl, siteIndex) {
   if (tpl.cameras) productTypes.push('camera');
   if (tpl.sensors) productTypes.push('sensor');
   if (tpl.gateways) productTypes.push('cellularGateway');
+  if (tpl.campusGateways) productTypes.push('campusGateway');
   if (tpl.sm) productTypes.push('systemsManager');
   const combined = productTypes.length > 1;
 
@@ -325,7 +328,7 @@ function buildNetwork(r, unique, org, tpl, siteIndex) {
       lat: tpl.lat + (r.next() - 0.5) * 0.002,
       lng: tpl.lng + (r.next() - 0.5) * 0.002,
       key: hashStr(serial),
-      outageRate: { appliance: 0.004, switch: 0.008, wireless: 0.02, camera: 0.03, sensor: 0.01, cellularGateway: 0.006 }[info.productType],
+      outageRate: { appliance: 0.004, switch: 0.008, wireless: 0.02, camera: 0.03, sensor: 0.01, cellularGateway: 0.006, campusGateway: 0.004 }[info.productType],
       ...extra,
     };
     net.devices.push(dev);
@@ -364,6 +367,8 @@ function buildNetwork(r, unique, org, tpl, siteIndex) {
   for (const s of tpl.sensors ?? []) addDevice(s.model, `MT-${tpl.code}-${s.name}`, { lanIp: null });
   // Cellular gateways face the WAN like an MX, with a LAN of their own.
   for (const g of tpl.gateways ?? []) addDevice(g.model, `MG-${tpl.code}-${g.name}`, { lanIp: null });
+  // Campus gateways sit on the management VLAN, after the APs.
+  for (const g of tpl.campusGateways ?? []) addDevice(g.model, `CG-${tpl.code}-${g.name}`, { lanIp: `${net.subnet(1)}.${mgmtHost++}` });
 
   buildClients(r, unique, net, tpl);
   buildSwitchPorts(r, net);
@@ -960,7 +965,7 @@ export function moveNetwork(world, net, dest) {
 
 // Settings kept on a network outside its config, since they name its own
 // devices or items. They go with the product they belong to.
-const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', cameraWirelessProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless', wirelessPortProfiles: 'wireless', wirelessMerakiAuthUsers: 'wireless', applianceMerakiAuthUsers: 'appliance', sensorAlertProfiles: 'sensor', wirelessZigbee: 'wireless', wirelessEsl: 'wireless', sm: 'systemsManager' };
+const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', cameraWirelessProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless', wirelessPortProfiles: 'wireless', wirelessMerakiAuthUsers: 'wireless', applianceMerakiAuthUsers: 'appliance', sensorAlertProfiles: 'sensor', wirelessZigbee: 'wireless', wirelessEsl: 'wireless', sm: 'systemsManager', campusGatewayClusters: 'campusGateway' };
 
 // MQTT brokers serve cameras, sensors and wireless MQTT alike, which name them
 // by ID: a combined network takes every network's brokers and each part of a

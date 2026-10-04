@@ -1,6 +1,7 @@
 import { configOf, exportedSubnets } from '../config.js';
 import { deviceJson, networkJson, networkRef, orgJson } from '../format.js';
 import { arrayParam, badRequest, hasTags, notFound, paginate, paginateItems, timeWindow } from '../http.js';
+import { clusterWan } from '../sim/campus.js';
 import { isGateway, uplinkState } from '../sim/cellular.js';
 import { linkAverage, linkSample, pathLatency, vpnReachable } from '../sim/links.js';
 import { memorySamples, ramKb } from '../sim/memory.js';
@@ -341,6 +342,9 @@ export default [
             model: d.model,
             tags: d.tags,
           };
+          const wan = clusterWan(d);
+          // Campus gateways in a cluster with a static uplink take its settings.
+          if (wan?.usingStaticIp) Object.assign(out, { gateway: wan.staticGatewayIp, ipType: 'static', primaryDns: wan.staticDns[0] ?? null, secondaryDns: wan.staticDns[1] ?? null });
           if (isGateway(d)) {
             // Cellular gateways take their address and DNS from the carrier.
             const u = uplinkState(d, ctx.now);
