@@ -131,9 +131,10 @@ describe('cellular gateways', () => {
     assert.deepEqual(s.sims[1].apns[0].authentication, { type: 'pap', username: 'lab2', password: 'secret' });
     const u = (await ok(sb.get(`/organizations/${lab.id}/cellularGateway/uplink/statuses?serials[]=${mg52.serial}`)))[0].uplinks[0];
     assert.deepEqual([u.iccid, u.apn], [s.sims[1].iccid, 'internet']);
+    // Data already used stays with the SIM that carried it.
     const usage = (await ok(sb.get(`${C()}/data/usage/byDevice?serials[]=${mg52.serial}`))).items[0].bySlot;
-    assert.equal(usage[0].total, '0');
-    assert.notEqual(usage[1].total, '0');
+    assert.notEqual(usage[0].total, '0');
+    assert.equal(usage[1].total, '0');
 
     assert.match(await errorOf(sb.put(D(mg52, 'cellular/sims'), { sims: [{ slot: 'sim3', isPrimary: true }] })), /sim1, sim2/);
     assert.match(await errorOf(sb.put(D(mg52, 'cellular/sims'), { sims: [{ slot: 'sim1' }] })), /isPrimary/);
@@ -146,6 +147,25 @@ describe('cellular gateways', () => {
     assert.match(await errorOf(sb.get(D(lab.networks[0].aps[0], 'cellular/sims'))), /MG cellular gateways/);
     // The answer goes back unchanged.
     await ok(sb.put(D(mg52, 'cellular/sims'), s));
+  });
+
+  test('data used before a primary SIM change stays with the SIM that carried it', async () => {
+    fresh();
+    await ok(sb.put(D(mg52, 'cellular/sims'), { sims: [{ slot: 'sim2', isPrimary: true }] }));
+    // As if the change had been made at midnight.
+    const day = Math.floor(now / DAY) * DAY;
+    mg52.cellularPrimaryChanges[0].at = day;
+    const month = Date.UTC(2026, 8, 1) / 1000;
+    const usage = (await ok(sb.get(`${C()}/data/usage/byDevice?serials[]=${mg52.serial}`))).items[0].bySlot;
+    const hist = (await ok(sb.get(`${C()}/data/usage/history/byDevice/byInterval?serials[]=${mg52.serial}&t0=${iso(month)}&t1=${NOW}&interval=86400`))).items[0].intervals;
+    for (const x of hist.slice(0, -1)) assert.deepEqual(x.usage.bySim.map((s) => s.total), [x.usage.total, 0]);
+    assert.deepEqual(hist.at(-1).usage.bySim.map((s) => s.total), [0, hist.at(-1).usage.total]);
+    const sum = (i) => hist.reduce((a, x) => a + x.usage.bySim[i].total, 0);
+    assert.deepEqual(usage.map((s) => s.total), [String(sum(0)), String(sum(1))]);
+    assert.ok(sum(0) > 0 && sum(1) > 0);
+    // Switching back starts sim1 again from now.
+    await ok(sb.put(D(mg52, 'cellular/sims'), { sims: [{ slot: 'sim1', isPrimary: true }] }));
+    assert.deepEqual((await ok(sb.get(`${C()}/data/usage/byDevice?serials[]=${mg52.serial}`))).items[0].bySlot.map((s) => s.total), [String(sum(0)), String(sum(1))]);
   });
 
   test('band masks show in the bands view, geolocation can be turned off', async () => {
@@ -269,6 +289,42 @@ describe('cellular gateways', () => {
     assert.match(await errorOf(sb.put(P, { cidr: 'nope' })), /IPv4 subnet/);
     assert.match(await errorOf(sb.get(`/networks/${lab.networks[0].id}/cellularGateway/subnetPool`)), /cellularGateway/);
     assert.deepEqual(await ok(sb.get(P)), moved);
+  });
+
+  test("an MG's LAN settings follow its subnet when another MG leaves or the pool moves", async () => {
+    fresh();
+    await ok(sb.put(D(mg21, 'cellularGateway/lan'), { fixedIpAssignments: [{ name: 'Cam', ip: '192.168.0.70', mac: '00:11:22:33:44:55' }], reservedIpRanges: [{ start: '192.168.0.80', end: '192.168.0.85', comment: 'Spare' }] }));
+    await ok(sb.put(D(mg21, 'cellularGateway/portForwardingRules'), { rules: [{ lanIp: '192.168.0.71', publicPort: '80', localPort: '80', protocol: 'tcp', access: 'any' }] }));
+    // The MG52 leaving hands the MG21 the first subnet, and its hosts move along.
+    await ok(sb.post(`/networks/${kgn.id}/devices/remove`, { serial: mg52.serial }), 204);
+    const lan = await ok(sb.get(D(mg21, 'cellularGateway/lan')));
+    assert.deepEqual([lan.deviceSubnet, lan.fixedIpAssignments[0].ip, lan.reservedIpRanges[0].start, lan.reservedIpRanges[0].end], ['192.168.0.32/27', '192.168.0.38', '192.168.0.48', '192.168.0.53']);
+    const pf = await ok(sb.get(D(mg21, 'cellularGateway/portForwardingRules')));
+    assert.equal(pf.rules[0].lanIp, '192.168.0.39');
+    assert.deepEqual(await ok(sb.put(D(mg21, 'cellularGateway/lan'), lan)), lan);
+    assert.deepEqual(await ok(sb.put(D(mg21, 'cellularGateway/portForwardingRules'), pf)), pf);
+    // A new pool moves them too, and one with subnets too small for them is refused.
+    await ok(sb.put(`/networks/${kgn.id}/cellularGateway/subnetPool`, { cidr: '10.30.0.0/16', mask: 24 }));
+    assert.equal((await ok(sb.get(D(mg21, 'cellularGateway/lan')))).fixedIpAssignments[0].ip, '10.30.1.6');
+    assert.match(await errorOf(sb.put(`/networks/${kgn.id}/cellularGateway/subnetPool`, { mask: 29 })), /MG-KGN-02.*10\.30\.1\.16/);
+  });
+
+  test('data profile assignments leave with a removed MG and keep its network in the organization', async () => {
+    fresh();
+    const rule = { slot: 'sim1', uplink: { priority: 1, isPreferred: true }, cap: { value: 100, term: { resets: 'monthly', starts: { dayOfMonth: 1 } } } };
+    const p = await ok(sb.post(`${C()}/data/profiles`, { name: 'Cap', description: '', rules: [rule] }));
+    await ok(sb.post(`${C()}/data/profiles/assignments/batchCreate`, { items: [mg52, mg21].map((d) => ({ profile: { id: p.profileId }, device: { serial: d.serial } })) }));
+    await ok(sb.post(`/networks/${kgn.id}/devices/remove`, { serial: mg52.serial }), 204);
+    assert.deepEqual((await ok(sb.get(`${C()}/data/profiles/assignments`))).items.map((a) => a.device.serial), [mg21.serial]);
+    assert.equal((await ok(sb.get(`${C()}/data/profiles`))).items[0].counts.devices.assigned, 1);
+    // An MG with a profile of the organization holds its network there.
+    const dest = await ok(sb.post(`/organizations/${lab.id}/clone`, { name: 'Lab copy' }), 201);
+    await ok(sb.put(`/networks/${kgn.id}`, { name: 'Kingston moving' }));
+    const move = () => ok(sb.post(`/organizations/${lab.id}/networks/moves`, { network: { id: kgn.id }, organizations: { target: { id: dest.id } } }), 201);
+    assert.match((await move()).result.reason, /cellular data profiles/);
+    await ok(sb.post(`${C()}/data/profiles/assignments/bulkDelete`, { items: [{ profile: { id: p.profileId }, device: { serial: mg21.serial } }] }), 204);
+    assert.equal((await move()).result.status, 'completed');
+    assert.deepEqual((await ok(sb.get(`${C()}/data/profiles/assignments`))).items, []);
   });
 
   test('DHCP and connectivity monitoring destinations are network settings', async () => {

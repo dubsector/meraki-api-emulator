@@ -141,6 +141,16 @@ describe('device live tools', () => {
     assert.match(await errorOf(sb.post(L(mt, 'pingDevice'), {})), /not supported on MT/);
   });
 
+  test('a cellular gateway pings over its own cellular uplink', async () => {
+    fresh();
+    const mg = sb.world.devices.find((d) => d.productType === 'cellularGateway');
+    const out = (await run(mg, 'ping', { target: '8.8.8.8', count: 5 })).done.results;
+    assert.equal(out.received, 5);
+    // Cellular round trips are slower than the lab's wired ones.
+    assert.ok(out.latencies.minimum >= 30, JSON.stringify(out.latencies));
+    assert.equal((await run(mg, 'pingDevice', { count: 3 })).done.results.received, 3);
+  });
+
   test('MAC tables agree with the ports clients sit on, and filter by MAC', async () => {
     fresh();
     const { done } = await run(sw, 'macTable');

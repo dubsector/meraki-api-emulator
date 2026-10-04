@@ -48,12 +48,23 @@ function subnetsFor(net, pool) {
 
 const lanAddress = (dev) => subnetsFor(dev.net, poolOf(dev.net)).get(dev.serial) ?? null;
 
+// LAN settings and port forwarding rules keep host numbers within the MG's
+// subnet, so they move with it when the pool changes, another MG leaves or a
+// template's pool applies. Hosts the current subnet can't hold aren't shown.
 const lanOf = (dev) => dev.cellularGatewayLan ?? { fixedIpAssignments: [], reservedIpRanges: [] };
+const fits = (h, addr) => !!addr && h > 1 && h < addr.size - 1;
+const ipOf = (h, addr) => dotted(addr.start + h);
 
 const lanJson = (dev) => {
   const lan = lanOf(dev);
   const addr = lanAddress(dev);
-  return { deviceName: dev.name, deviceLanIp: addr?.ip ?? null, deviceSubnet: addr?.subnet ?? null, fixedIpAssignments: lan.fixedIpAssignments.map((f) => ({ ...f })), reservedIpRanges: lan.reservedIpRanges.map((r) => ({ ...r })) };
+  return {
+    deviceName: dev.name,
+    deviceLanIp: addr?.ip ?? null,
+    deviceSubnet: addr?.subnet ?? null,
+    fixedIpAssignments: lan.fixedIpAssignments.filter((f) => fits(f.host, addr)).map((f) => ({ name: f.name, ip: ipOf(f.host, addr), mac: f.mac })),
+    reservedIpRanges: lan.reservedIpRanges.filter((r) => fits(r.start, addr) && fits(r.end, addr)).map((r) => ({ start: ipOf(r.start, addr), end: ipOf(r.end, addr), comment: r.comment })),
+  };
 };
 
 // Why an address can't be a host on an MG's LAN, or null when it can.
@@ -65,18 +76,18 @@ function hostProblem(ip, addr) {
   return null;
 }
 
-// A host address on the MG's LAN, other than its own.
+// A host address on the MG's LAN, other than its own, as its host number.
 function lanHost(ip, at, addr) {
   if (!addr) throw badRequest("This MG has no LAN subnet, since its network's subnet pool is full");
   const problem = hostProblem(ip, addr);
   if (problem) throw badRequest(`'${at}' ${problem}`);
-  return ip;
+  return parseIp(ip) - addr.start;
 }
 
-// Every address an MG's LAN settings and port forwarding rules name.
-const lanAddresses = (dev) => {
+// Every host an MG's LAN settings and port forwarding rules name.
+const lanHosts = (dev) => {
   const lan = lanOf(dev);
-  return [...lan.fixedIpAssignments.map((f) => f.ip), ...lan.reservedIpRanges.flatMap((r) => [r.start, r.end]), ...rulesOf(dev).map((r) => r.lanIp)];
+  return [...lan.fixedIpAssignments.map((f) => f.host), ...lan.reservedIpRanges.flatMap((r) => [r.start, r.end]), ...rulesOf(dev).map((r) => r.lanHost)];
 };
 
 // Lists the body gives replace the stored ones whole.
@@ -89,17 +100,17 @@ function updateLan(ctx) {
   let ranges = cur.reservedIpRanges;
   if (b.fixedIpAssignments != null) {
     if (b.fixedIpAssignments.length > MAX_RULES) throw badRequest(`'fixedIpAssignments' can list at most ${MAX_RULES} assignments`);
-    const ips = new Set();
+    const hosts = new Set();
     const macs = new Set();
     fixed = b.fixedIpAssignments.map((f, i) => {
-      const ip = lanHost(f.ip, `fixedIpAssignments[${i}].ip`, addr);
+      const host = lanHost(f.ip, `fixedIpAssignments[${i}].ip`, addr);
       if (typeof f.mac !== 'string' || !MAC_RE.test(f.mac)) throw badRequest(`'fixedIpAssignments[${i}].mac' must be a MAC address like 00:11:22:33:44:55`);
       const mac = f.mac.toLowerCase();
-      if (ips.has(ip)) throw badRequest(`${ip} is assigned twice`);
+      if (hosts.has(host)) throw badRequest(`${f.ip} is assigned twice`);
       if (macs.has(mac)) throw badRequest(`${mac} is assigned twice`);
-      ips.add(ip);
+      hosts.add(host);
       macs.add(mac);
-      return { name: f.name ?? '', ip, mac };
+      return { name: f.name ?? '', host, mac };
     });
   }
   if (b.reservedIpRanges != null) {
@@ -107,31 +118,35 @@ function updateLan(ctx) {
     ranges = b.reservedIpRanges.map((r, i) => {
       const start = lanHost(r.start, `reservedIpRanges[${i}].start`, addr);
       const end = lanHost(r.end, `reservedIpRanges[${i}].end`, addr);
-      if (parseIp(start) > parseIp(end)) throw badRequest(`'reservedIpRanges[${i}]' must start before it ends`);
+      if (start > end) throw badRequest(`'reservedIpRanges[${i}]' must start before it ends`);
       if (typeof r.comment !== 'string') throw badRequest(`'reservedIpRanges[${i}].comment' is required`);
       return { start, end, comment: r.comment };
     });
   }
   for (const f of fixed) {
-    const n = parseIp(f.ip);
-    if (ranges.some((r) => n >= parseIp(r.start) && n <= parseIp(r.end))) throw badRequest(`Fixed IP ${f.ip} is inside a reserved range`);
+    if (ranges.some((r) => f.host >= r.start && f.host <= r.end)) throw badRequest(`Fixed IP ${addr ? ipOf(f.host, addr) : f.host} is inside a reserved range`);
   }
   dev.cellularGatewayLan = { fixedIpAssignments: fixed, reservedIpRanges: ranges };
   return lanJson(dev);
 }
 
 const rulesOf = (dev) => dev.cellularGatewayPortForwarding ?? [];
-const ruleJson = (r) => ({ ...r, allowedIps: [...r.allowedIps] });
+const rulesJson = (dev) => {
+  const addr = lanAddress(dev);
+  return rulesOf(dev)
+    .filter((r) => fits(r.lanHost, addr))
+    .map(({ lanHost: h, ...r }) => ({ name: r.name, lanIp: ipOf(h, addr), publicPort: r.publicPort, localPort: r.localPort, allowedIps: [...r.allowedIps], protocol: r.protocol, access: r.access }));
+};
 
 function updatePortForwarding(ctx) {
   const dev = gatewayOf(ctx);
   const rules = ctx.body.rules;
-  if (rules == null) return { rules: rulesOf(dev).map(ruleJson) };
+  if (rules == null) return { rules: rulesJson(dev) };
   if (rules.length > MAX_RULES) throw badRequest(`'rules' can list at most ${MAX_RULES} rules`);
   const addr = lanAddress(dev);
   const out = rules.map((r, i) => {
     const at = `rules[${i}]`;
-    const lanIp = lanHost(r.lanIp, `${at}.lanIp`, addr);
+    const lanHostNumber = lanHost(r.lanIp, `${at}.lanIp`, addr);
     for (const k of ['publicPort', 'localPort']) if (typeof r[k] !== 'string' || !isPort(r[k], true)) throw badRequest(`'${at}.${k}' must be a port or a range like 8000-8010`);
     if (r.protocol !== 'tcp' && r.protocol !== 'udp') throw badRequest(`'${at}.protocol' must be tcp or udp`);
     if (r.access !== 'any' && r.access !== 'restricted') throw badRequest(`'${at}.access' must be any or restricted`);
@@ -142,10 +157,10 @@ function updatePortForwarding(ctx) {
       const bad = allowedIps.find((ip) => typeof ip !== 'string' || !isAddress(ip));
       if (bad !== undefined) throw badRequest(`'${at}.allowedIps' has ${bad}, which is not an IP address or CIDR`);
     }
-    return { name: r.name ?? '', lanIp, publicPort: r.publicPort, localPort: r.localPort, allowedIps: [...allowedIps], protocol: r.protocol, access: r.access };
+    return { name: r.name ?? '', lanHost: lanHostNumber, publicPort: r.publicPort, localPort: r.localPort, allowedIps: [...allowedIps], protocol: r.protocol, access: r.access };
   });
   dev.cellularGatewayPortForwarding = out;
-  return { rules: out.map(ruleJson) };
+  return { rules: rulesJson(dev) };
 }
 
 function gatewayNet(ctx) {
@@ -182,8 +197,8 @@ function subnetPoolJson(net) {
   };
 }
 
-// A new pool must hold every MG, and each MG's LAN settings and port
-// forwarding rules must still fit the subnet it moves to.
+// A new pool must hold every MG, and its subnets must be big enough for the
+// hosts each MG's LAN settings and port forwarding rules name, which move along.
 function updateSubnetPool(ctx) {
   const net = gatewayNet(ctx);
   const b = ctx.body;
@@ -202,10 +217,13 @@ function updateSubnetPool(ctx) {
   const need = gatewaysOf(net).length;
   if (2 ** (mask - prefix) - 1 < need) throw badRequest(`The pool ${cidr} holds ${2 ** (mask - prefix) - 1} /${mask} subnets after the first, which is held back, and this network has ${need} MGs`);
   const subnets = subnetsFor(net, pool);
+  const current = subnetsFor(net, cur);
   for (const d of gatewaysOf(net)) {
     const addr = subnets.get(d.serial);
-    const bad = lanAddresses(d).find((ip) => hostProblem(ip, addr));
-    if (bad) throw badRequest(`${d.name ?? d.serial}'s LAN settings or port forwarding rules name ${bad}, which isn't a host in its new subnet ${addr.subnet}`);
+    const bad = lanHosts(d).find((h) => !fits(h, addr));
+    if (bad == null) continue;
+    const was = current.get(d.serial);
+    throw badRequest(`${d.name ?? d.serial}'s LAN settings or port forwarding rules name ${was ? ipOf(bad, was) : `host ${bad}`}, which a /${pool.mask} subnet can't hold`);
   }
   configOf(net).cellularGatewaySubnetPool = pool;
   return subnetPoolJson(net);
@@ -304,7 +322,7 @@ export default [
   },
   { op: 'getDeviceCellularGatewayLan', path: `${DEVICE}/lan`, sample: SAMPLE, handler: (ctx) => lanJson(gatewayOf(ctx)) },
   { op: 'updateDeviceCellularGatewayLan', method: 'PUT', path: `${DEVICE}/lan`, sample: SAMPLE, handler: updateLan },
-  { op: 'getDeviceCellularGatewayPortForwardingRules', path: `${DEVICE}/portForwardingRules`, sample: SAMPLE, handler: (ctx) => ({ rules: rulesOf(gatewayOf(ctx)).map(ruleJson) }) },
+  { op: 'getDeviceCellularGatewayPortForwardingRules', path: `${DEVICE}/portForwardingRules`, sample: SAMPLE, handler: (ctx) => ({ rules: rulesJson(gatewayOf(ctx)) }) },
   { op: 'updateDeviceCellularGatewayPortForwardingRules', method: 'PUT', path: `${DEVICE}/portForwardingRules`, sample: SAMPLE, handler: updatePortForwarding },
   { op: 'getNetworkCellularGatewaySubnetPool', path: '/networks/{networkId}/cellularGateway/subnetPool', sample: NET_SAMPLE, handler: (ctx) => subnetPoolJson(gatewayNet(ctx)) },
   { op: 'updateNetworkCellularGatewaySubnetPool', method: 'PUT', path: '/networks/{networkId}/cellularGateway/subnetPool', sample: NET_SAMPLE, handler: updateSubnetPool },
