@@ -6,6 +6,7 @@ import { configOf, rebase } from '../config.js';
 import { orgJson } from '../format.js';
 import { arrayParam, badRequest, paginateItems } from '../http.js';
 import { API_PREFIX, ROUTES, VERSION } from '../server.js';
+import { copyCampus, remapClusters } from '../sim/campus.js';
 import { copySm } from '../sim/sm.js';
 import { copyIot } from '../sim/zigbee.js';
 import { schemaOf } from '../validate.js';
@@ -53,11 +54,14 @@ function cloneOrganization(ctx) {
     for (const [n, net] of pairs) s = s.replaceAll(n.id, net.id);
     return JSON.parse(s);
   };
+  const ids = new Map();
   for (const [n, net] of pairs) {
     net.config = dropSwitchSerials(swap(rebase(configOf(n), n.template?.id ?? n.id, net.id)));
     copyIot(n, net);
     copySm(n, net);
+    copyCampus(ctx.world, n, net, ids);
   }
+  for (const [, net] of pairs) remapClusters(net, ids);
   for (const k of CLONED) if (src[k] !== undefined) org[k] = swap(src[k]);
   return orgJson(org);
 }

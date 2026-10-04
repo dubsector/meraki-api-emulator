@@ -126,6 +126,29 @@ describe('campus gateways', () => {
     assert.ok(!(await ok(sb.get(`/organizations/${lab.id}/summary/top/devices/byUsage`))).some((d) => d.productType === 'campusGateway'));
   });
 
+  test('campus gateways ping and are pinged like the APs they serve', async () => {
+    fresh();
+    const [g] = gws;
+    const { pingId } = await ok(sb.post(`/devices/${g.serial}/liveTools/ping`, { target: cal.aps[0].lanIp, count: 2 }), 201);
+    const ping = await ok(sb.get(`/devices/${g.serial}/liveTools/ping/${pingId}`));
+    assert.deepEqual([ping.status, ping.results.received], ['complete', 2]);
+    const back = await ok(sb.post(`/devices/${g.serial}/liveTools/pingDevice`, { count: 2 }), 201);
+    assert.equal((await ok(sb.get(`/devices/${g.serial}/liveTools/pingDevice/${back.pingId}`))).results.sent, 2);
+  });
+
+  test('a deleted cluster hands its gateways back their own address', async () => {
+    fresh();
+    const [g] = gws;
+    const own = g.lanIp;
+    const devices = gws.map((d, i) => ({ serial: d.serial, uplinks: [{ interface: 'man1', addresses: [{ address: `${cal.subnet(1)}.${50 + i}` }] }] }));
+    await ok(sb.put(N(`clusters/${cluster.clusterId}`), { devices }));
+    for (const n of [0, 1]) await ok(sb.put(`/networks/${cal.id}/wireless/ssids/${n}`, { ipAssignmentMode: 'NAT mode' }));
+    await ok(sb.del(N(`clusters/${cluster.clusterId}`)), 204);
+    const status = (await ok(sb.get(`/organizations/${lab.id}/devices/statuses?serials[]=${g.serial}`)))[0];
+    assert.deepEqual([status.lanIp, status.ipType], [own, 'dhcp']);
+    assert.equal((await ok(sb.get(`/devices/${g.serial}`))).lanIp, own);
+  });
+
   test('cluster writes check every field before changing anything', async () => {
     fresh();
     const c = await ok(sb.post(N('clusters'), body()), 201);
@@ -218,6 +241,39 @@ describe('campus gateways', () => {
     // A deleted target drops out.
     assert.equal((await sb.del(N(`clusters/${c.clusterId}`))).status, 204);
     assert.deepEqual((await ok(sb.get(O('clusters/failover/targets'))))[0].failover.targets, []);
+  });
+
+  test('network copies and cloned organizations take the clusters without their gateways', async () => {
+    fresh();
+    const c = await ok(sb.post(N('clusters'), body({ devices: [] })), 201);
+    await ok(sb.post(O('clusters/provision'), { clusterId: cluster.clusterId, network: { id: cal.id }, ...body({ name: 'Calgary Campus' }), devices: gws.map((g) => ({ serial: g.serial })), failover: { targets: [{ clusterId: c.clusterId }] } }), 202);
+    await ok(sb.post(`/organizations/${lab.id}/campusGateway/clusters/tunneling/batchUpdate`, { items: [{ cluster: { id: cluster.clusterId }, network: { id: cal.id }, data: { encryption: { enabled: true } } }] }));
+    const tunnels = async (org, net) => (await ok(sb.get(`/organizations/${org}/campusGateway/clusters/ssids?networkIds[]=${net}`))).items.map((r) => [r.network.id, r.cluster.name]);
+    const check = async (org, net) => {
+      const own = (await ok(sb.get(`/organizations/${org}/campusGateway/clusters?networkIds[]=${net}`))).items;
+      assert.deepEqual(own.map((x) => [x.name, x.devices.length]).sort(), [['Calgary Campus', 0], ['North Campus', 0]]);
+      const main = own.find((x) => x.name === 'Calgary Campus');
+      assert.ok(![cluster.clusterId, c.clusterId].includes(main.clusterId));
+      const ssid = await ok(sb.get(`/networks/${net}/wireless/ssids/0`));
+      assert.equal(ssid.campusGateway.cluster.id, main.clusterId);
+      const targets = (await ok(sb.get(`/organizations/${org}/campusGateway/clusters/failover/targets?clusterIds[]=${main.clusterId}`)))[0].failover.targets;
+      assert.deepEqual(targets.map((t) => t.name), ['North Campus']);
+      assert.notEqual(targets[0].clusterId, c.clusterId);
+      const enc = (await ok(sb.get(`/organizations/${org}/campusGateway/clusters/tunneling/byCluster/byNetwork?clusterIds[]=${main.clusterId}`))).items;
+      assert.equal(enc.find((x) => x.network.id === net).data.encryption.enabled, true);
+    };
+    // A copy in the same organization tunnels through its own copy of the cluster.
+    const copy = await ok(sb.post(`/organizations/${lab.id}/networks`, { name: 'Calgary copy', productTypes: cal.productTypes, copyFromNetworkId: cal.id }), 201);
+    await check(lab.id, copy.id);
+    assert.deepEqual(await tunnels(lab.id, copy.id), [[copy.id, 'Calgary Campus'], [copy.id, 'Calgary Campus']]);
+    // A copy without campus gateways keeps tunneling through Calgary's cluster.
+    const plain = await ok(sb.post(`/organizations/${lab.id}/networks`, { name: 'Wireless copy', productTypes: ['wireless'], copyFromNetworkId: cal.id }), 201);
+    assert.equal((await ok(sb.get(`/networks/${plain.id}/wireless/ssids/0`))).campusGateway.cluster.id, cluster.clusterId);
+    // A cloned organization's Calgary does the same with its own clusters.
+    const clone = await ok(sb.post(`/organizations/${lab.id}/clone`, { name: 'Lab clone' }), 201);
+    const ccal = sb.world.orgById.get(clone.id).networks.find((n) => n.name === 'Lab - Calgary');
+    await check(clone.id, ccal.id);
+    assert.equal((await tunnels(clone.id, ccal.id)).length, 2);
   });
 
   test('swaps keep a gateway in its cluster and removals drop it', async () => {

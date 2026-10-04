@@ -181,7 +181,7 @@ describe('subscription licensing and order claims', () => {
     assert.equal((await ok(sb.post(`${P(org)}/preview`, { claimId: order.claimId }))).subscriptions[0].isClaimed, true);
   });
 
-  test('a removed network drops out of its subscription, and a split keeps it bound', async () => {
+  test('a removed network drops out of its subscription, a split keeps every part bound and a combine one subscription', async () => {
     const org = await newOrg();
     const sub = await claim(org);
     const net = (await sb.post(`/organizations/${org.id}/networks`, { name: 'Gone', productTypes: ['wireless'] })).body;
@@ -191,9 +191,22 @@ describe('subscription licensing and order claims', () => {
     assert.equal((await ok(sb.get(`${A}/subscriptions?organizationIds[]=${org.id}`)))[0].counts.networks, 0);
     const both = (await sb.post(`/organizations/${org.id}/networks`, { name: 'Both', productTypes: ['wireless', 'switch'] })).body;
     await ok(sb.post(`${A}/subscriptions/${sub.subscriptionId}/bind`, { networkIds: [both.id] }));
-    const parts = await ok(sb.post(`/networks/${both.id}/split`, {}));
-    const bound = sb.world.orgById.get(org.id).subscriptions[0].networkIds;
-    assert.equal(bound.length, 1);
-    assert.ok(parts.resultingNetworks.some((n) => n.id === bound[0]));
+    // The order's APs in the wireless part still take seats after the split.
+    const order = pool().orders[0];
+    await ok(sb.post(`/organizations/${org.id}/inventory/orders/claim`, { claimId: order.claimId }));
+    await ok(sb.post(`/networks/${both.id}/devices/claim`, { serials: order.serials }));
+    const seats = async () => (await ok(sb.get(`${A}/subscriptions?organizationIds[]=${org.id}`))).map((x) => [x.name, x.counts.networks, x.counts.seats.assigned]);
+    assert.deepEqual(await seats(), [['Lab networking', 1, 2]]);
+    const parts = (await ok(sb.post(`/networks/${both.id}/split`, {}))).resultingNetworks;
+    assert.deepEqual(await seats(), [['Lab networking', 2, 2]]);
+    // Combining parts bound to two subscriptions keeps the first one's binding.
+    const cams = await ok(sb.post(`${A}/subscriptions/claim`, { claimKey: pool().subscriptions.find((x) => x.name === 'Lab cameras').claimKey, organizationId: org.id }));
+    const cam = (await sb.post(`/organizations/${org.id}/networks`, { name: 'Cam', productTypes: ['camera'] })).body;
+    await ok(sb.post(`${A}/subscriptions/${cams.subscriptionId}/bind`, { networkIds: [cam.id] }));
+    const wl = parts.find((n) => n.productTypes[0] === 'wireless');
+    const combined = (await ok(sb.post(`/organizations/${org.id}/networks/combine`, { name: 'Again', networkIds: [wl.id, cam.id] }))).resultingNetwork;
+    const owners = sb.world.orgById.get(org.id).subscriptions.filter((x) => x.networkIds.includes(combined.id)).map((x) => x.name);
+    assert.deepEqual(owners, ['Lab networking']);
+    assert.deepEqual((await seats()).sort(), [['Lab cameras', 0, 0], ['Lab networking', 2, 2]]);
   });
 });
