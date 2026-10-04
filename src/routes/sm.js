@@ -3,7 +3,7 @@
 
 import { arrayParam, badRequest, notFound, paginate } from '../http.js';
 import { hashStr, unit } from '../rng.js';
-import { KINDS, LOOKBACK, SCOPES, cellularRows, desktopLogRows, idOf, inScope, lastConnected, ownerOf, performanceRows, profilesFor, sessions, smOf } from '../sim/sm.js';
+import { KINDS, LOOKBACK, SCOPES, cellularRows, desktopLogRows, idOf, inScope, keepAccessRows, lastConnected, ownerOf, performanceRows, profilesFor, sessions, smOf } from '../sim/sm.js';
 import { HOUR, iso } from '../time.js';
 import { collection, netOf, newId, requireProduct } from './common.js';
 
@@ -356,6 +356,7 @@ function moveDevices(ctx) {
   const from = writable(net);
   const dest = writable(to);
   for (const d of devs) {
+    keepAccessRows(net, d);
     reprofile(ctx, net, d, () => {
       from.devices.splice(from.devices.indexOf(d), 1);
       dest.devices.push(d);
@@ -370,6 +371,7 @@ function moveDevices(ctx) {
 
 // Erasing a device or unenrolling it takes it out of the network.
 function drop(net, dev) {
+  keepAccessRows(net, dev);
   const sm = writable(net);
   sm.devices.splice(sm.devices.indexOf(dev), 1);
 }

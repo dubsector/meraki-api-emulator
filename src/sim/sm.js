@@ -67,6 +67,12 @@ export function idOf(key, salt) {
 export const ownerOf = (net, dev) => smOf(net).users.find((u) => u.id === dev.ownerId) ?? null;
 export const profilesFor = (net, dev) => smOf(net).profiles.filter((p) => p.platforms.includes(KINDS[dev.kind].platform) && inScope(p.scope, p.tags, dev.tags));
 
+// User access devices read the name and tags of the enrolled device, so a
+// device leaving the network leaves its last ones behind.
+export function keepAccessRows(net, dev) {
+  for (const u of net.sm?.userAccessDevices ?? []) if (u.deviceId === dev.id) Object.assign(u, { name: dev.name, tags: [...dev.tags] });
+}
+
 // One stretch online per local day: desktops on most weekdays through the
 // work day, phones and tablets from morning to late evening, the kiosk
 // through opening hours. In progress, it was last seen at the last check-in.
@@ -175,6 +181,14 @@ export function cellularRows(dev, now) {
     rows.push({ received, sent: Math.round(received * (0.08 + unit(k, 1) * 0.12)), ts: iso(day * DAY) });
   }
   return rows;
+}
+
+// A network copy or clone takes the profiles, target groups and trusted access
+// configs. Devices, owners and what they did stay behind.
+export function copySm(from, net) {
+  if (!from.sm || !net.productTypes.includes('systemsManager')) return;
+  const { profiles, targetGroups, trustedAccess } = structuredClone(from.sm);
+  net.sm = { devices: [], users: [], profiles, ...(targetGroups && { targetGroups }), ...(trustedAccess && { trustedAccess, userAccessDevices: [] }) };
 }
 
 // Lab networks with an sm entry start with enrolled devices and owners.

@@ -190,7 +190,32 @@ describe('Systems Manager devices and owners', () => {
     assert.deepEqual(await ok(sb.get(`/networks/${part.id}/sm/devices`)), before);
   });
 
-  const logs = async (d) => ok(sb.get(D(d, 'deviceCommandLogs')));
+  test('network copies and clones take profiles, target groups and trusted access configs', async () => {
+    fresh();
+    const group = await ok(sb.post(N('/targetGroups'), { name: 'Remote staff', scope: 'withAny, remote' }), 201);
+    const settings = async (id) => Promise.all(['profiles', 'targetGroups', 'trustedAccessConfigs'].map((p) => ok(sb.get(`/networks/${id}/sm/${p}`))));
+    const want = await settings(net.id);
+    assert.deepEqual(want[1], [group]);
+    const copy = await ok(sb.post(`/organizations/${lab.id}/networks`, { name: 'SM copy', productTypes: ['systemsManager'], copyFromNetworkId: net.id }), 201);
+    assert.deepEqual(await settings(copy.id), want);
+    for (const p of ['devices', 'users', 'userAccessDevices']) assert.deepEqual(await ok(sb.get(`/networks/${copy.id}/sm/${p}`)), []);
+    // A device moved into the copy keeps its profiles.
+    const mac = byKind('Mac');
+    const installed = await ok(sb.get(D(mac, 'deviceProfiles')));
+    assert.ok(installed.length);
+    await ok(sb.post(N('/devices/move'), { ids: [mac.id], newNetwork: copy.id }));
+    assert.deepEqual(await ok(sb.get(`/networks/${copy.id}/sm/devices/${mac.id}/deviceProfiles`)), installed);
+    assert.ok(!(await logs(mac, copy.id)).some((c) => c.action === 'RemoveProfile'));
+    const clone = await ok(sb.post(`/organizations/${lab.id}/clone`, { name: 'Lab clone' }), 201);
+    const cloned = sb.world.orgById.get(clone.id).networks.find((n) => n.name === net.name);
+    assert.deepEqual(await settings(cloned.id), want);
+    assert.deepEqual(await ok(sb.get(`/networks/${cloned.id}/sm/devices`)), []);
+    // Writes to the copy leave the source alone.
+    await ok(sb.del(`/networks/${copy.id}/sm/targetGroups/${group.id}`), 204);
+    assert.deepEqual(await ok(sb.get(N('/targetGroups'))), [group]);
+  });
+
+  const logs = async (d, netId = net.id) => ok(sb.get(`/networks/${netId}/sm/devices/${d.id}/deviceCommandLogs`));
   const byName = (name) => net.sm.devices.find((d) => d.name === name);
 
   test('set actions answer the devices they reached and log the command', async () => {

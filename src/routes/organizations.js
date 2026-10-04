@@ -6,6 +6,7 @@ import { linkAverage, linkSample, pathLatency, vpnReachable } from '../sim/links
 import { memorySamples, ramKb } from '../sim/memory.js';
 import { deviceStatus, lastReportedAt, statusChanges, uplinkStatus } from '../sim/outages.js';
 import { presenceIn } from '../sim/presence.js';
+import { copySm } from '../sim/sm.js';
 import { uplinkBytes } from '../sim/traffic.js';
 import { WAN_RECV, WAN_SENT, WD_RECV, WD_SENT, WL_RECV, WL_SENT, networkTotals } from '../sim/usage.js';
 import { copyIot } from '../sim/zigbee.js';
@@ -32,6 +33,7 @@ function createNetwork(ctx) {
   if (source) {
     net.config = dropSwitchSerials(JSON.parse(JSON.stringify(configOf(source)).replaceAll(source.id, net.id)));
     copyIot(source, net);
+    copySm(source, net);
   }
   return networkJson(net);
 }
