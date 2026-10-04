@@ -203,9 +203,10 @@ function networkHealthChannelUtilization(ctx) {
   const { t0, t1 } = timeWindow(ctx.query, ctx.now, { maxSpan: 31 * DAY, lookback: 31 * DAY });
   const res = resolutionParam(ctx.query, [600], 600, t1 - t0);
   const bs = buckets(t0, t1, res);
+  const radios = new Map();
   const radio = (ap, band) =>
     bs.map(([s, e]) => {
-      const u = channelUtilization(ap, band, Math.max(s, t0), Math.min(e, t1));
+      const u = channelUtilization(ap, band, Math.max(s, t0), Math.min(e, t1), radios);
       return { startTime: iso(s), endTime: iso(e), utilizationTotal: u.total, utilization80211: u.wifi, utilizationNon80211: u.nonWifi };
     });
   const page = paginate(ctx, [...net.aps].sort(bySerial), (ap) => ap.serial, { def: 10, max: 100 });

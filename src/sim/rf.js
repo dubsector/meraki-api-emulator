@@ -30,18 +30,32 @@ export function apWidth(ap, band) {
   return ap.radio?.[SETTINGS[band]]?.channelWidth || WIDTH[band];
 }
 
+const UTIL_BASE = { 2.4: 9, 5: 3, 6: 1 };
+const UTIL_PER_CLIENT = { 2.4: 2.4, 5: 1.1, 6: 0.8 };
+const UTIL_NOISE = { 2.4: 3.5, 5: 0.9, 6: 0.3 };
+
+// The wireless clients on one radio. A read that covers many windows passes
+// a Map, so each radio's clients are picked out once rather than per window.
+function radioClients(ap, band, radios) {
+  const key = `${ap.serial} ${band}`;
+  let list = radios?.get(key);
+  if (!list) {
+    list = ap.net.clients.filter((c) => c.ap === ap && !c.wired && c.band === band);
+    radios?.set(key, list);
+  }
+  return list;
+}
+
 // Share of airtime in use on one radio over [t0, t1). Wi-Fi grows with the
 // clients on it; non-Wi-Fi is background noise, worst on 2.4 GHz.
-export function channelUtilization(ap, band, t0, t1) {
+export function channelUtilization(ap, band, t0, t1, radios) {
   let seconds = 0;
-  for (const c of ap.net.clients) if (c.ap === ap && !c.wired && c.band === band) seconds += presenceIn(c, t0, t1)?.seconds ?? 0;
+  for (const c of radioClients(ap, band, radios)) seconds += presenceIn(c, t0, t1)?.seconds ?? 0;
   const clients = seconds / (t1 - t0);
   const k = derive(ap.key, `util${band}`);
   const hour = Math.floor((t0 + t1) / 2 / 3600);
-  const base = { 2.4: 9, 5: 3, 6: 1 }[band];
-  const perClient = { 2.4: 2.4, 5: 1.1, 6: 0.8 }[band];
-  const wifi = Math.min(90, (base + clients * perClient) * lognoise(k, hour, 0.15) * (ap.flaky ? 1.5 : 1));
-  const nonWifi = { 2.4: 3.5, 5: 0.9, 6: 0.3 }[band] * lognoise(derive(k, 'noise'), hour, 0.3);
+  const wifi = Math.min(90, (UTIL_BASE[band] + clients * UTIL_PER_CLIENT[band]) * lognoise(k, hour, 0.15) * (ap.flaky ? 1.5 : 1));
+  const nonWifi = UTIL_NOISE[band] * lognoise(derive(k, 'noise'), hour, 0.3);
   return { wifi: round(wifi), nonWifi: round(nonWifi), total: round(Math.min(100, wifi + nonWifi)) };
 }
 
