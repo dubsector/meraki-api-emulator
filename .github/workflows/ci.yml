@@ -78,6 +78,25 @@ jobs:
       - run: python -m pip install --require-hashes -r scripts/sdk-requirements.txt
       - run: python scripts/sdk-check.py
 
+  go-sdk:
+    name: Meraki Go SDK
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: scripts/go-sdk-check/go.mod
+          cache-dependency-path: scripts/go-sdk-check/go.sum
+      # Every GET in the SDK, with each answer decoded again into the SDK's own type.
+      - run: go run .
+        working-directory: scripts/go-sdk-check
+
   fuzz:
     name: Fuzz
     runs-on: ubuntu-latest
