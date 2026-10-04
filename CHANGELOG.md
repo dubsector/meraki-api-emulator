@@ -2,6 +2,26 @@
 
 Versions follow [semantic versioning](https://semver.org/). While the version starts with `0.`, a new minor version can change responses, IDs or defaults, and a patch version only fixes bugs.
 
+## 0.4.0
+
+The emulator now answers 888 operations (463 reads and 425 writes), up from 800. [ENDPOINTS.md](ENDPOINTS.md) lists them all.
+
+- Acme Test Lab gets three networks for newer hardware: Lab - Ottawa with an MX68W, Lab - Montreal with a CW9166I, nine MT sensors and two Zigbee door locks, and Lab - Kingston with an MG52 and an MG21. Acme Corporation's answers don't change.
+- MT sensors: readings history and latest readings, gateway connections, alert profiles and their overviews, commands, livestream relationships and the sensor MQTT brokers.
+- Zigbee door locks with enrollments and disenrollments, and electronic shelf label settings, on CW916x APs.
+- MG cellular gateways: SIMs and APNs, band masks, geolocation, LAN and port forwarding, uplink bandwidth limits and the organization uplink statuses.
+- MG network settings: DHCP, connectivity monitoring destinations and the subnet pool, plus eSIMs with their inventory, service provider accounts, plans and profile swaps.
+- Secure Access: the integration, eligible networks, regions, connectors, sites and site connectivity now and over time.
+- Umbrella on MX networks (account, policies, domain exclusions and protection), XDR per network, the Cisco Spaces link, and the deployable and deployed integration lists.
+
+Changes to existing responses:
+
+- Acme Test Lab's organization views list the new networks and their devices: networks, devices, statuses, availabilities, inventory, licenses, provisioning statuses, firmware upgrades, summaries, and the appliance, wireless and cellular views. The organization cellular views list the two MGs where they answered empty lists.
+- The MX Wi-Fi routes answer `200` on Lab - Ottawa's MX68W. An MX SSID update on a network without VLANs takes `defaultVlanId: 1`, the value the read shows for the single LAN.
+- Network copies, templates made from a network and organization clones drop the source's switches from STP bridge priorities and MTU and multicast overrides.
+- Cellular data usage history defaults to 1 day, as the spec says. It was 31 days.
+- A network can't move to another organization while it's attached to Secure Access or its MGs have a cellular data profile.
+
 ## 0.3.1
 
 Bug fixes. The emulator still answers 800 operations.
