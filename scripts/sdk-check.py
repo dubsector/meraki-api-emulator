@@ -2209,7 +2209,53 @@ def sase():
         check("deleteOrganizationSaseIntegration detaches every site", o.getOrganizationSaseSites(org)["items"] == [], None)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase]
+@scenario
+def integrations():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o, a = d.organizations, d.appliance
+        orgs = {x["name"]: x["id"] for x in o.getOrganizations()}
+        org, lab = orgs["Acme Corporation"], orgs["Acme Test Lab"]
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(org)}
+        hq, aus = nets["HQ - San Francisco"], nets["Branch - Austin"]
+
+        made = a.connectNetworkApplianceUmbrellaAccount(hq, api={"key": "k", "secret": "s"})
+        check("connectNetworkApplianceUmbrellaAccount", len(made["umbrella"]["organization"]["id"]) == 7 and list(made) == ["umbrella"], made)
+        added = a.addNetworkApplianceUmbrellaPolicies(hq, policy={"id": "13408726"})
+        again = a.addNetworkApplianceUmbrellaPolicies(hq, policy={"id": "13408726"})
+        check("addNetworkApplianceUmbrellaPolicies is idempotent", added == again and added["policies"] == [{"id": "13408726"}], added)
+        a.removeNetworkApplianceUmbrellaPolicies(hq, policy={"id": "13408726"})
+        check("removeNetworkApplianceUmbrellaPolicies", a.addNetworkApplianceUmbrellaPolicies(hq, policy={"id": "7"})["policies"] == [{"id": "7"}], None)
+        ex = a.exclusionsNetworkApplianceUmbrellaDomains(hq, domains=["Example.com", "corp.example.org"])
+        check("exclusionsNetworkApplianceUmbrellaDomains", ex == {"domains": ["example.com", "corp.example.org"]}, ex)
+        on = a.protectionNetworkApplianceUmbrella(hq, enabled=True)
+        off = a.protectionNetworkApplianceUmbrella(hq, enabled=False)
+        check("protectionNetworkApplianceUmbrella", on["umbrella"]["origin"]["id"] and off["umbrella"]["origin"]["id"] is None and off["umbrella"]["organization"]["id"] is None, off)
+        a.disconnectNetworkApplianceUmbrellaAccount(hq)
+        try:
+            a.addNetworkApplianceUmbrellaPolicies(hq, policy={"id": "7"})
+            check("disconnectNetworkApplianceUmbrellaAccount", False, "add still worked")
+        except meraki.APIError as e:
+            check("disconnectNetworkApplianceUmbrellaAccount", e.status == 400, e.message)
+
+        rows = o.getOrganizationIntegrationsXdrNetworks(org, total_pages="all", perPage=3)
+        check(f"getOrganizationIntegrationsXdrNetworks pages ({len(rows['items'])} networks)", len(rows["items"]) == 5 and not any(r["enabled"] for r in rows["items"]), rows["meta"])
+        en = o.enableOrganizationIntegrationsXdrNetworks(org, [{"networkId": hq, "productTypes": ["appliance"]}, {"networkId": aus, "productTypes": ["appliance"]}])
+        dis = o.disableOrganizationIntegrationsXdrNetworks(org, [{"networkId": aus, "productTypes": ["appliance"]}])
+        now = [r["networkId"] for r in o.getOrganizationIntegrationsXdrNetworks(org, total_pages="all")["items"] if r["enabled"]]
+        check("enableOrganizationIntegrationsXdrNetworks and disableOrganizationIntegrationsXdrNetworks", len(en["networks"]) == 2 and dis["networks"][0]["enabled"] is False and now == [hq], now)
+
+        deployable = o.getOrganizationIntegrationsDeployable(org)
+        check(f"getOrganizationIntegrationsDeployable ({len(deployable['items'])} integrations)", len(deployable["items"]) == 10 and all(i["isDeployable"] for i in deployable["items"]), deployable["items"][:1])
+        deployed = o.getOrganizationIntegrationsDeployed(org)
+        check("getOrganizationIntegrationsDeployed", [i["type"] for i in deployed["items"]] == ["XDR"], deployed)
+        status = d.spaces.getOrganizationSpacesIntegrateStatus(lab)
+        check("getOrganizationSpacesIntegrateStatus", status["status"] is True and status["accountName"] == "Acme Test Lab", status)
+        gone = d.spaces.removeOrganizationSpacesIntegration(lab)
+        check("removeOrganizationSpacesIntegration", gone["status"] is True and d.spaces.getOrganizationSpacesIntegrateStatus(lab) == {"status": False, "states": []} and o.getOrganizationIntegrationsDeployed(lab)["items"] == [], gone)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase, integrations]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
