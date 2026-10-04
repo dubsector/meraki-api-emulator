@@ -2305,7 +2305,64 @@ def smdevices():
         check("getNetworkSmUserDeviceProfiles", all(p in theirs for p in sm.getNetworkSmDeviceDeviceProfiles(net, mac["id"])), len(theirs))
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase, integrations, smdevices]
+@scenario
+def smactions():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o, sm = d.organizations, d.sm
+        lab = {x["name"]: x["id"] for x in o.getOrganizations()}["Acme Test Lab"]
+        net = {x["name"]: x["id"] for x in o.getOrganizationNetworks(lab)}["Lab - Systems Manager"]
+        devs = sm.getNetworkSmDevices(net, fields=["systemType", "isSupervised"])
+        mac = next(x for x in devs if x["systemType"] == "mac")
+        win = next(x for x in devs if x["systemType"] == "windows")
+        ios = next(x for x in devs if x["systemType"] == "iphone" and x["isSupervised"])
+
+        r = sm.checkinNetworkSmDevices(net, ids=[mac["id"], win["id"]])
+        last = sm.getNetworkSmDevices(net, ids=[mac["id"]], fields=["lastConnected"])[0]["lastConnected"]
+        check("checkinNetworkSmDevices", sorted(r["ids"]) == sorted([mac["id"], win["id"]]) and last == int(EVENTS_NOW.timestamp()), (r, last))
+        r = sm.lockNetworkSmDevices(net, scope=["withAny", "corporate"], pin=123456)
+        check(f"lockNetworkSmDevices ({len(r['ids'])} devices)", mac["id"] in r["ids"], r)
+        r = sm.rebootNetworkSmDevices(net, serials=[mac["serial"]], notifyUser=True)
+        check("rebootNetworkSmDevices", r["ids"] == [mac["id"]], r)
+        r = sm.shutdownNetworkSmDevices(net, wifiMacs=[mac["wifiMac"], ios["wifiMac"]])
+        check("shutdownNetworkSmDevices skips iOS", r["ids"] == [mac["id"]], r)
+        cmds = sm.getNetworkSmDeviceDeviceCommandLogs(net, mac["id"])
+        check("set actions log the API admin", [c["action"] for c in cmds[-4:]] == ["DeviceInformation", "DeviceLock", "RestartDevice", "ShutDownDevice"] and cmds[-1]["dashboardUser"] == "API Integration", cmds[-4:])
+        r = sm.updateNetworkSmDevicesFields(net, {"name": "Lab Mac", "notes": "Spare"}, id=mac["id"])
+        check("updateNetworkSmDevicesFields", r[0]["name"] == "Lab Mac" and r[0]["notes"] == "Spare", r)
+        r = sm.modifyNetworkSmDevicesTags(net, ["loaner"], "add", ids=[mac["id"]])
+        check("modifyNetworkSmDevicesTags", r[0]["tags"][-1] == "loaner" and sm.getNetworkSmDevices(net, scope=["withAll", "loaner"])[0]["id"] == mac["id"], r)
+
+        apps = [x for x in sm.getNetworkSmDeviceSoftwares(net, win["id"]) if x["appId"]]
+        sm.uninstallNetworkSmDeviceApps(net, win["id"], [apps[1]["appId"]])
+        gone = all(x["appId"] != apps[1]["appId"] for x in sm.getNetworkSmDeviceSoftwares(net, win["id"]))
+        sm.installNetworkSmDeviceApps(net, win["id"], [apps[1]["appId"]])
+        back = any(x["appId"] == apps[1]["appId"] for x in sm.getNetworkSmDeviceSoftwares(net, win["id"]))
+        check("uninstallNetworkSmDeviceApps and installNetworkSmDeviceApps", gone and back, apps[1]["name"])
+        check("refreshNetworkSmDeviceDetails", sm.refreshNetworkSmDeviceDetails(net, win["id"]) == {})
+
+        a = sm.createNetworkSmBypassActivationLockAttempt(net, [ios["id"], mac["id"]])
+        check("createNetworkSmBypassActivationLockAttempt", a["status"] == "complete" and a["data"][ios["id"]]["success"] and not a["data"][mac["id"]]["success"], a)
+        check("getNetworkSmBypassActivationLockAttempt", sm.getNetworkSmBypassActivationLockAttempt(net, a["id"]) == a)
+
+        g = sm.createNetworkSmTargetGroup(net, name="Remote", scope="withAny, remote")
+        check("createNetworkSmTargetGroup", g["scope"] == "withAny" and g["tags"] == ["remote"], g)
+        detailed = sm.getNetworkSmTargetGroup(net, g["id"], withDetails=True)
+        check("getNetworkSmTargetGroup withDetails", detailed["deviceIds"] == [x["id"] for x in sm.getNetworkSmDevices(net, scope=["withAny", "remote"])], detailed)
+        sm.updateNetworkSmTargetGroup(net, g["id"], name="Everyone", scope="all")
+        check("getNetworkSmTargetGroups and updateNetworkSmTargetGroup", [(x["name"], x["scope"]) for x in sm.getNetworkSmTargetGroups(net)] == [("Everyone", "all")])
+        sm.deleteNetworkSmTargetGroup(net, g["id"])
+        check("deleteNetworkSmTargetGroup", sm.getNetworkSmTargetGroups(net) == [])
+
+        other = d.organizations.createOrganizationNetwork(lab, "SM two", ["systemsManager"])["id"]
+        r = sm.moveNetworkSmDevices(net, other, ids=[win["id"]])
+        check("moveNetworkSmDevices", r == {"ids": [win["id"]], "newNetwork": other} and [x["id"] for x in sm.getNetworkSmDevices(other)] == [win["id"]], r)
+        check("wipeNetworkSmDevices", sm.wipeNetworkSmDevices(net, id=mac["id"], pin=123456) == {"id": mac["id"]})
+        check("unenrollNetworkSmDevice", sm.unenrollNetworkSmDevice(net, ios["id"]) == {"success": True})
+        check("wiped and unenrolled devices leave the list", len(sm.getNetworkSmDevices(net)) == len(devs) - 3)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase, integrations, smdevices, smactions]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
