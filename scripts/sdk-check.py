@@ -2504,7 +2504,70 @@ def wirelesscontroller():
         check("getOrganizationWirelessControllerDevicesSystemUtilizationHistoryByInterval", all(len(x["intervals"]) == 288 and len(x["intervals"][0]["byCore"]) == 8 for x in cpu), cpu[0]["intervals"][:1])
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase, integrations, smdevices, smactions, smorg, campusgateway, wirelesscontroller]
+@scenario
+def securerouter():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o, a = d.organizations, d.appliance
+        lab = {x["name"]: x["id"] for x in o.getOrganizations()}["Acme Test Lab"]
+        wpg = {x["name"]: x["id"] for x in o.getOrganizationNetworks(lab)}["Lab - Winnipeg"]
+        serial = next(x["serial"] for x in o.getOrganizationDevices(lab, total_pages="all") if x["networkId"] == wpg)
+
+        dom = a.getOrganizationApplianceDevicesPortsTransceiversReadingsHistoryByDevice(lab, total_pages="all", perPage=3, timespan=7200)["items"]
+        check("getOrganizationApplianceDevicesPortsTransceiversReadingsHistoryByDevice", [p["portId"] for p in dom[0]["ports"]] == ["1", "3"] and len(dom[0]["ports"][0]["readings"]) == 6, dom[0]["ports"][0]["readings"][:1])
+        pk = a.getOrganizationApplianceInterfacesPacketsOverviewsByDevice(lab, total_pages="all", perPage=3, networkIds=[wpg])["items"]
+        ports = a.getOrganizationApplianceDevicesInterfacesPortsByDevice(lab, serials=[serial])["items"][0]["ports"]
+        check("getOrganizationApplianceInterfacesPacketsOverviewsByDevice", [i["name"] for i in pk[0]["interfaces"]] == [p["interface"]["name"] for p in ports], pk[0]["interfaces"][:1])
+
+        job = d.devices.createDeviceLiveToolsRoutingTableLookup(serial, destination={"address": "8.8.8.8"})
+        got = d.devices.getDeviceLiveToolsRoutingTableLookup(serial, job["lookupId"])
+        check("createDeviceLiveToolsRoutingTableLookup / getDeviceLiveToolsRoutingTableLookup", got["status"] == "complete" and [e["type"] for e in got["entries"]] == ["default WAN"], got)
+        job = d.devices.createDeviceLiveToolsRoutingTableSummary(serial)
+        got = d.devices.getDeviceLiveToolsRoutingTableSummary(serial, job["summaryId"])
+        check("createDeviceLiveToolsRoutingTableSummary / getDeviceLiveToolsRoutingTableSummary", got["counts"]["total"] == 2, got)
+        mx = next(x["serial"] for x in o.getOrganizationDevices(lab, total_pages="all", models=["MX68W"]))
+        try:
+            d.devices.createDeviceLiveToolsRoutingTableSummary(mx)
+            check("createDeviceLiveToolsRoutingTableSummary refuses an MX", False, "no error")
+        except meraki.APIError as e:
+            check("createDeviceLiveToolsRoutingTableSummary refuses an MX", e.status == 400, e.message)
+
+
+# The default seed's claim key and order claim ID; nothing in the API lists them.
+CLAIM_KEY = "S2Z4-KQZD-EDZH"
+ORDER_CLAIM_ID = "LNCKQZV3J8Z5"
+
+
+@scenario
+def subscriptions():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o, lic = d.organizations, d.licensing
+        ents = lic.getAdministeredLicensingSubscriptionEntitlements(skus=["LIC-MR-A", "LIC-MT-E"])
+        check("getAdministeredLicensingSubscriptionEntitlements", [e["sku"] for e in ents] == ["LIC-MR-A", "LIC-MT-E"], ents)
+        found = lic.validateAdministeredLicensingSubscriptionSubscriptionsClaimKey(CLAIM_KEY)
+        check("validateAdministeredLicensingSubscriptionSubscriptionsClaimKey", found["name"] == "Lab networking" and found["counts"]["organizations"] == 0, found)
+        org = o.createOrganization("Subscriptions")["id"]
+        dry = lic.claimAdministeredLicensingSubscriptionSubscriptions(CLAIM_KEY, org, validate=True, name="Mine")
+        sub = lic.claimAdministeredLicensingSubscriptionSubscriptions(CLAIM_KEY, org, name="Mine")
+        check("claimAdministeredLicensingSubscriptionSubscriptions", dry["name"] == sub["name"] == "Mine" and o.getOrganization(org)["licensing"]["model"] == "subscription", sub)
+
+        preview = o.previewOrganizationInventoryOrders(org, ORDER_CLAIM_ID)
+        check("previewOrganizationInventoryOrders", preview["resolution"]["claimableShippedDeviceCount"] == 2, preview)
+        claimed = o.claimOrganizationInventoryOrders(org, ORDER_CLAIM_ID)
+        check("claimOrganizationInventoryOrders", len(claimed["serials"]) == 2 and claimed["subscriptions"] == [], claimed)
+        net = o.createOrganizationNetwork(org, "Site", ["wireless"])["id"]
+        d.networks.claimNetworkDevices(net, serials=claimed["serials"])
+        dry = lic.bindAdministeredLicensingSubscriptionSubscription(sub["subscriptionId"], networkIds=[net], validate=True)
+        bound = lic.bindAdministeredLicensingSubscriptionSubscription(sub["subscriptionId"], networkIds=[net])
+        check("bindAdministeredLicensingSubscriptionSubscription", dry == bound and bound["insufficientEntitlements"] == [], bound)
+        subs = lic.getAdministeredLicensingSubscriptionSubscriptions(organizationIds=[org], total_pages="all", perPage=3)
+        check("getAdministeredLicensingSubscriptionSubscriptions", [s["counts"]["networks"] for s in subs] == [1] and subs[0]["entitlements"][0]["seats"]["assigned"] == 2, subs)
+        st = lic.getAdministeredLicensingSubscriptionSubscriptionsComplianceStatuses([org])
+        check("getAdministeredLicensingSubscriptionSubscriptionsComplianceStatuses", st == [{"subscription": {"id": sub["subscriptionId"], "name": "Mine", "status": "active"}, "violations": {"byProductClass": []}}], st)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase, integrations, smdevices, smactions, smorg, campusgateway, wirelesscontroller, securerouter, subscriptions]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

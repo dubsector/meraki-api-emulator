@@ -80,6 +80,7 @@ export function buildWorld({ seed = 1, bootTime = Date.now() / 1000 } = {}) {
   buildAdminData(world, seed, bootTime);
   buildInventory(world, seed);
   buildLab(world, seed, bootTime);
+  buildSubscriptions(world, seed, bootTime);
   return world;
 }
 
@@ -257,6 +258,44 @@ function buildLab(world, seed, bootTime) {
     seedCampus(world, net, tpl);
     seedWlc(world, net, tpl);
   }
+}
+
+// Subscriptions waiting in the pool for a claim key, and one hardware order
+// with a subscription of its own that order claims take. Their own stream, run
+// last, so nothing above moves. No organization starts on subscriptions.
+function buildSubscriptions(world, seed, bootTime) {
+  const r = new Rand(hashStr(`meraki-api-emulator:${seed}:subscriptions`));
+  const bootDay = Math.floor(bootTime / DAY) * DAY;
+  const account = { id: r.digits(8), name: 'Acme Smart Account', domain: 'acme.example.com' };
+  const key = () => `S2${r.chars(2, SERIAL_CHARS)}-${r.chars(4, SERIAL_CHARS)}-${r.chars(4, SERIAL_CHARS)}`;
+  const sub = (name, description, entitlements, start, years, claimKey) => ({
+    id: r.digits(10),
+    claimKey,
+    name,
+    description,
+    webOrderId: r.digits(8),
+    startDate: start,
+    endDate: start + years * 365 * DAY,
+    lastUpdatedAt: start,
+    smartAccount: account,
+    entitlements: entitlements.map(([sku, limit]) => ({ sku, limit })),
+    networkIds: [],
+  });
+  const order = { claimId: r.chars(12, 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789'), number: r.digits(8), shippedAt: bootDay - 6 * DAY, serials: [], pending: [{ model: 'C8455-G2-MX', quantity: 1 }] };
+  world.unclaimed.subscriptions = [
+    sub('Lab networking', 'Wireless, switching and security for the lab', [['LIC-MR-A', 10], ['LIC-MS-100-S-E', 4], ['LIC-MX-L-A', 2], ['LIC-MT-E', 10]], bootDay - 10 * DAY, 3, key()),
+    sub('Lab cameras', 'Camera licensing starting next month', [['LIC-MV-E', 5]], bootDay + 30 * DAY, 1, key()),
+    { ...sub('Order subscription', 'Comes with the hardware order', [['LIC-MR-E', 2], ['LIC-MX-L-E', 1]], bootDay - 6 * DAY, 5, null), orderClaimId: order.claimId },
+  ];
+  for (const model of ['CW9166I', 'CW9166I']) {
+    const info = MODELS[model];
+    let serial;
+    do serial = `${SERIAL_PREFIX[info.productType]}-${r.chars(4, SERIAL_CHARS)}-${r.chars(4, SERIAL_CHARS)}`;
+    while (serialTaken(world, serial));
+    world.unclaimed.devices.push({ serial, model, productType: info.productType, mac: macFrom(r, DEVICE_OUI[info.productType]), orderNumber: order.number, claimedAt: null, net: null, tags: [], name: null });
+    order.serials.push(serial);
+  }
+  world.unclaimed.orders = [order];
 }
 
 // A new co-term license made from part of another's counts.
@@ -921,6 +960,7 @@ function repoint(org, fromId, toId) {
   if (org.xdrNetworks) org.xdrNetworks.networkIds = swap(org.xdrNetworks.networkIds, (id) => id, () => toId);
   if (org.adaptivePolicySettings) org.adaptivePolicySettings.enabledNetworks = swap(org.adaptivePolicySettings.enabledNetworks, (id) => id, () => toId);
   for (const o of org.earlyAccessOptIns?.list ?? []) o.networkIds = swap(o.networkIds, (id) => id, () => toId);
+  for (const s of org.subscriptions ?? []) s.networkIds = swap(s.networkIds, (id) => id, () => toId);
   for (const p of org.brandingPolicies?.list ?? []) if (p.appliesTo === 'All admins of networks...') p.values = swap(p.values, (id) => id, () => toId);
   repointWireless(org, fromId, toId);
   repointCamera(org, fromId, toId);

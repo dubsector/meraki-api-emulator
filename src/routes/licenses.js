@@ -85,6 +85,7 @@ function cotermJson(org, l, now) {
 // The licensed counts come from the live co-term licenses, keyed the way the
 // devices they cover are: MR, MV, or the MX or MS model.
 function licensesOverview(org, now) {
+  if (org.licensing === 'subscription') throw new ApiError(400, ['Organization uses subscription licensing']);
   const devices = [...org.devices, ...org.spares];
   if (org.licensing === 'co-term') {
     const have = {};
@@ -181,7 +182,7 @@ function seatCount(n) {
 // An organization made through the API with nothing in it yet takes on
 // per-device licensing with the first licenses moved in.
 function takesLicenses(org) {
-  return org.licensing === 'per-device' || (org.created && !org.networks.length && !org.devices.length && !org.spares.length);
+  return org.licensing === 'per-device' || (org.licensing === 'co-term' && org.created && !org.networks.length && !org.devices.length && !org.spares.length);
 }
 
 function moveLicensesTo(ctx) {
@@ -299,7 +300,7 @@ function claimInventory(ctx) {
     licenses.push(l);
   }
   const ordered = pool.licenses.filter((l) => orders.includes(l.orderNumber));
-  if ([...licenses, ...ordered].length && org.licensing !== 'co-term') throw badRequest('Co-term licenses cannot be claimed into an organization that uses per-device licensing');
+  if ([...licenses, ...ordered].length && org.licensing !== 'co-term') throw badRequest(`Co-term licenses cannot be claimed into an organization that uses ${org.licensing} licensing`);
 
   const devices = pool.devices.filter((d) => serials.includes(d.serial) || orders.includes(d.orderNumber));
   pool.devices = pool.devices.filter((d) => !devices.includes(d));

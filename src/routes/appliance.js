@@ -7,6 +7,7 @@ import { arrayParam, badRequest, notFound } from '../http.js';
 import { derive, hashStr, unit } from '../rng.js';
 import { isDown } from '../sim/outages.js';
 import { presenceIn } from '../sim/presence.js';
+import { portInterface } from '../sim/router.js';
 import { DAY } from '../time.js';
 import { ipInCidr, merge, parseCidr } from '../validate.js';
 import { checkGroupId } from './adaptivepolicy.js';
@@ -69,7 +70,7 @@ const POLICY_NAMES = Object.fromEntries(Object.entries(POLICY_TYPES).map(([k, v]
 // The org-wide port view: one WAN port per uplink, then the LAN ports. Where
 // an uplink lands on a LAN port (the MX67's port 2), that port is flexible.
 export function interfacePorts(mx) {
-  const iface = (n) => ({ name: `GigabitEthernet0/0/${n}`, slot: 0, subslot: 0, number: n });
+  const iface = (n) => portInterface(mx, n);
   const lan = appliancePorts(mx.net);
   const routed = new Set((configOf(mx.net).applianceL3Interfaces?.list ?? []).map((x) => x.port?.number));
   const wan = mx.uplinks.map((u, i) => ({
