@@ -378,6 +378,7 @@ function createPolicy(ctx) {
     vlanTagging: byDefault,
     bonjourForwarding: { ...byDefault, rules: [] },
   };
+  dropSentry(netOf(ctx).org, c, id);
   c.groupPolicies.push(merge(policy, b));
   return policy;
 }

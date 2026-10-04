@@ -934,6 +934,12 @@ export function moveNetwork(world, net, dest) {
   const org = net.org;
   settle(org);
   org.networks.splice(org.networks.indexOf(net), 1);
+  // PII requests are the network's own records, so they go with it.
+  const pii = org.piiRequests?.list.filter((x) => x.networkId === net.id) ?? [];
+  if (pii.length) {
+    org.piiRequests.list = org.piiRequests.list.filter((x) => !pii.includes(x));
+    (dest.piiRequests ??= { created: 0, list: [] }).list.push(...pii);
+  }
   repoint(org, net.id, null);
   const devs = new Set(net.devices);
   org.devices = org.devices.filter((d) => !devs.has(d));

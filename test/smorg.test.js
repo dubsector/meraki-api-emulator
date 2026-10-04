@@ -155,6 +155,52 @@ describe('Systems Manager organization settings, trusted access and PII', () => 
     assert.deepEqual((await byNetwork()).items, []);
   });
 
+  test('a Sentry policy hidden by a lost group policy neither stops a move nor comes back', async () => {
+    fresh();
+    await guestPolicy();
+    await ok(sb.put(ASSIGN(), { items: [{ networkId: tor.id, policies: [policy()] }] }));
+    // Binding to a template and unbinding again leaves Toronto with no group policies.
+    const t = await ok(sb.post(`/organizations/${lab.id}/configTemplates`, { name: 'Lab template' }), 201);
+    await ok(sb.post(`/networks/${tor.id}/bind`, { configTemplateId: t.id }));
+    await ok(sb.post(`/networks/${tor.id}/unbind`, {}));
+    assert.deepEqual((await byNetwork()).items, []);
+    const dest = await ok(sb.post('/organizations', { name: 'Acme West' }), 201);
+    Object.assign(sb.world.orgById.get(dest.id), { licensing: lab.licensing, licenses: [] });
+    const move = await ok(sb.post(`/organizations/${lab.id}/networks/moves`, { network: { id: tor.id }, organizations: { target: { id: dest.id } }, simulate: true }), 201);
+    assert.doesNotMatch(move.result.reason, /Sentry/);
+    // A new group policy takes the lost one's ID without bringing the policy back.
+    assert.equal((await guestPolicy()).groupPolicyId, '101');
+    assert.deepEqual((await byNetwork()).items, []);
+  });
+
+  test('user access devices follow the enrolled device and keep what it had when it left', async () => {
+    fresh();
+    const R = `/networks/${net.id}/sm/userAccessDevices`;
+    const row = net.sm.userAccessDevices[0];
+    const dev = net.sm.devices.find((d) => d.id === row.deviceId);
+    await ok(sb.post(`/networks/${net.id}/sm/devices/modifyTags`, { ids: [dev.id], updateAction: 'add', tags: ['travel'] }));
+    await ok(sb.put(`/networks/${net.id}/sm/devices/fields`, { id: dev.id, deviceFields: { name: 'Loaner' } }));
+    const [shown] = await ok(sb.get(`/networks/${net.id}/sm/devices?ids[]=${dev.id}`));
+    const pick = (u) => [u.name, u.tags];
+    assert.deepEqual(pick((await ok(sb.get(R))).find((u) => u.id === row.id)), [shown.name, shown.tags]);
+    assert.ok(shown.tags.includes('travel'));
+    await ok(sb.post(`/networks/${net.id}/sm/devices/${dev.id}/unenroll`, {}));
+    assert.deepEqual(pick((await ok(sb.get(R))).find((u) => u.id === row.id)), [shown.name, shown.tags]);
+  });
+
+  test('PII requests go with their network to another organization', async () => {
+    fresh();
+    const R = `/networks/${net.id}/pii/requests`;
+    const r = await ok(sb.post(R, { type: 'restrict processing', smDeviceId: net.sm.devices[0].id }), 201);
+    const dest = await ok(sb.post('/organizations', { name: 'Acme West' }), 201);
+    Object.assign(sb.world.orgById.get(dest.id), { licensing: lab.licensing, licenses: [] });
+    const move = await ok(sb.post(`/organizations/${lab.id}/networks/moves`, { network: { id: net.id }, organizations: { target: { id: dest.id } } }), 201);
+    assert.equal(move.result.status, 'completed');
+    assert.deepEqual(await ok(sb.get(R)), [r]);
+    await ok(sb.del(`${R}/${r.id}`), 204);
+    assert.deepEqual(await ok(sb.get(R)), []);
+  });
+
   test('trusted access configs and user access devices', async () => {
     fresh();
     const configs = await ok(sb.get(`/networks/${net.id}/sm/trustedAccessConfigs`));

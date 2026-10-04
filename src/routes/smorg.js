@@ -132,9 +132,12 @@ const policyJson = (p, i) => ({
 
 const sentryRow = (org, netId) => ({ networkId: netId, policies: policiesOf(org, netId).map(policyJson) });
 
-export const usesSentry = (net) => (net.org.smSentryPolicies ?? NONE).list.some((p) => p.networkId === net.id || p.smNetworkId === net.id);
+// Only policies still shown count, so one hidden by a lost group policy doesn't block a move.
+export const usesSentry = (net) => (net.org.smSentryPolicies ?? NONE).list.some((p) => (p.networkId === net.id || p.smNetworkId === net.id) && alive(net.org, p));
 
-// A deleted group policy takes the Sentry policies applying it with it.
+// A deleted group policy takes the Sentry policies applying it with it. A new
+// group policy drops them too, since its ID may be one a lost policy had (a
+// network bound to a template and unbound again).
 export function dropSentry(org, config, groupPolicyId) {
   const s = org.smSentryPolicies;
   if (!s) return;
@@ -235,17 +238,18 @@ const configJson = (c) => ({
   accessEndAt: iso(c.accessEndAt),
 });
 
-// The device's last check-in, while it is still enrolled here.
+// The device's name, tags and last check-in while it is still enrolled here,
+// else what it had when it left (keepAccessRows).
 function accessDeviceJson(net, u, now) {
   const dev = smOf(net).devices.find((d) => d.id === u.deviceId);
   return {
     id: u.id,
-    name: u.name,
+    name: dev?.name ?? u.name,
     systemType: u.systemType,
     mac: u.mac,
     username: u.username,
     email: u.email,
-    tags: [...u.tags],
+    tags: [...(dev?.tags ?? u.tags)],
     trustedAccessConnections: u.connections.map((c) => ({
       trustedAccessConfigId: c.trustedAccessConfigId,
       downloadedAt: iso(c.downloadedAt),
