@@ -231,6 +231,9 @@ function wakeOnLanVlans(dev) {
 
 // ── The tools ──
 
+// Sensors have no IP address of their own, so they can't ping or be pinged.
+const IP_KINDS = ['appliance', 'switch', 'wireless', 'camera'];
+
 // Each tool: the ID field in its answers, the path param of its GET, the
 // device kinds it runs on, how long it runs, its request fields and what
 // a finished job adds. `post` lists those additions the POST answer shows too.
@@ -293,6 +296,7 @@ const TOOLS = {
     name: 'Ping',
     id: 'pingId',
     param: 'id',
+    kinds: IP_KINDS,
     seconds: 6,
     request: (dev, b) => {
       const target = String(b.target).trim();
@@ -305,6 +309,7 @@ const TOOLS = {
     name: 'PingDevice',
     id: 'pingId',
     param: 'id',
+    kinds: IP_KINDS,
     seconds: 6,
     reachable: true,
     request: (dev, b) => ({ count: countParam(b) }),

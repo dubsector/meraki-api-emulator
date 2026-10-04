@@ -406,7 +406,11 @@ function createCommand(ctx) {
   const a = ctx.world.apiAdmin;
   const c = { commandId: r.digits(13), createdAt: now, start, end, operation: op, failed, errors: failed ? ['The sensor is offline.'] : [], createdBy: { adminId: a.id, name: a.name, email: a.email } };
   store.list.push(c);
-  if (store.list.length > MAX_COMMANDS) store.list.shift();
+  if (store.list.length > MAX_COMMANDS) {
+    const old = store.list.shift();
+    // The outlet stays as the dropped command left it.
+    if (!old.failed && POWER_OPS.includes(old.operation)) store.power = [old.end, old.operation !== 'disableDownstreamPower'];
+  }
   return commandJson(ctx, c);
 }
 
