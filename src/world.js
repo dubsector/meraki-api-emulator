@@ -114,6 +114,8 @@ function buildAdminData(world, seed, bootTime) {
     world.apiAdmin,
   ];
   lab.admins = [engineer, admin({ ...person(), orgAccess: 'full', twoFactorAuthEnabled: false }), world.apiAdmin];
+  // Acme Test Lab is linked to a Cisco Spaces account.
+  lab.spaces = { email: engineer.email, accountName: lab.name, accountType: 'Extend' };
   for (const org of world.orgs) org.baseAdmins = [...org.admins];
 
   corp.licensing = 'co-term';
@@ -869,7 +871,7 @@ function splitAdaptivePolicy(org, net, parts) {
 
 // Points what names a network at its new ID, or drops it when toId is null:
 // admin and SAML role privileges, network groups, camera roles, networks with
-// adaptive policy enabled, early access opt-ins, branding policies, firewall rule
+// adaptive policy or XDR enabled, early access opt-ins, branding policies, firewall rule
 // VLANs, group policy VLAN assignments, DNS profile assignments, Secure Access
 // sites and spokes' VPN hubs.
 function repoint(org, fromId, toId) {
@@ -884,6 +886,7 @@ function repoint(org, fromId, toId) {
   for (const r of org.samlRoles?.list ?? []) r.networks = swap(r.networks, (n) => n.id, (n) => ({ ...n, id: toId }));
   for (const g of org.networkGroups?.list ?? []) g.networkIds = swap(g.networkIds, (id) => id, () => toId);
   for (const p of org.vpnPeers?.list ?? []) if (p.networkIds) p.networkIds = swap(p.networkIds, (id) => id, () => toId);
+  if (org.xdrNetworks) org.xdrNetworks.networkIds = swap(org.xdrNetworks.networkIds, (id) => id, () => toId);
   if (org.adaptivePolicySettings) org.adaptivePolicySettings.enabledNetworks = swap(org.adaptivePolicySettings.enabledNetworks, (id) => id, () => toId);
   for (const o of org.earlyAccessOptIns?.list ?? []) o.networkIds = swap(o.networkIds, (id) => id, () => toId);
   for (const p of org.brandingPolicies?.list ?? []) if (p.appliesTo === 'All admins of networks...') p.values = swap(p.values, (id) => id, () => toId);
