@@ -198,6 +198,8 @@ export const LAB_NETWORKS = [
       { model: 'MT14', name: 'Meeting-Room' }, { model: 'MT15', name: 'Open-Area' }, { model: 'MT20', name: 'Back-Door' }, { model: 'MT30', name: 'Help-Desk' },
       { model: 'MT40', name: 'Rack-PDU' },
     ],
+    zigbee: { locks: ['Front Door', 'Storage Room'] },
+    esl: { hostname: 'esl.acme-lab.example.com', mode: 'high frequency' },
     clients: {},
   },
 ];

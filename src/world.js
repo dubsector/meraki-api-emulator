@@ -4,6 +4,7 @@ import { CLIENT_PROFILES, DEVICE_OUI, FIRST_NAMES, ISPS, KINDS, LAB_NETWORKS, LA
 import { configOf, rebase, settingProduct, syslogRolesFor } from './config.js';
 import { Rand, derive, hashStr } from './rng.js';
 import { DAY, Zone } from './time.js';
+import { seedIot } from './sim/zigbee.js';
 
 const SERIAL_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
 
@@ -246,6 +247,7 @@ function buildLab(world, seed, bootTime) {
       const licenseKey = unique(() => `Z2${r.chars(10, SERIAL_CHARS)}`);
       lab.licenses.push({ id, licenseType: 'ENT', licenseKey, orderNumber: licenseOrder, deviceSerial: d.serial, networkId: net.id, claimDate: d.claimedAt, activationDate: d.claimedAt + 3600, expirationDate: bootDay + r.int(300, 700) * DAY });
     }
+    seedIot(world, net, tpl);
   }
 }
 
@@ -907,7 +909,7 @@ export function moveNetwork(world, net, dest) {
 
 // Settings kept on a network outside its config, since they name its own
 // devices or items. They go with the product they belong to.
-const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', cameraWirelessProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless', wirelessPortProfiles: 'wireless', wirelessMerakiAuthUsers: 'wireless', applianceMerakiAuthUsers: 'appliance', sensorAlertProfiles: 'sensor' };
+const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', cameraWirelessProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless', wirelessPortProfiles: 'wireless', wirelessMerakiAuthUsers: 'wireless', applianceMerakiAuthUsers: 'appliance', sensorAlertProfiles: 'sensor', wirelessZigbee: 'wireless', wirelessEsl: 'wireless' };
 
 // MQTT brokers serve cameras, sensors and wireless MQTT alike, which name them
 // by ID: a combined network takes every network's brokers and each part of a

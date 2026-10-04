@@ -2059,7 +2059,44 @@ def sensors():
         check("updateNetworkSensorMqttBroker and getNetworkSensorMqttBroker", r == {"mqttBrokerId": b["id"], "enabled": True} and se.getNetworkSensorMqttBroker(mtl, b["id"]) == r, r)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors]
+@scenario
+def zigbee():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        w = d.wireless
+        lab = next(o["id"] for o in d.organizations.getOrganizations() if o["name"] == "Acme Test Lab")
+        mtl = next(x["id"] for x in d.organizations.getOrganizationNetworks(lab) if x["name"] == "Lab - Montreal")
+        ap = next(x["serial"] for x in d.networks.getNetworkDevices(mtl) if x["model"] == "CW9166I")
+
+        rows = w.getOrganizationWirelessZigbeeByNetwork(lab, total_pages="all", perPage=3)
+        check(f"getOrganizationWirelessZigbeeByNetwork perPage=3, all pages ({len(rows)} networks)", any(r["network"]["id"] == mtl and r["enabled"] and r["iotController"]["serial"] == ap for r in rows), rows)
+        r = w.updateNetworkWirelessZigbee(mtl, lockManagement={"address": "10.0.40.20", "username": "locks", "password": "secret"}, defaults={"transmitPowerLevel": 12, "channel": "15"})
+        check("updateNetworkWirelessZigbee", r["defaults"] == {"transmitPowerLevel": 12, "channel": "15"} and r["lockManagement"]["address"] == "10.0.40.20" and "password" not in r["lockManagement"], r)
+        gw = w.getOrganizationWirelessZigbeeDevices(lab, total_pages="all", perPage=3)
+        check(f"getOrganizationWirelessZigbeeDevices ({len(gw)} gateways)", [x["gateway"]["serial"] for x in gw] == [ap] and gw[0]["transmitPowerLevel"] == 12, gw)
+        g = w.updateOrganizationWirelessZigbeeDevice(lab, ap, True, channel="20")
+        check("updateOrganizationWirelessZigbeeDevice", g["enrolled"] and g["channel"] == "20", g)
+
+        e = w.createDeviceWirelessZigbeeEnrollment(ap)
+        job = w.getDeviceWirelessZigbeeEnrollment(ap, e["enrollmentId"])
+        check("createDeviceWirelessZigbeeEnrollment and getDeviceWirelessZigbeeEnrollment", e["status"] == "complete" and len(job["doorLocks"]) == 1, job)
+        locks = w.getOrganizationWirelessZigbeeDoorLocks(lab, total_pages="all", perPage=3)
+        check(f"getOrganizationWirelessZigbeeDoorLocks perPage=3, all pages ({len(locks)} locks)", len(locks) == 3 and job["doorLocks"][0] in locks, locks[:1])
+        n = w.updateOrganizationWirelessZigbeeDoorLock(lab, locks[0]["doorLockId"], name="Lobby")
+        check("updateOrganizationWirelessZigbeeDoorLock", n == {**locks[0], "name": "Lobby"}, n)
+        x = w.createOrganizationWirelessZigbeeDisenrollment(lab, doorLockIds=[locks[0]["doorLockId"]])
+        dj = w.getOrganizationWirelessZigbeeDisenrollment(lab, x["disenrollmentId"])
+        check("createOrganizationWirelessZigbeeDisenrollment and getOrganizationWirelessZigbeeDisenrollment", dj["doorLocks"] == [{"doorLockId": locks[0]["doorLockId"], "status": "success"}] and len(w.getOrganizationWirelessZigbeeDoorLocks(lab)) == 2, dj)
+
+        r = w.updateNetworkWirelessElectronicShelfLabel(mtl, hostname="esl.example.com", mode="Bluetooth", enabled=True)
+        check("updateNetworkWirelessElectronicShelfLabel and getNetworkWirelessElectronicShelfLabel", r["sepioo"]["hostname"] == "esl.example.com" and w.getNetworkWirelessElectronicShelfLabel(mtl) == r, r)
+        r = w.updateDeviceWirelessElectronicShelfLabel(ap, channel="3", enabled=False)
+        check("updateDeviceWirelessElectronicShelfLabel and getDeviceWirelessElectronicShelfLabel", r["provider"] == "sepioo" and r["channel"] == "3" and w.getDeviceWirelessElectronicShelfLabel(ap) == r, r)
+        cd = w.getNetworkWirelessElectronicShelfLabelConfiguredDevices(mtl)
+        check("getNetworkWirelessElectronicShelfLabelConfiguredDevices", cd == [{"hostname": "esl.example.com", "enabled": False, "mode": "Bluetooth", "sepioo": {"hostname": "esl.example.com"}}], cd)
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}
