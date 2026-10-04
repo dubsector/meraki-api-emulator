@@ -2362,7 +2362,58 @@ def smactions():
         check("wiped and unenrolled devices leave the list", len(sm.getNetworkSmDevices(net)) == len(devs) - 3)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase, integrations, smdevices, smactions]
+@scenario
+def smorg():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o, sm, n = d.organizations, d.sm, d.networks
+        lab = {x["name"]: x["id"] for x in o.getOrganizations()}["Acme Test Lab"]
+        nets = {x["name"]: x["id"] for x in o.getOrganizationNetworks(lab)}
+        net, tor = nets["Lab - Systems Manager"], nets["Lab - Toronto"]
+
+        roles = [sm.createOrganizationSmAdminsRole(lab, f"Role {i}", scope="some", tags=[f"t{i}"]) for i in range(4)]
+        paged = sm.getOrganizationSmAdminsRoles(lab, total_pages="all", perPage=3)
+        check("getOrganizationSmAdminsRoles pages", sorted(x["roleId"] for x in paged["items"]) == sorted(r["roleId"] for r in roles), paged)
+        r = sm.updateOrganizationSmAdminsRole(lab, roles[0]["roleId"], scope="without_some")
+        check("updateOrganizationSmAdminsRole and getOrganizationSmAdminsRole", sm.getOrganizationSmAdminsRole(lab, r["roleId"]) == r and r["scope"] == "without_some", r)
+        sm.deleteOrganizationSmAdminsRole(lab, roles[0]["roleId"])
+        check("deleteOrganizationSmAdminsRole", len(sm.getOrganizationSmAdminsRoles(lab)["items"]) == 3)
+
+        cert = sm.getOrganizationSmApnsCert(lab)["certificate"]
+        check("getOrganizationSmApnsCert", cert.startswith("-----BEGIN CERTIFICATE-----"), cert[:40])
+        [acct] = sm.getOrganizationSmVppAccounts(lab)
+        one = sm.getOrganizationSmVppAccount(lab, acct["id"])
+        check("getOrganizationSmVppAccounts and getOrganizationSmVppAccount", "vppServiceToken" not in acct and one["vppServiceToken"] and one["assignableNetworkIds"] == [net], one)
+
+        gp = n.createNetworkGroupPolicy(tor, "Restricted")["groupPolicyId"]
+        items = [{"networkId": tor, "policies": [{"smNetworkId": net, "scope": "withAny", "tags": ["byod"], "groupPolicyId": gp}, {"smNetworkId": net, "scope": "all", "tags": [], "groupPolicyId": gp}]}]
+        r = sm.updateOrganizationSmSentryPoliciesAssignments(lab, items)
+        listed = sm.getOrganizationSmSentryPoliciesAssignmentsByNetwork(lab)
+        check("updateOrganizationSmSentryPoliciesAssignments", [p["priority"] for p in r["items"][0]["policies"]] == ["1", "2"], r)
+        check("getOrganizationSmSentryPoliciesAssignmentsByNetwork", listed[0]["items"] == r["items"], listed)
+
+        configs = sm.getNetworkSmTrustedAccessConfigs(net, total_pages="all", perPage=3)
+        check(f"getNetworkSmTrustedAccessConfigs ({len(configs)})", len(configs) == 2 and configs[0]["ssidName"], configs)
+        users = sm.getNetworkSmUserAccessDevices(net, total_pages="all", perPage=3)
+        sm.deleteNetworkSmUserAccessDevice(net, users[0]["id"])
+        left = sm.getNetworkSmUserAccessDevices(net, total_pages="all")
+        check(f"getNetworkSmUserAccessDevices and deleteNetworkSmUserAccessDevice ({len(users)})", len(left) == len(users) - 1 and users[0]["trustedAccessConnections"], users[0])
+
+        dev = next(x for x in sm.getNetworkSmDevices(net, fields=["imei", "ownerUsername"]) if x["imei"])
+        keys = n.getNetworkPiiPiiKeys(net, imei=dev["imei"])
+        check("getNetworkPiiPiiKeys", keys[net]["serials"] == [dev["serialNumber"]] and keys[net]["usernames"] == [dev["ownerUsername"]], keys)
+        check("getNetworkPiiSmDevicesForKey", dev["id"] in n.getNetworkPiiSmDevicesForKey(net, username=dev["ownerUsername"])[net])
+        owners = n.getNetworkPiiSmOwnersForKey(net, mac=dev["wifiMac"])
+        check("getNetworkPiiSmOwnersForKey", len(owners[net]) == 1, owners)
+        req = n.createNetworkPiiRequest(net, type="restrict processing", smDeviceId=dev["id"])
+        gone = n.createNetworkPiiRequest(net, type="delete", mac="00:11:22:33:44:55", datasets=["all"])
+        check("createNetworkPiiRequest", req["status"] == "Completed" and gone["datasets"] == "['usage', 'events', 'traffic']", gone)
+        check("getNetworkPiiRequests and getNetworkPiiRequest", n.getNetworkPiiRequests(net) == [req, gone] and n.getNetworkPiiRequest(net, req["id"]) == req)
+        n.deleteNetworkPiiRequest(net, req["id"])
+        check("deleteNetworkPiiRequest", n.getNetworkPiiRequests(net) == [gone])
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase, integrations, smdevices, smactions, smorg]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

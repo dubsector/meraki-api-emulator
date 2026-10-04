@@ -863,6 +863,24 @@ function repointSase(org, fromId, toId) {
   s.sites = s.sites.flatMap((x) => (x.networkId !== fromId ? [x] : toId && !taken ? [Object.assign(x, { networkId: toId })] : []));
 }
 
+// Sentry policies and PII requests. A split sends the network a policy applies
+// on to the wireless or appliance part, and SM network IDs and requests naming
+// SM devices or owners to the Systems Manager part.
+function repointSm(org, fromId, toId, smId = toId, policyId = toId) {
+  const s = org.smSentryPolicies;
+  if (s) {
+    for (const p of s.list) {
+      if (p.networkId === fromId) p.networkId = policyId;
+      if (p.smNetworkId === fromId) p.smNetworkId = smId;
+    }
+    s.list = s.list.filter((p) => p.networkId && p.smNetworkId);
+  }
+  const r = org.piiRequests;
+  if (!r) return;
+  for (const x of r.list) if (x.networkId === fromId) x.networkId = x.key.startsWith('sm') ? smId : toId;
+  r.list = r.list.filter((x) => x.networkId);
+}
+
 // Adaptive policy on a split network stays on for every part whose devices tag
 // traffic: switches, access points and appliances.
 function splitAdaptivePolicy(org, net, parts) {
@@ -900,6 +918,7 @@ function repoint(org, fromId, toId) {
   repointGroupPolicies(org, fromId, toId);
   repointDns(org, fromId, toId);
   repointSase(org, fromId, toId);
+  repointSm(org, fromId, toId);
   for (const n of org.networks) {
     const s2s = n.config?.siteToSite;
     if (!s2s?.hubs.length) continue;
@@ -1070,6 +1089,7 @@ export function splitNetwork(world, net) {
   if (wl) repointWireless(org, net.id, wl.id);
   if (cam) repointCamera(org, net.id, cam.id);
   splitAdaptivePolicy(org, net, parts);
+  repointSm(org, net.id, main.id, partFor('systemsManager')?.id ?? null, (wl ?? partFor('appliance'))?.id ?? null);
   repoint(org, net.id, main.id);
   dropCaches(org);
   return parts;

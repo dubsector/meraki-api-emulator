@@ -9,7 +9,7 @@ import { DAY, HOUR, iso, weekday } from '../time.js';
 import { bssid } from './rf.js';
 
 export const LOOKBACK = 30 * DAY;
-const EMPTY = { devices: [], users: [], profiles: [] };
+const EMPTY = { devices: [], users: [], profiles: [], trustedAccess: [], userAccessDevices: [] };
 const SERIAL_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
 const DOMAIN = 'acme-lab.example.com';
 const CARRIERS = ['Rogers', 'Bell', 'TELUS'];
@@ -288,4 +288,35 @@ export function seedSm(world, net, tpl) {
     sm.devices.push(dev);
   });
   sm.devices.sort((a, b) => (a.id < b.id ? -1 : 1));
+  seedAccess(world, tpl, sm, home.ssids.find((s) => s.auth === '8021x') ?? home.ssids[0], used, enrolled);
+}
+
+// Trusted access configs on the corporate SSID, and the owners' devices that
+// took them, from a stream of their own.
+const ACCESS = [
+  { name: 'BYOD Wi-Fi', scope: 'withAny', tags: ['byod'], timeboundType: 'static', sendExpirationEmails: true, notifyTimeBeforeAccessEnds: 7 * DAY, additionalEmailText: 'Contact the IT help desk to renew access.' },
+  { name: 'Remote staff', scope: 'withAny', tags: ['remote'], timeboundType: 'static', sendExpirationEmails: false, notifyTimeBeforeAccessEnds: DAY, additionalEmailText: '' },
+];
+
+function seedAccess(world, tpl, sm, ssid, used, from) {
+  const r = new Rand(hashStr(`meraki-api-emulator:${world.seed}:lab:${tpl.code}:smAccess`));
+  const id = () => {
+    for (;;) {
+      const v = r.digits(13);
+      if (!used.has(v)) return used.add(v), v;
+    }
+  };
+  sm.trustedAccess = ACCESS.map((a) => ({ id: id(), ssidName: ssid.name, ...a, tags: [...a.tags], accessStartAt: from, accessEndAt: world.bootDay + 365 * DAY }));
+  sm.userAccessDevices = [];
+  for (const d of sm.devices) {
+    const owner = sm.users.find((u) => u.id === d.ownerId);
+    const configs = sm.trustedAccess.filter((c) => inScope(c.scope, c.tags, d.tags));
+    if (!owner || !configs.length) continue;
+    const connections = configs.map((c) => {
+      const at = d.createdAt + r.int(1, 30) * DAY + r.int(0, DAY - 1);
+      return { trustedAccessConfigId: c.id, downloadedAt: at, scepCompletedAt: at + r.int(5, 90) };
+    });
+    sm.userAccessDevices.push({ id: id(), deviceId: d.id, name: d.name, systemType: KINDS[d.kind].systemType, mac: d.wifiMac, username: owner.username, email: owner.email, tags: [...d.tags], connections });
+  }
+  sm.userAccessDevices.sort((a, b) => (a.id < b.id ? -1 : 1));
 }

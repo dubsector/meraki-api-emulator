@@ -16,6 +16,7 @@ import { usesDataProfiles } from './cellular.js';
 import { netOf, orgOf, round } from './common.js';
 import { usesPolicyObjects } from './policyobjects.js';
 import { usesSase } from './sase.js';
+import { usesSentry } from './smorg.js';
 import { usesSplashThemes } from './splash.js';
 
 const GROUPS = '/organizations/{organizationId}/networks/groups';
@@ -126,6 +127,7 @@ function moveProblem(org, net, dest) {
   if (usesSplashThemes(net)) return "Cannot move network: The network's splash pages use custom splash themes of the source organization.";
   if (usesDataProfiles(net)) return "Cannot move network: The network's cellular gateways are assigned cellular data profiles of the source organization.";
   if (usesSase(net)) return 'Cannot move network: The network is attached to Secure Access in the source organization.';
+  if (usesSentry(net)) return 'Cannot move network: Systems Manager Sentry policies of the source organization name the network.';
   if (dest.networks.some((n) => n.name === net.name)) return 'Cannot move network: A network with the same name already exists in the target organization.';
   if (dest.networks.length >= MAX_NETWORKS) return 'Cannot move network: The target organization has reached its network limit.';
   return null;

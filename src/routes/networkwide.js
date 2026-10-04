@@ -11,6 +11,7 @@ import { isOnline } from '../sim/presence.js';
 import { DAY, MIN, iso } from '../time.js';
 import { merge } from '../validate.js';
 import { checkHttpUrl, pickTemplate } from '../webhooks.js';
+import { dropSentry } from './smorg.js';
 import { byId, devOf, netOf, orgOf } from './common.js';
 
 const MAX_ITEMS = 100;
@@ -395,6 +396,7 @@ function deletePolicy(ctx) {
   const policy = policyOf(c, ctx.params.groupPolicyId);
   c.groupPolicies.splice(c.groupPolicies.indexOf(policy), 1);
   for (const v of c.vlans) if (v.groupPolicyId === policy.groupPolicyId) delete v.groupPolicyId;
+  dropSentry(netOf(ctx).org, c, policy.groupPolicyId);
 }
 
 const setting = (op, path, pick) => ({ op, path: `/networks/{networkId}/${path}`, handler: (ctx) => pick(configOf(netOf(ctx)), netOf(ctx), ctx) });
