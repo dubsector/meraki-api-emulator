@@ -9,6 +9,7 @@
 | | Lab - Ottawa | MX | One MX68W with Wi-Fi on a single cable uplink, no clients and no VPN |
 | | Lab - Montreal | MR, MT | One CW9166I as the sensor gateway and Zigbee IoT controller (two door locks, ESL on) and nine sensors: two MT10, an MT11 freezer probe, MT12, MT14, MT15, MT20 door, MT30 button and MT40 power monitor |
 | | Lab - Kingston | MG | Two cellular gateways: a 5G MG52 with a SIM and an eSIM, and a single-SIM LTE MG21, each SIM on its own Canadian carrier |
+| | Lab - Systems Manager | SM | No Meraki hardware: 13 enrolled devices (iPhones, iPads, Macs, Windows laptops, Android phones and a Chromebook), their 7 owners and 6 profiles |
 
 Everything is generated from a seed and the clock:
 
@@ -19,6 +20,7 @@ Everything is generated from a seed and the clock:
 - **Alerts** are raised from those outages too. A device gone for five minutes becomes an `unreachable` assurance alert that resolves when it comes back, the Austin switch has an open CRC errors alert, and WAN failures show up as `wan_status`. Dismissing an alert takes it out of the active views until it is restored.
 - **Configuration** is built from the same topology. VLAN subnets hold every client address, the MX is `.1` on each one, firewall rules reference the real VLANs, and the VPN settings export the subnets the VPN status endpoint reports.
 - **Sensors** report on their own schedule: temperature, humidity, air quality and power every 15 minutes, battery, water and the MT40's outlet every hour, and doors and buttons as they happen. Indoor readings follow office hours, the freezer stays near -18 °C, water stays dry, and batteries run down slowly. A sensor that is down reports nothing.
+- **Systems Manager devices** check in through the day in Toronto time: laptops on most weekdays during office hours, phones and tablets from morning to late evening, and the front desk iPad through opening hours. Laptops send performance samples every hour and connection logs every four hours while online, and phones report daily cellular use.
 - **Administration**: each organization has admins with different access levels, a change log written by the admins allowed to make each change, and an inventory with a few unassigned spares. Acme Corporation uses co-term licensing and Acme Test Lab uses per-device licensing, with one license per device, one of them expiring soon, and one unused.
 
 The same seed and the same time always give the same answer. Freeze the clock with `--now` for repeatable tests.

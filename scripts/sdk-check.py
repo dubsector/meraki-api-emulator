@@ -2255,7 +2255,57 @@ def integrations():
         check("removeOrganizationSpacesIntegration", gone["status"] is True and d.spaces.getOrganizationSpacesIntegrateStatus(lab) == {"status": False, "states": []} and o.getOrganizationIntegrationsDeployed(lab)["items"] == [], gone)
 
 
-SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase, integrations]
+@scenario
+def smdevices():
+    with Emulator("--rate-limit", "0", "--now", EVENTS_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")) as emu, sdk_clock(EVENTS_NOW):
+        d = dashboard(emu)
+        o, sm = d.organizations, d.sm
+        lab = {x["name"]: x["id"] for x in o.getOrganizations()}["Acme Test Lab"]
+        net = {x["name"]: x["id"] for x in o.getOrganizationNetworks(lab)}["Lab - Systems Manager"]
+
+        devs = sm.getNetworkSmDevices(net, total_pages="all", perPage=3, fields=["systemType", "lastConnected", "cellularDataUsed"])
+        check(f"getNetworkSmDevices pages ({len(devs)} devices)", len(devs) == 13 and devs == sm.getNetworkSmDevices(net, fields=["systemType", "lastConnected", "cellularDataUsed"]), devs[:1])
+        macs = sm.getNetworkSmDevices(net, systemTypes=["mac"], scope=["withAny", "remote"])
+        check("getNetworkSmDevices filters by system type and scope", len(macs) == 1, macs)
+        mac = next(x for x in devs if x["systemType"] == "mac")
+        win = next(x for x in devs if x["systemType"] == "windows")
+        phone = next(x for x in devs if x["systemType"] == "iphone")
+        conn = sm.getNetworkSmDeviceConnectivity(net, mac["id"], total_pages="all", perPage=3)
+        check(f"getNetworkSmDeviceConnectivity ({len(conn)} sessions)", conn and conn[-1]["lastSeenAt"] == datetime.fromtimestamp(mac["lastConnected"], timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), conn[-1:])
+        perf = sm.getNetworkSmDevicePerformanceHistory(net, mac["id"], total_pages="all", perPage=100)
+        check(f"getNetworkSmDevicePerformanceHistory ({len(perf)} samples)", len(perf) > 50 and perf == sm.getNetworkSmDevicePerformanceHistory(net, mac["id"]), perf[:1])
+        logs = sm.getNetworkSmDeviceDesktopLogs(net, mac["id"], total_pages="all", perPage=10)
+        check(f"getNetworkSmDeviceDesktopLogs ({len(logs)} rows)", logs and all(x["ip"] == mac["ip"] for x in logs), logs[:1])
+        cmds = sm.getNetworkSmDeviceDeviceCommandLogs(net, mac["id"], total_pages="all", perPage=3)
+        check("getNetworkSmDeviceDeviceCommandLogs", cmds[0]["action"] == "DeviceInformation", cmds[:2])
+        usage = sm.getNetworkSmDeviceCellularUsageHistory(net, phone["id"])
+        check("getNetworkSmDeviceCellularUsageHistory", sum(x["received"] + x["sent"] for x in usage) == phone["cellularDataUsed"], usage[-1:])
+        centers = sm.getNetworkSmDeviceSecurityCenters(net, win["id"])
+        check("getNetworkSmDeviceSecurityCenters", len(centers) == 1 and centers[0]["hasAntiVirus"] and sm.getNetworkSmDeviceSecurityCenters(net, mac["id"]) == [], centers)
+        certs = sm.getNetworkSmDeviceCerts(net, mac["id"])
+        check("getNetworkSmDeviceCerts", len(certs) == 1 and certs[0]["deviceId"] == mac["id"], certs)
+        adapters = sm.getNetworkSmDeviceNetworkAdapters(net, mac["id"])
+        check("getNetworkSmDeviceNetworkAdapters", adapters[0]["mac"] == mac["wifiMac"], adapters)
+        wlan = sm.getNetworkSmDeviceWlanLists(net, mac["id"])
+        check("getNetworkSmDeviceWlanLists", "Acme-Corp" in wlan[0]["xml"], wlan)
+        kiosk = next(x for x in devs if "kiosk" in x["tags"])
+        rest = sm.getNetworkSmDeviceRestrictions(net, kiosk["id"])
+        check("getNetworkSmDeviceRestrictions", len(rest["restrictions"]) == 2, rest)
+        profiles = sm.getNetworkSmProfiles(net, total_pages="all", perPage=3)
+        installed = sm.getNetworkSmDeviceDeviceProfiles(net, kiosk["id"])
+        check(f"getNetworkSmProfiles and getNetworkSmDeviceDeviceProfiles ({len(profiles)} profiles)", len(profiles) == 6 and {p["id"] for p in installed} <= {p["id"] for p in profiles}, installed)
+        soft = sm.getNetworkSmDeviceSoftwares(net, mac["id"])
+        check(f"getNetworkSmDeviceSoftwares ({len(soft)} apps)", soft and all(x["deviceId"] == mac["id"] for x in soft), soft[:1])
+        users = sm.getNetworkSmUsers(net)
+        owner = next(u for u in users if sm.getNetworkSmDevices(net, ids=[mac["id"]], fields=["ownerEmail"])[0]["ownerEmail"] == u["email"])
+        check(f"getNetworkSmUsers ({len(users)} owners)", len(users) == 7 and sm.getNetworkSmUsers(net, emails=[owner["email"]]) == [owner], owner)
+        mine = sm.getNetworkSmUserSoftwares(net, owner["id"])
+        check("getNetworkSmUserSoftwares", all(x in mine for x in soft), len(mine))
+        theirs = sm.getNetworkSmUserDeviceProfiles(net, owner["id"])
+        check("getNetworkSmUserDeviceProfiles", all(p in theirs for p in sm.getNetworkSmDeviceDeviceProfiles(net, mac["id"])), len(theirs))
+
+
+SCENARIOS = [paging, events, writes, ratelimit, faults, aio, summaries, wirelessstats, orgwireless, switchports, inventory, webhooks, livetools, actionbatches, camera, shaping, firewall, vpn, routing, switchpolicies, policyobjects, switchsettings, switchdhcp, wirelessradio, wirelesslocation, ssidprofiles, wirelessdevices, cameraroles, cameraanalytics, orgsecurity, adaptivepolicy, globalfirewall, globalgroups, dns, mxinterfaces, mxwireless, authusers, branding, insight, sensors, zigbee, cellulargateway, mgnetwork, sase, integrations, smdevices]
 
 if __name__ == "__main__":
     names = {s.__name__ for s in SCENARIOS}

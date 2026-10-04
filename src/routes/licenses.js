@@ -4,6 +4,7 @@
 // Manager seats, so the seat endpoints only ever refuse.
 
 import { ApiError, badRequest, boolParam, notFound, paginate } from '../http.js';
+import { smOf } from '../sim/sm.js';
 import { DAY, iso } from '../time.js';
 import { moveLicenses, serialTaken, splitLicense } from '../world.js';
 import { orgOf } from './common.js';
@@ -125,7 +126,7 @@ function licensesOverview(org, now) {
       },
     },
     licenseTypes: [{ licenseType: 'ENT', counts: { unassigned: unused.length } }],
-    systemsManager: { counts: { totalSeats: 0, activeSeats: 0, unassignedSeats: 0, orgwideEnrolledDevices: 0 } },
+    systemsManager: { counts: { totalSeats: 0, activeSeats: 0, unassignedSeats: 0, orgwideEnrolledDevices: org.networks.reduce((n, net) => n + smOf(net).devices.length, 0) } },
   };
 }
 

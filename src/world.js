@@ -5,6 +5,7 @@ import { configOf, rebase, settingProduct, syslogRolesFor } from './config.js';
 import { Rand, derive, hashStr } from './rng.js';
 import { DAY, Zone } from './time.js';
 import { iotCapable, seedIot } from './sim/zigbee.js';
+import { seedSm } from './sim/sm.js';
 
 const SERIAL_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
 
@@ -250,6 +251,7 @@ function buildLab(world, seed, bootTime) {
       lab.licenses.push({ id, licenseType: 'ENT', licenseKey, orderNumber: licenseOrder, deviceSerial: d.serial, networkId: net.id, claimDate: d.claimedAt, activationDate: d.claimedAt + 3600, expirationDate: bootDay + r.int(300, 700) * DAY });
     }
     seedIot(world, net, tpl);
+    seedSm(world, net, tpl);
   }
 }
 
@@ -280,6 +282,7 @@ function buildNetwork(r, unique, org, tpl, siteIndex) {
   if (tpl.cameras) productTypes.push('camera');
   if (tpl.sensors) productTypes.push('sensor');
   if (tpl.gateways) productTypes.push('cellularGateway');
+  if (tpl.sm) productTypes.push('systemsManager');
   const combined = productTypes.length > 1;
 
   const net = {
@@ -932,7 +935,7 @@ export function moveNetwork(world, net, dest) {
 
 // Settings kept on a network outside its config, since they name its own
 // devices or items. They go with the product they belong to.
-const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', cameraWirelessProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless', wirelessPortProfiles: 'wireless', wirelessMerakiAuthUsers: 'wireless', applianceMerakiAuthUsers: 'appliance', sensorAlertProfiles: 'sensor', wirelessZigbee: 'wireless', wirelessEsl: 'wireless' };
+const OWN_STORES = { warmSpare: 'appliance', switchRendezvousPoints: 'switch', switchLinkAggregations: 'switch', switchAlternateManagement: 'switch', cameraProfiles: 'camera', cameraWirelessProfiles: 'camera', wirelessAlternateManagement: 'wireless', wirelessMqtt: 'wireless', wirelessPortProfiles: 'wireless', wirelessMerakiAuthUsers: 'wireless', applianceMerakiAuthUsers: 'appliance', sensorAlertProfiles: 'sensor', wirelessZigbee: 'wireless', wirelessEsl: 'wireless', sm: 'systemsManager' };
 
 // MQTT brokers serve cameras, sensors and wireless MQTT alike, which name them
 // by ID: a combined network takes every network's brokers and each part of a
