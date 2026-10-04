@@ -211,6 +211,22 @@ export const LAB_NETWORKS = [
     gateways: [{ model: 'MG52', name: '01' }, { model: 'MG21', name: '02' }],
     clients: {},
   },
+  {
+    code: 'SM', name: 'Lab - Systems Manager', kind: 'office', tz: 'America/Toronto', address: 'Toronto, ON, Canada', lat: 43.6532, lng: -79.3832, tags: ['lab'],
+    // Enrolled devices by kind (sim/sm.js KINDS), owner index and tags.
+    sm: {
+      owners: [['engineering'], ['engineering'], ['sales'], ['sales'], ['it'], ['finance'], ['support']],
+      devices: [
+        { kind: 'iPhone', owner: 0, tags: ['corporate'] }, { kind: 'iPhone', owner: 2, tags: ['corporate', 'remote'] }, { kind: 'iPhone', owner: 6, tags: ['byod'] },
+        { kind: 'iPad', owner: 3, tags: ['corporate'], cellular: true }, { kind: 'iPad', name: 'Front Desk iPad', tags: ['kiosk'] },
+        { kind: 'Mac', owner: 0, tags: ['corporate'] }, { kind: 'Mac', owner: 4, tags: ['corporate', 'remote'], pending: true }, { kind: 'Mac', owner: 1, tags: ['corporate'] },
+        { kind: 'Windows', owner: 2, tags: ['corporate'] }, { kind: 'Windows', owner: 5, tags: ['corporate', 'remote'] },
+        { kind: 'Android', owner: 1, tags: ['corporate'] }, { kind: 'Android', owner: 5, tags: ['byod'] },
+        { kind: 'Chromebook', name: 'Training Chromebook', tags: ['shared'] },
+      ],
+    },
+    clients: {},
+  },
 ];
 
 // Traffic analysis catalog. weight is share of WAN bytes; guest skews toward streaming.
