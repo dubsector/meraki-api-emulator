@@ -37,9 +37,10 @@ export const MODELS = {
   MT20: { productType: 'sensor', firmware: 'sensor-2-6', ram: 64, metrics: ['door'], battery: true },
   MT30: { productType: 'sensor', firmware: 'sensor-2-6', ram: 64, metrics: ['button'], battery: true },
   MT40: { productType: 'sensor', firmware: 'sensor-2-6', ram: 128, metrics: ['realPower', 'apparentPower', 'current', 'voltage', 'frequency', 'powerFactor', 'downstreamPower', 'remoteLockoutSwitch'] },
-  // Cellular gateways. sims: physical SIM slots; signalTypes: what the modem can use.
+  // Cellular gateways. sims: SIM slots; esim: the slot holding the eSIM;
+  // signalTypes: what the modem can use.
   MG21: { productType: 'cellularGateway', firmware: 'cellularGateway-26-1-120', ram: 256, sims: ['sim1'], signalTypes: ['LTE'] },
-  MG52: { productType: 'cellularGateway', firmware: 'cellularGateway-26-1-120', ram: 1024, sims: ['sim1', 'sim2'], signalTypes: ['LTE', '5GNSA', '5GSA'] },
+  MG52: { productType: 'cellularGateway', firmware: 'cellularGateway-26-1-120', ram: 1024, sims: ['sim1', 'sim2'], esim: 'sim2', signalTypes: ['LTE', '5GNSA', '5GSA'] },
 };
 
 export const VMX_SIZES = { small: 'VMX-S', medium: 'VMX-M', large: 'VMX-L', xlarge: 'VMX-XL', 100: 'VMX100' };

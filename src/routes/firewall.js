@@ -17,7 +17,7 @@ const WAN_UPLINKS = ['wan1', 'wan2'];
 const NAT_UPLINKS = ['internet1', 'internet2'];
 const UPLINK_MODES = ['virtual', 'public'];
 // The target linkSample() measures uplink loss and latency against.
-const DEFAULT_DESTINATION = { ip: '8.8.8.8', description: 'Google', default: true };
+export const DEFAULT_DESTINATION = { ip: '8.8.8.8', description: 'Google', default: true };
 
 // ── Settings, built on first read ──
 
@@ -153,10 +153,9 @@ function uplinksNatByNetwork(ctx) {
 
 // ── Connectivity monitoring destinations ──
 
-function updateDestinations(ctx) {
-  const set = destinationsOf(mxNet(ctx));
-  if (!ctx.body.destinations) return structuredClone(set);
-  const list = limit(ctx.body.destinations, MAX_DESTINATIONS, 'Destinations');
+// Shared with the MG networks' destinations.
+export function checkDestinations(destinations) {
+  const list = limit(destinations, MAX_DESTINATIONS, 'Destinations');
   list.forEach((d, i) => {
     if (parseIp(d.ip) == null) throw badRequest(`'destinations[${i}].ip' must be an IPv4 address`);
   });
@@ -164,7 +163,13 @@ function updateDestinations(ctx) {
   const ips = list.map((d) => d.ip);
   const dup = ips.find((ip, i) => ips.indexOf(ip) !== i);
   if (dup) throw badRequest(`Destination ${dup} is listed more than once`);
-  set.destinations = list.map((d) => ({ ip: d.ip, description: d.description ?? '', default: d.default ?? false }));
+  return list.map((d) => ({ ip: d.ip, description: d.description ?? '', default: d.default ?? false }));
+}
+
+function updateDestinations(ctx) {
+  const set = destinationsOf(mxNet(ctx));
+  if (!ctx.body.destinations) return structuredClone(set);
+  set.destinations = checkDestinations(ctx.body.destinations);
   return structuredClone(set);
 }
 

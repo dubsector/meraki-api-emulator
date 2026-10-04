@@ -26,14 +26,73 @@ export const BANDS = {
 
 export const isGateway = (d) => d.productType === 'cellularGateway';
 export const slotsOf = (dev) => dev.info.sims ?? [];
+// The data management views call the eSIM's slot 'esim'.
+export const logicalSlot = (dev, slot) => (slot === dev.info.esim ? 'esim' : slot);
+
+// Providers eSIM profiles can come from. The bootstrap provider only brings
+// a new eSIM online, so it takes no accounts.
+export const ESIM_PROVIDERS = [
+  { provider: 'AT&T', mcc: '310', mnc: '410', apn: 'broadband', dns: ['68.94.156.1', '68.94.157.1'] },
+  { provider: 'Verizon', mcc: '311', mnc: '480', apn: 'vzwinternet', dns: ['198.224.166.135', '198.224.167.135'] },
+  { provider: 'T-Mobile', mcc: '310', mnc: '260', apn: 'fast.t-mobile.com', dns: ['10.177.0.34', '10.177.0.210'] },
+  ...CARRIERS,
+  { provider: 'Cisco IoT Bootstrap', bootstrap: true },
+];
+export const providerOf = (name) => ESIM_PROVIDERS.find((p) => p.provider === name);
+
+const slug = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '');
+export const communicationPlans = (p) => [
+  { name: `${p.provider} IoT Pooled Data`, apns: [{ name: p.apn }] },
+  { name: `${p.provider} IoT Private APN`, apns: [{ name: `meraki.${slug(p.provider)}.iot` }] },
+];
+export const ratePlans = (p) => ['1 GB Shared', '10 GB Shared', 'Unlimited'].map((x) => ({ name: `${p.provider} IoT ${x}` }));
+
+function simNumbers(carrier, r) {
+  return { carrier, iccid: `89${carrier.mcc}${carrier.mnc}${r.digits(11)}`, imsi: `${carrier.mcc}${carrier.mnc}${r.digits(9)}`, msisdn: `1613${r.digits(7)}` };
+}
+
+// A profile on the eSIM with the provider's numbers and the plans it runs.
+export function esimProfile(dev, n, carrier, comm, rate, accountId = null) {
+  const r = new Rand(derive(dev.key, n ? `esim:${n}` : `sim:${dev.info.esim}`));
+  return { ...simNumbers(carrier, r), accountId, plans: [{ name: comm.name, type: 'communication' }, { name: rate.name, type: 'rate' }], apns: comm.apns.map((a) => a.name) };
+}
+
+// The eSIM as shipped: one profile from the carrier its slot would hold,
+// with the same numbers a physical SIM there would have.
+function shippedEsim(dev) {
+  const carrier = CARRIERS[(dev.key + slotsOf(dev).indexOf(dev.info.esim)) % CARRIERS.length];
+  const profile = esimProfile(dev, 0, carrier, communicationPlans(carrier)[0], ratePlans(carrier)[0]);
+  return { status: 'activated', profiles: [profile], current: profile.iccid, updatedAt: dev.claimedAt ?? 0, ids: 0, swap: null };
+}
+
+// The eSIM at t, with a profile swap that has finished by then applied.
+// Writes store what this returns, so a read never changes the device.
+export function esimOf(dev, t) {
+  const e = dev.esim ?? shippedEsim(dev);
+  const s = e.swap;
+  if (!s || s.applied || t < s.end) return e;
+  const profiles = e.profiles.filter((p) => p.iccid !== s.profile.iccid);
+  return { ...e, profiles: [...profiles, s.profile], current: s.profile.iccid, updatedAt: s.end, swap: { ...s, applied: true } };
+}
+
+export const esimProfileNow = (e) => e.profiles.find((p) => p.iccid === e.current);
+// The EID belongs to the chip, so a replacement MG has its own.
+export const eidOf = (dev) => `89049032${new Rand(derive(dev.key, `eid:${dev.serial}`)).digits(24)}`;
 
 // The SIM in a slot: every physical slot holds one, each on its own carrier.
-export function simOf(dev, slot) {
+// The eSIM's numbers and carrier come from its current profile.
+export function simOf(dev, slot, t) {
+  if (slot === dev.info.esim) {
+    const p = esimProfileNow(esimOf(dev, t));
+    return { slot, carrier: p.carrier, iccid: p.iccid, imsi: p.imsi, msisdn: p.msisdn };
+  }
   const i = slotsOf(dev).indexOf(slot);
   const carrier = CARRIERS[(dev.key + i) % CARRIERS.length];
-  const r = new Rand(derive(dev.key, `sim:${slot}`));
-  return { slot, carrier, iccid: `89302${carrier.mnc}${r.digits(11)}`, imsi: `${carrier.mcc}${carrier.mnc}${r.digits(9)}`, msisdn: `1613${r.digits(7)}` };
+  return { slot, ...simNumbers(carrier, new Rand(derive(dev.key, `sim:${slot}`))) };
 }
+
+// Whether a slot holds a SIM that can carry data: a deactivated eSIM can't.
+export const simUsable = (dev, slot, t) => slot !== dev.info.esim || esimOf(dev, t).status === 'activated';
 
 // SIM settings: the slot order (primary first), APNs per slot and failover.
 // Stored settings for slots the model doesn't have are skipped.
@@ -78,7 +137,7 @@ export function addressing(dev) {
 // No addresses while the device is down.
 export function uplinkState(dev, t) {
   const slot = primarySlot(dev);
-  const sim = simOf(dev, slot);
+  const sim = simOf(dev, slot, t);
   const down = isDown(dev, t);
   const addr = down ? { ip: null, gateway: null, publicIp: null } : addressing(dev);
   return { slot, sim, carrier: sim.carrier, down, ...addr, apn: simSettings(dev).apns[slot]?.[0]?.name ?? sim.carrier.apn };
