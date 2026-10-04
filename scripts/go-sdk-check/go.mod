@@ -3,7 +3,7 @@ module github.com/dubsector/meraki-api-emulator/scripts/go-sdk-check
 go 1.24
 
 require (
-	github.com/go-resty/resty/v2 v2.11.0
+	github.com/go-resty/resty/v2 v2.17.2
 	github.com/meraki/dashboard-api-go/v5 v5.0.8
 )
 
