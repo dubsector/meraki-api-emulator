@@ -136,6 +136,9 @@ describe('device live tools', () => {
     assert.ok(wifi.every((e) => e.vlanId === null && e.lastUpdatedAt === null));
     assert.ok(wifi.slice(1).every((e) => hq.clients.find((c) => c.mac === e.mac).ap === ap));
     assert.match(await errorOf(sb.post(L(mx, 'arpTable'), {})), /not supported on MX250/);
+    const mt = sb.world.devices.find((d) => d.productType === 'sensor');
+    assert.match(await errorOf(sb.post(L(mt, 'ping'), { target: '8.8.8.8' })), /not supported on MT/);
+    assert.match(await errorOf(sb.post(L(mt, 'pingDevice'), {})), /not supported on MT/);
   });
 
   test('MAC tables agree with the ports clients sit on, and filter by MAC', async () => {

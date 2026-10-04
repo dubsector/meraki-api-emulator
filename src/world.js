@@ -4,7 +4,7 @@ import { CLIENT_PROFILES, DEVICE_OUI, FIRST_NAMES, ISPS, KINDS, LAB_NETWORKS, LA
 import { configOf, rebase, settingProduct, syslogRolesFor } from './config.js';
 import { Rand, derive, hashStr } from './rng.js';
 import { DAY, Zone } from './time.js';
-import { seedIot } from './sim/zigbee.js';
+import { iotCapable, seedIot } from './sim/zigbee.js';
 
 const SERIAL_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
 
@@ -762,6 +762,10 @@ export function swapDevice(world, dev, spare, afterAction) {
   Object.assign(dev, { serial: spare.serial, mac: spare.mac, model: spare.model, info: MODELS[spare.model], orderNumber: spare.orderNumber, claimedAt: spare.claimedAt });
   delete dev.memoryCache; // sized to the old model's RAM
   delete dev.cameraOnboarding; // the new camera starts onboarded
+  // A new sensor has its own readings and commands, and Zigbee and ESL need a CW916x.
+  delete dev.readingsCache;
+  delete dev.sensorCommands;
+  if (dev.productType === 'wireless' && !iotCapable(dev)) for (const k of ['zigbeeLocks', 'zigbeeGateway', 'zigbeeEnrollments', 'wirelessEsl']) delete dev[k];
   world.deviceBySerial.set(dev.serial, dev);
   if (dev.productType === 'switch') renameSwitch(dev.net, old.serial, dev.serial);
   for (const l of org.licenses || []) if (l.deviceSerial === dev.serial) l.networkId = dev.net.id;

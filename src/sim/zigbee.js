@@ -48,3 +48,12 @@ export function seedIot(world, net, tpl) {
     ap.wirelessEsl = { enabled: true, channel: 'Auto' };
   }
 }
+
+// A network copy or clone takes the ESL settings and Zigbee's lock management
+// and defaults. Zigbee starts off there, since its IoT controller stays behind.
+export function copyIot(from, net) {
+  if (!net.productTypes.includes('wireless')) return;
+  if (from.wirelessEsl) net.wirelessEsl = { ...from.wirelessEsl };
+  const z = from.wirelessZigbee;
+  if (z) net.wirelessZigbee = { enabled: false, controller: null, lockManagement: { ...z.lockManagement }, defaults: { ...z.defaults } };
+}

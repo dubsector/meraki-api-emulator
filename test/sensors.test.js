@@ -316,6 +316,33 @@ describe('sensors', () => {
       }
     }
   });
+
+  test('a sensor swapped for another model reports its own metrics, with no commands', async () => {
+    fresh();
+    const mt40 = sensor('MT40');
+    const L = (serial) => `${O()}/readings/latest?serials[]=${serial}`;
+    await ok(sb.post(`/devices/${mt40.serial}/sensor/commands`, { operation: 'disableDownstreamPower' }), 201);
+    await ok(sb.get(L(mt40.serial)));
+    swapDevice(sb.world, mt40, { serial: 'Q3CA-TEST-0002', model: 'MT10', mac: 'c4:8b:a3:00:00:02', orderNumber: null, claimedAt: now - DAY, tags: [], name: null }, 'remove from network');
+    const readings = (await ok(sb.get(L('Q3CA-TEST-0002'))))[0].readings;
+    assert.deepEqual(readings.map((r) => r.metric), ['battery', 'humidity', 'temperature']);
+    for (const r of readings) assert.ok(now - Date.parse(r.ts) / 1000 <= 3600, r.ts);
+    assert.deepEqual(await ok(sb.get('/devices/Q3CA-TEST-0002/sensor/commands')), []);
+    swapDevice(sb.world, mt40, { serial: 'Q3CA-TEST-0003', model: 'MT40', mac: 'c4:8b:a3:00:00:03', orderNumber: null, claimedAt: now - DAY, tags: [], name: null }, 'remove from network');
+    const power = (await ok(sb.get(`${L('Q3CA-TEST-0003')}&metrics[]=downstreamPower`)))[0].readings;
+    assert.equal(power[0].downstreamPower.enabled, true);
+  });
+
+  test('the outlet stays off once the command that turned it off is no longer kept', async () => {
+    fresh();
+    const mt40 = sensor('MT40').serial;
+    const C = `/devices/${mt40}/sensor/commands`;
+    await ok(sb.post(C, { operation: 'disableDownstreamPower' }), 201);
+    for (let i = 0; i < 500; i++) await ok(sb.post(C, { operation: 'refreshData' }), 201);
+    assert.ok(!(await collect(sb.get, `${C}?perPage=1000`)).some((c) => c.operation === 'disableDownstreamPower'));
+    const latest = (await ok(sb.get(`${O()}/readings/latest?serials[]=${mt40}&metrics[]=downstreamPower&metrics[]=realPower`)))[0].readings;
+    assert.deepEqual(latest.map((r) => r.downstreamPower?.enabled ?? r.realPower.draw), [false, 0]);
+  });
 });
 
 describe('sensor commands on a running clock', () => {

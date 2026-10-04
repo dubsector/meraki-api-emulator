@@ -134,9 +134,10 @@ function sensorDay(dev, day) {
   });
 }
 
-// Finished power commands, oldest first, as [time, enabled].
+// Finished power commands, oldest first, as [time, enabled], after the state
+// the newest dropped one left.
 function powerChanges(dev) {
-  const out = [];
+  const out = dev.sensorCommands?.power ? [dev.sensorCommands.power] : [];
   for (const c of dev.sensorCommands?.list ?? []) {
     if (c.failed || !c.operation.endsWith('DownstreamPower')) continue;
     if (c.operation === 'cycleDownstreamPower') out.push([c.end - CYCLE_OFF, false], [c.end, true]);

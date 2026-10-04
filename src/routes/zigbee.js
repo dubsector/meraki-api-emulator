@@ -22,7 +22,8 @@ const NET_SAMPLE = { org: 1, networkId: (world) => montreal(world).id };
 const AP_SAMPLE = { org: 1, serial: mtlAp };
 
 const netRef = (net) => ({ id: net.id, name: net.name });
-const alive = (world, net, dev) => dev && world.deviceBySerial.get(dev.serial) === dev && dev.net === net;
+// The IoT controller, while it is still a CW916x in the network.
+const alive = (world, net, dev) => dev && world.deviceBySerial.get(dev.serial) === dev && dev.net === net && iotCapable(dev);
 const status = (dev, now) => (isDown(dev, now) ? 'offline' : 'online');
 
 function wirelessNet(ctx) {

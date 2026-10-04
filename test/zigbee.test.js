@@ -183,6 +183,39 @@ describe('Zigbee door locks and electronic shelf labels', () => {
     assert.deepEqual(await ok(sb.get(`${Z()}/doorLocks`)), []);
     assert.equal((await ok(sb.get(`${Z()}/byNetwork?networkIds[]=${id}`)))[0].iotController, null);
   });
+
+  test('an AP swapped for a model without Zigbee drops its locks and stops being the controller', async () => {
+    fresh();
+    await ok(sb.put(`/devices/${ap.serial}/wireless/electronicShelfLabel`, { channel: '6' }));
+    swapDevice(sb.world, ap, { serial: 'Q3AC-TEST-0002', model: 'MR36', mac: '0c:8d:db:00:00:02', orderNumber: null, claimedAt: now - DAY, tags: [], name: null }, 'remove from network');
+    assert.deepEqual(await ok(sb.get(`${Z()}/doorLocks`)), []);
+    assert.deepEqual(await ok(sb.get(`${Z()}/devices`)), []);
+    const row = (await ok(sb.get(`${Z()}/byNetwork?networkIds[]=${mtl.id}`)))[0];
+    assert.equal(row.iotController, null);
+    assert.match(await errorOf(sb.put(`/networks/${mtl.id}/wireless/zigbee`, { enabled: true })), /IoT controller/);
+    // A later swap back to a CW916x starts with nothing paired.
+    swapDevice(sb.world, ap, { serial: 'Q3AC-TEST-0003', model: 'CW9166I', mac: '0c:8d:db:00:00:03', orderNumber: null, claimedAt: now - DAY, tags: [], name: null }, 'remove from network');
+    assert.deepEqual(await ok(sb.get(`${Z()}/doorLocks`)), []);
+    assert.equal((await ok(sb.get(`/devices/Q3AC-TEST-0003/wireless/electronicShelfLabel`))).channel, 'Auto');
+  });
+
+  test('network copies and clones take the ESL settings and Zigbee off', async () => {
+    fresh();
+    const lm = { address: 'locks.acme-lab.example.com', username: 'svc', password: 'secret' };
+    await ok(sb.put(`/networks/${mtl.id}/wireless/zigbee`, { lockManagement: lm, defaults: { transmitPowerLevel: 15, channel: '20' } }), 201);
+    const esl = await ok(sb.get(`/networks/${mtl.id}/wireless/electronicShelfLabel`));
+    const copy = await ok(sb.post(`/organizations/${lab.id}/networks`, { name: 'Montreal copy', productTypes: ['wireless'], copyFromNetworkId: mtl.id }), 201);
+    const clone = await ok(sb.post(`/organizations/${lab.id}/clone`, { name: 'Lab clone' }), 201);
+    const cloned = (await ok(sb.get(`/organizations/${clone.id}/networks`))).find((n) => n.name === 'Lab - Montreal');
+    for (const [org, id] of [[lab.id, copy.id], [clone.id, cloned.id]]) {
+      assert.deepEqual(await ok(sb.get(`/networks/${id}/wireless/electronicShelfLabel`)), esl);
+      const z = (await ok(sb.get(`/organizations/${org}/wireless/zigbee/byNetwork?networkIds[]=${id}`)))[0];
+      assert.deepEqual(z, { network: { id }, enabled: false, iotController: null, lockManagement: { address: lm.address, username: 'svc', status: 'offline' }, defaults: { transmitPowerLevel: 15, channel: '20' } });
+    }
+    // A copy without wireless takes neither.
+    const wired = await ok(sb.post(`/organizations/${lab.id}/networks`, { name: 'Montreal sensors', productTypes: ['sensor'], copyFromNetworkId: mtl.id }), 201);
+    assert.equal(sb.world.networkById.get(wired.id).wirelessEsl, undefined);
+  });
 });
 
 describe('Zigbee jobs on a running clock', () => {

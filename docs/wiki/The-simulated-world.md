@@ -7,7 +7,7 @@
 | | Remote - London | MX, MS, MR | Single WAN, Europe/London time zone |
 | Acme Test Lab | Lab - Toronto | MR | Wireless only |
 | | Lab - Ottawa | MX | One MX68W with Wi-Fi on a single cable uplink, no clients and no VPN |
-| | Lab - Montreal | MR, MT | One CW9166I as the sensor gateway and nine sensors: two MT10, an MT11 freezer probe, MT12, MT14, MT15, MT20 door, MT30 button and MT40 power monitor |
+| | Lab - Montreal | MR, MT | One CW9166I as the sensor gateway and Zigbee IoT controller (two door locks, ESL on) and nine sensors: two MT10, an MT11 freezer probe, MT12, MT14, MT15, MT20 door, MT30 button and MT40 power monitor |
 
 Everything is generated from a seed and the clock:
 
