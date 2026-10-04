@@ -181,7 +181,7 @@ function updateDestinations(ctx) {
 const warmSpareOf = (net) => (net.warmSpare ??= { enabled: false, primary: null, spare: null, uplinkMode: null, virtualIp1: null, virtualIp2: null });
 const inNet = (net, dev) => !!dev && dev.productType === 'appliance' && net.devices.includes(dev);
 
-function roles(net) {
+export function roles(net) {
   const ws = warmSpareOf(net);
   const primary = inNet(net, ws.primary) ? ws.primary : net.mx;
   const spare = inNet(net, ws.spare) && ws.spare !== primary ? ws.spare : null;
