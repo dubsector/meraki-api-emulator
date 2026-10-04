@@ -43,12 +43,14 @@ export const MODELS = {
   MG52: { productType: 'cellularGateway', firmware: 'cellularGateway-26-1-120', ram: 1024, sims: ['sim1', 'sim2'], esim: 'sim2', signalTypes: ['LTE', '5GNSA', '5GSA'] },
   // Campus gateways terminate tunnels from the APs of their cluster's SSIDs.
   CW9800H1: { productType: 'campusGateway', firmware: 'campusGateway-31-1-6', ram: 32768 },
+  // Catalyst 9800 wireless LAN controllers, monitored from the cloud. cores: CPU cores.
+  'C9800-40': { productType: 'wirelessController', firmware: 'wirelessController-17-15-3', ram: 32768, cores: 8 },
 };
 
 export const VMX_SIZES = { small: 'VMX-S', medium: 'VMX-M', large: 'VMX-L', xlarge: 'VMX-XL', 100: 'VMX100' };
 
-export const SERIAL_PREFIX = { appliance: 'Q2PN', switch: 'Q2HP', wireless: 'Q3AC', camera: 'Q2FV', sensor: 'Q3CA', cellularGateway: 'Q2ZY', campusGateway: 'Q5CG' };
-export const DEVICE_OUI = { appliance: 'e0:55:3d', switch: 'e0:cb:bc', wireless: '0c:8d:db', camera: '34:56:fe', sensor: 'c4:8b:a3', cellularGateway: '2c:3f:0b', campusGateway: 'cc:9c:3e' };
+export const SERIAL_PREFIX = { appliance: 'Q2PN', switch: 'Q2HP', wireless: 'Q3AC', camera: 'Q2FV', sensor: 'Q3CA', cellularGateway: 'Q2ZY', campusGateway: 'Q5CG', wirelessController: 'Q5WC' };
+export const DEVICE_OUI = { appliance: 'e0:55:3d', switch: 'e0:cb:bc', wireless: '0c:8d:db', camera: '34:56:fe', sensor: 'c4:8b:a3', cellularGateway: '2c:3f:0b', campusGateway: 'cc:9c:3e', wirelessController: '6c:13:d5' };
 
 // Link profiles: baseline RTT to 8.8.8.8 in ms, and loss/latency behaviour.
 export const ISPS = {
@@ -237,6 +239,13 @@ export const LAB_NETWORKS = [
     campusGateways: [{ model: 'CW9800H1', name: '01' }, { model: 'CW9800H1', name: '02' }],
     cluster: { name: 'Calgary Campus' },
     clients: { laptop: 6, phone: 5, guest: 4 },
+  },
+  {
+    code: 'HFX', name: 'Lab - Halifax', kind: 'office', tz: 'America/Halifax', address: 'Halifax, NS, Canada', lat: 44.6488, lng: -63.5752, tags: ['lab'],
+    // An SSO pair of controllers with Catalyst APs joined to it (sim/wlc.js).
+    controllers: [{ model: 'C9800-40', name: '01' }, { model: 'C9800-40', name: '02' }],
+    catalystAps: ['C9130AXI-A', 'C9130AXI-A', 'C9120AXI-A', 'C9120AXI-A', 'C9136I-A', 'C9115AXI-A'],
+    clients: {},
   },
 ];
 

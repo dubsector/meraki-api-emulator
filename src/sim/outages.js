@@ -20,6 +20,8 @@ export function deviceOutagesOnDay(dev, day) {
       const s = start + unit(k, 1) * DAY;
       out.push([s, s + 120 + unit(k, 2) * 5400]);
     }
+    // Seeded reloads, such as a controller failing over (sim/wlc.js).
+    for (const [s, e] of dev.reloads ?? []) if (s >= start && s < start + DAY) out.push([s, e]);
     // A dormant device never comes back, so only outages that ended before it went dark count.
     return out.filter((o) => !dev.dormant || o[1] < dev.dormantSince).sort((x, y) => x[0] - y[0]);
   });

@@ -45,7 +45,7 @@ const TYPES = [
   ['settings_changed', 'Settings changed', 'platform', 'informational', { page: 'Alerts', label: 'Alert settings', oldValue: 'disabled', newValue: 'enabled' }],
 ];
 export const WEBHOOK_PRODUCTS = ['appliance', 'camera', 'cellularGateway', 'platform', 'sensor', 'sm', 'switch', 'wireless'];
-const PLACEHOLDER_DEVICE = { appliance: ['My appliance', 'MX67'], switch: ['My switch', 'MS120-8LP'], wireless: ['My AP', 'MR34'], camera: ['My camera', 'MV12'], sensor: ['My sensor', 'MT10'], cellularGateway: ['My cellular gateway', 'MG21'], campusGateway: ['My campus gateway', 'CW9800H1'] };
+const PLACEHOLDER_DEVICE = { appliance: ['My appliance', 'MX67'], switch: ['My switch', 'MS120-8LP'], wireless: ['My AP', 'MR34'], camera: ['My camera', 'MV12'], sensor: ['My sensor', 'MT10'], cellularGateway: ['My cellular gateway', 'MG21'], campusGateway: ['My campus gateway', 'CW9800H1'], wirelessController: ['My wireless LAN controller', 'C9800-40'] };
 
 function example([alertTypeId, alertType, productType, alertLevel, alertData]) {
   const at = '2018-02-11T00:00:00.090210Z';
