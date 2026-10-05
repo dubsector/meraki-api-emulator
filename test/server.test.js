@@ -133,7 +133,15 @@ describe('server', () => {
     assert.match(html, /Meraki API Emulator/);
     assert.ok(html.includes(`v${VERSION}</span>`), 'the page shows the package version');
     const health = await sb.get(sb.base.replace('/api/v1', '/healthz'), { key: null });
-    assert.deepEqual(health.body, { status: 'ok' });
+    assert.equal(health.body.status, 'ok');
+    assert.equal(health.body.version, VERSION);
+    assert.ok(health.body.window.requests > 0, 'earlier API calls are counted');
+    assert.ok(health.body.window.p95Ms >= health.body.window.p50Ms);
+    assert.ok(health.body.mostCalled.length > 0 && health.body.mostCalled.length <= 5);
+    assert.equal(health.body.timeline.length, 30);
+    // Buckets sit on 10 s clock boundaries, oldest first, so they don't shift between refreshes.
+    const starts = health.body.timeline.map((b) => Date.parse(b.start));
+    assert.ok(starts.every((t, i) => t % 10000 === 0 && (i === 0 || t - starts[i - 1] === 10000)));
   });
 
   test('Link headers use unquoted rel values and paging covers every item once', async () => {

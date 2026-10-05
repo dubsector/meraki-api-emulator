@@ -20,7 +20,7 @@ cd meraki-api-emulator
 node bin/meraki-api-emulator.js
 ```
 
-Then open <http://localhost:8765> for an overview and a request explorer, or call the API directly:
+Then open <http://localhost:8765> for an overview, live response times and a request explorer, or call the API directly. `/healthz` returns the same response times as JSON.
 
 ```sh
 curl -H 'X-Cisco-Meraki-API-Key: anything' http://localhost:8765/api/v1/organizations

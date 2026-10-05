@@ -8,6 +8,7 @@ import { ApiKeys } from './apikeys.js';
 import { ApiLog } from './apilog.js';
 import { ApiError, badRequest } from './http.js';
 import { landingPage } from './landing.js';
+import { Health } from './health.js';
 import airMarshal from './routes/airmarshal.js';
 import actionBatches, { settleBatches, storeOf } from './routes/actionbatches.js';
 import adaptivePolicy from './routes/adaptivepolicy.js';
@@ -214,6 +215,7 @@ export function createEmulator(options = {}) {
     return deviceLimiters.get(route.op).take(serial);
   };
   const apiLog = new ApiLog();
+  const health = new Health();
   const keys = new ApiKeys();
   // The request log names each key by a random ID for this run, never the key itself.
   const clientIds = new Map();
@@ -264,8 +266,12 @@ export function createEmulator(options = {}) {
 
   // Authenticated calls are answered, then recorded for the apiRequests endpoints.
   async function api(req, res, url) {
+    const started = performance.now();
     const key = authorized(req);
-    if (!key) return send(res, 401, { errors: [AUTH_ERROR] });
+    if (!key) {
+      health.add(null, 401, performance.now() - started);
+      return send(res, 401, { errors: [AUTH_ERROR] });
+    }
     keys.seen(key, clock());
 
     const { entry, params } = match(url.pathname.slice(API_PREFIX.length) || '/');
@@ -287,6 +293,7 @@ export function createEmulator(options = {}) {
       operationId: route ? route.op : null,
       clientId: clientIdOf(key),
     });
+    health.add(route ? route.op : null, status, performance.now() - started);
     return status;
   }
 
@@ -460,12 +467,12 @@ export function createEmulator(options = {}) {
       res.end();
       status = 204;
     } else if (url.pathname === '/' || url.pathname === '/index.html') {
-      const html = landingPage(world, ROUTES, { apiKey: !!opts.apiKey, readOnly: opts.readOnly, now: clock(), version: VERSION });
+      const html = landingPage(world, ROUTES, { apiKey: !!opts.apiKey, readOnly: opts.readOnly, now: clock(), version: VERSION, seed: opts.seed });
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': Buffer.byteLength(html) });
       res.end(req.method === 'HEAD' ? undefined : html);
       status = 200;
     } else if (url.pathname === '/healthz') {
-      status = send(res, 200, { status: 'ok' });
+      status = send(res, 200, health.summary({ version: VERSION, seed: opts.seed, readOnly: !!opts.readOnly }));
     } else if (url.pathname === RESET_PATH) {
       // Throws away every write and starts again from the seed. The request log stays.
       if (!authorized(req)) status = send(res, 401, { errors: [AUTH_ERROR] });
