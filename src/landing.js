@@ -473,7 +473,7 @@ async function loadHealth() {
     $('h-limited').className = 'v' + (w.rateLimited ? ' warn' : '');
     spark(h.timeline);
     $('h-slow').innerHTML = h.mostCalled.length
-      ? h.mostCalled.map((s) => '<tr><td><button type="button" data-op="' + escHtml(s.op) + '">' + escHtml(s.op) + '</button></td><td class="n">' + s.calls + (s.calls === 1 ? ' call' : ' calls') + '</td><td class="n">' + fmtMs(s.avgMs) + ' avg</td></tr>').join('')
+      ? h.mostCalled.map((s) => '<tr><td><button type="button" data-op="' + escHtml(s.op) + '">' + escHtml(s.op) + '</button></td><td class="n">' + fmtMs(s.avgMs) + ' avg</td><td class="n">' + s.calls + (s.calls === 1 ? ' call' : ' calls') + '</td></tr>').join('')
       : '<tr><td class="note">No API calls in the last 5 minutes.</td></tr>';
   } catch {}
 }
