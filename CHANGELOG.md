@@ -2,6 +2,17 @@
 
 Versions follow [semantic versioning](https://semver.org/). While the version starts with `0.`, a new minor version can change responses, IDs or defaults, and a patch version only fixes bugs.
 
+## 0.5.1
+
+A reworked landing page and response times for the API. The emulator still answers 991 operations, and no answer changes.
+
+- The page at `/` has an API health panel: uptime, request rate, p50, p95 and slowest response, 4xx and 5xx counts and rate-limited calls over the last 5 minutes, a p95 chart with request counts per 10 second slot, and the most called operations. It refreshes every 5 seconds.
+- `/healthz` returns the same numbers as JSON. It still answers `200` with `status: "ok"`.
+- Endpoints are grouped by product in collapsible sections, and the `/administered` paths have their own section instead of sitting under Devices. The page is about half the size.
+- The explorer copies the current request as curl, shows response headers and keeps the request in the address bar, so a link reopens it. IDs and counts in the overview load their GET.
+- Request log, change log and reset buttons, and a theme button for light, dark or the system setting.
+- The official Meraki Go SDK runs against the emulator in CI, and the wiki shows how to point it at the emulator.
+
 ## 0.5.0
 
 The emulator now answers 991 operations (530 reads and 461 writes), up from 888. That is every operation in version 1.74.0 of the Meraki OpenAPI spec except the 7 it marks deprecated. [ENDPOINTS.md](ENDPOINTS.md) lists them all.
