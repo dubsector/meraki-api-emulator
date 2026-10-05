@@ -133,7 +133,12 @@ describe('server', () => {
     assert.match(html, /Meraki API Emulator/);
     assert.ok(html.includes(`v${VERSION}</span>`), 'the page shows the package version');
     const health = await sb.get(sb.base.replace('/api/v1', '/healthz'), { key: null });
-    assert.deepEqual(health.body, { status: 'ok' });
+    assert.equal(health.body.status, 'ok');
+    assert.equal(health.body.version, VERSION);
+    assert.ok(health.body.window.requests > 0, 'earlier API calls are counted');
+    assert.ok(health.body.window.p95Ms >= health.body.window.p50Ms);
+    assert.ok(health.body.slowest.length > 0 && health.body.slowest.length <= 5);
+    assert.equal(health.body.timeline.length, 30);
   });
 
   test('Link headers use unquoted rel values and paging covers every item once', async () => {
