@@ -79,17 +79,17 @@ export function landingPage(world, routes, { apiKey, readOnly, now, version, see
 <style>
 :root {
   --bg: #f7f8fa; --panel: #ffffff; --text: #1d2330; --muted: #5d6677; --border: #dde1e8;
-  --accent: #0b7a53; --accent-soft: #e3f3ec; --code: #eef1f5; --bad: #b42318; --warn: #a15c07; --post: #1d4ed8; --put: #a15c07;
+  --accent: #0b7a53; --accent-soft: #e3f3ec; --code: #eef1f5; --bad: #b42318; --warn: #a15c07; --post: #1d4ed8; --put: #a15c07; --bar: #d3d9e2;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #11151c; --panel: #181e27; --text: #e4e8ef; --muted: #98a2b3; --border: #2a3240;
-    --accent: #3ccf95; --accent-soft: #173327; --code: #202835; --bad: #f97066; --warn: #f2b766; --post: #7aa7ff; --put: #f2b766;
+    --accent: #3ccf95; --accent-soft: #173327; --code: #202835; --bad: #f97066; --warn: #f2b766; --post: #7aa7ff; --put: #f2b766; --bar: #3a4558;
   }
 }
 :root[data-theme="dark"] {
   --bg: #11151c; --panel: #181e27; --text: #e4e8ef; --muted: #98a2b3; --border: #2a3240;
-  --accent: #3ccf95; --accent-soft: #173327; --code: #202835; --bad: #f97066; --warn: #f2b766; --post: #7aa7ff; --put: #f2b766;
+  --accent: #3ccf95; --accent-soft: #173327; --code: #202835; --bad: #f97066; --warn: #f2b766; --post: #7aa7ff; --put: #f2b766; --bar: #3a4558;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -124,12 +124,26 @@ button.id:hover, button.id:focus-visible { background: var(--accent-soft); color
 .tile .v.bad { color: var(--bad); }
 .tile .v.warn { color: var(--warn); }
 .health-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 20px; margin-top: 14px; }
-#spark { width: 100%; height: 64px; display: block; }
-#spark .line { fill: none; stroke: var(--accent); stroke-width: 1.5; }
-#spark .area { fill: var(--accent-soft); }
+.chart-col { display: flex; flex-direction: column; }
+.chart { position: relative; flex: 1; min-height: 170px; margin-bottom: 6px; }
+#spark { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: pan-y; }
+#spark .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+#spark .dot { fill: var(--accent); stroke: var(--panel); stroke-width: 1.5; }
+#spark .bar { fill: var(--bar); }
+#spark .grid { stroke: var(--border); stroke-dasharray: 2 3; }
 #spark .base { stroke: var(--border); }
+#spark .axis { fill: var(--muted); font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; font-variant-numeric: tabular-nums; }
+#spark .hover { fill: var(--accent-soft); }
+#spark .empty { fill: var(--muted); font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; }
+.key { display: inline-flex; align-items: center; gap: 5px; margin-left: 10px; font-size: 12px; }
+.key i { display: inline-block; width: 12px; margin-left: 6px; }
+.key .k-line { height: 2px; background: var(--accent); }
+.key .k-bar { height: 9px; background: var(--bar); border-radius: 2px; }
+.tip { position: absolute; top: 4px; pointer-events: none; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12px; white-space: nowrap; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); }
+.tip b { font-weight: 600; }
 .slow { font-size: 13px; }
 .slow td { padding: 4px 6px; }
+.slow td.n { white-space: nowrap; }
 .slow button { all: unset; cursor: pointer; color: var(--accent); }
 .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 20px; align-items: start; }
 details.group { border-bottom: 1px solid var(--border); }
@@ -198,9 +212,9 @@ details.headers summary { cursor: pointer; font-size: 13px; color: var(--muted);
       <div class="tile"><div class="k">Rate limited</div><div class="v" id="h-limited">-</div></div>
     </div>
     <div class="health-grid">
-      <div>
-        <label>p95 response time, last 5 minutes</label>
-        <svg id="spark" viewBox="0 0 300 64" preserveAspectRatio="none" role="img" aria-label="p95 response time over the last 5 minutes"></svg>
+      <div class="chart-col">
+        <label>Last 5 minutes <span class="key"><i class="k-line"></i>p95 response <i class="k-bar"></i>requests</span></label>
+        <div class="chart" id="chart"><svg id="spark" role="img" aria-label="p95 response time and requests over the last 5 minutes"></svg><div class="tip" id="tip" hidden></div></div>
         <p class="note" id="h-note">Counts API calls to <code>/api/v1</code> from any client. <a href="/healthz">/healthz</a> has the same numbers as JSON.</p>
       </div>
       <div>
@@ -449,14 +463,79 @@ const fmtUptime = (s) => {
   const d = Math.floor(s / 86400), h = Math.floor(s / 3600) % 24, m = Math.floor(s / 60) % 60;
   return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + m + 'm' : m ? m + 'm ' + (s % 60) + 's' : s + 's';
 };
-function spark(points) {
-  const max = Math.max(1, ...points.map((p) => p.p95Ms || 0));
-  const step = 300 / Math.max(1, points.length - 1);
-  const xy = points.map((p, i) => (i * step).toFixed(1) + ',' + (62 - ((p.p95Ms || 0) / max) * 56).toFixed(1));
-  $('spark').innerHTML = '<line class="base" x1="0" y1="62.5" x2="300" y2="62.5"/>' +
-    '<polygon class="area" points="0,62 ' + xy.join(' ') + ' 300,62"/><polyline class="line" points="' + xy.join(' ') + '"/>';
-  $('spark').setAttribute('aria-label', 'p95 response time over the last 5 minutes, peak ' + fmtMs(max));
+// p95 line on top and request bars in a strip below, one slot per 10 s.
+// Drawn at the box's pixel size so text stays sharp.
+const SECS = 10;
+let timeline = [];
+let hoverAt = null;
+const niceMax = (v) => { const p = Math.pow(10, Math.floor(Math.log10(v))); return [1, 2, 2.5, 5, 10].map((m) => m * p).find((n) => n >= v); };
+const fmtTick = (ms) => (ms === 0 ? '0' : ms < 1 ? ms.toFixed(2).replace(/0$/, '') + ' ms' : fmtMs(ms));
+const fmtClock = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+function chartGeometry() {
+  const W = $('chart').clientWidth, H = $('chart').clientHeight;
+  const L = 48, R = 40, T = 10, B = 22;
+  const ph = H - T - B, barH = Math.round(ph * 0.26);
+  return { W, H, L, T, pw: W - L - R, ph, barH, lineH: ph - barH - 10, bw: (W - L - R) / Math.max(1, timeline.length) };
 }
+const line = (cls, x1, x2, y) => '<line class="' + cls + '" x1="' + x1 + '" x2="' + x2 + '" y1="' + y + '" y2="' + y + '"/>';
+const label = (x, y, text, anchor) => '<text class="axis" x="' + x + '" y="' + y + '" dy="0.35em" text-anchor="' + (anchor || 'start') + '">' + text + '</text>';
+function spark(points) {
+  timeline = points;
+  const { W, H, L, T, pw, ph, barH, lineH, bw } = chartGeometry();
+  if (W < 80 || H < 60) return;
+  const n = points.length;
+  const msTop = niceMax(Math.max(0.1, ...points.map((p) => p.p95Ms || 0)));
+  const reqTop = Math.max(1, ...points.map((p) => p.requests));
+  const lineBottom = T + lineH, bottom = T + ph;
+  const x = (i) => L + (i + 0.5) * bw;
+  const y = (ms) => lineBottom - (ms / msTop) * lineH;
+  let s = '';
+  if (hoverAt != null && hoverAt < n) s += '<rect class="hover" x="' + (L + hoverAt * bw).toFixed(1) + '" y="' + T + '" width="' + bw.toFixed(1) + '" height="' + ph + '"/>';
+  [0.5, 1].forEach((f) => { s += line('grid', L, L + pw, (lineBottom - f * lineH).toFixed(1)); });
+  [0, 0.5, 1].forEach((f) => { s += label(L - 8, (lineBottom - f * lineH).toFixed(1), fmtTick(msTop * f), 'end'); });
+  s += line('base', L, L + pw, lineBottom + 0.5);
+  // Requests get their own scale, so they never hide the line.
+  s += label(L + pw + 6, bottom - barH, reqTop + ' req');
+  points.forEach((p, i) => {
+    if (!p.requests) return;
+    const h = Math.max(2, (p.requests / reqTop) * barH);
+    s += '<rect class="bar" x="' + (L + i * bw + bw * 0.15).toFixed(1) + '" y="' + (bottom - h).toFixed(1) + '" width="' + (bw * 0.7).toFixed(1) + '" height="' + h.toFixed(1) + '" rx="1.5"/>';
+  });
+  s += line('base', L, L + pw, bottom + 0.5);
+  // Slots with no calls break the line rather than dropping it to zero.
+  let seg = [];
+  const flush = () => { if (seg.length > 1) s += '<polyline class="line" points="' + seg.join(' ') + '"/>'; seg = []; };
+  points.forEach((p, i) => (p.p95Ms == null ? flush() : seg.push(x(i).toFixed(1) + ',' + y(p.p95Ms).toFixed(1))));
+  flush();
+  points.forEach((p, i) => { if (p.p95Ms != null) s += '<circle class="dot" cx="' + x(i).toFixed(1) + '" cy="' + y(p.p95Ms).toFixed(1) + '" r="3"/>'; });
+  const mins = (n * SECS) / 60;
+  for (let k = mins; k >= 0; k--) s += label((L + pw * (1 - k / mins)).toFixed(1), bottom + 13, k ? k + 'm' : 'now', k === mins ? 'start' : k ? 'middle' : 'end');
+  if (!points.some((p) => p.requests)) s += '<text class="empty" x="' + (L + pw / 2) + '" y="' + (T + lineH / 2) + '" text-anchor="middle">No API calls in the last 5 minutes</text>';
+  $('spark').setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  $('spark').innerHTML = s;
+  const total = points.reduce((a, p) => a + p.requests, 0);
+  $('spark').setAttribute('aria-label', total + ' requests in the last 5 minutes, p95 response time peaking at ' + fmtMs(Math.max(0, ...points.map((p) => p.p95Ms || 0))));
+  showTip();
+}
+function showTip() {
+  const tip = $('tip');
+  const p = timeline[hoverAt];
+  if (!p) { tip.hidden = true; return; }
+  const when = fmtClock(p.start) + (hoverAt === timeline.length - 1 ? ', so far' : '');
+  tip.innerHTML = escHtml(when) + ': <b>' + p.requests + (p.requests === 1 ? ' request' : ' requests') + '</b>' + (p.p95Ms == null ? '' : ', p95 <b>' + fmtMs(p.p95Ms) + '</b>');
+  tip.hidden = false;
+  const { W, L, bw } = chartGeometry();
+  const cx = L + (hoverAt + 0.5) * bw;
+  tip.style.left = Math.max(0, Math.min(W - tip.offsetWidth, cx - tip.offsetWidth / 2)) + 'px';
+}
+$('spark').addEventListener('pointermove', (e) => {
+  const { L, bw } = chartGeometry();
+  const i = Math.floor((e.clientX - $('spark').getBoundingClientRect().left - L) / bw);
+  const next = i >= 0 && i < timeline.length ? i : null;
+  if (next !== hoverAt) { hoverAt = next; spark(timeline); }
+});
+$('spark').addEventListener('pointerleave', () => { hoverAt = null; spark(timeline); });
+if (window.ResizeObserver) new ResizeObserver(() => spark(timeline)).observe($('chart'));
 async function loadHealth() {
   if (document.hidden) return;
   try {

@@ -32,10 +32,20 @@ export class Health {
       .map(([op, ms]) => ({ op, calls: ms.length, avgMs: round(ms.reduce((a, b) => a + b, 0) / ms.length), maxMs: round(Math.max(...ms)) }))
       .sort((a, b) => b.calls - a.calls || b.avgMs - a.avgMs)
       .slice(0, 5);
-    // Oldest bucket first, so the last point is the current one.
-    const buckets = Array.from({ length: WINDOW / BUCKET }, () => []);
-    for (const e of recent) buckets[Math.max(0, buckets.length - 1 - Math.floor((now - e.t) / (BUCKET * 1000)))].push(e.ms);
-    const timeline = buckets.map((ms) => ({ requests: ms.length, p95Ms: round(pct(ms.sort((a, b) => a - b), 0.95)) }));
+    // Buckets sit on fixed clock boundaries, so a call stays in its bucket as time moves on.
+    // Oldest bucket first, so the last one is the current, partly filled one.
+    const n = WINDOW / BUCKET;
+    const last = Math.floor(now / (BUCKET * 1000));
+    const buckets = Array.from({ length: n }, () => []);
+    for (const e of recent) {
+      const i = n - 1 - (last - Math.floor(e.t / (BUCKET * 1000)));
+      if (i >= 0) buckets[i].push(e.ms);
+    }
+    const timeline = buckets.map((ms, i) => ({
+      start: new Date((last - (n - 1 - i)) * BUCKET * 1000).toISOString(),
+      requests: ms.length,
+      p95Ms: round(pct(ms.sort((a, b) => a - b), 0.95)),
+    }));
     return {
       status: 'ok',
       ...info,

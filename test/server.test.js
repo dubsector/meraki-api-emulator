@@ -139,6 +139,9 @@ describe('server', () => {
     assert.ok(health.body.window.p95Ms >= health.body.window.p50Ms);
     assert.ok(health.body.mostCalled.length > 0 && health.body.mostCalled.length <= 5);
     assert.equal(health.body.timeline.length, 30);
+    // Buckets sit on 10 s clock boundaries, oldest first, so they don't shift between refreshes.
+    const starts = health.body.timeline.map((b) => Date.parse(b.start));
+    assert.ok(starts.every((t, i) => t % 10000 === 0 && (i === 0 || t - starts[i - 1] === 10000)));
   });
 
   test('Link headers use unquoted rel values and paging covers every item once', async () => {
