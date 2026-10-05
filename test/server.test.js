@@ -137,7 +137,7 @@ describe('server', () => {
     assert.equal(health.body.version, VERSION);
     assert.ok(health.body.window.requests > 0, 'earlier API calls are counted');
     assert.ok(health.body.window.p95Ms >= health.body.window.p50Ms);
-    assert.ok(health.body.slowest.length > 0 && health.body.slowest.length <= 5);
+    assert.ok(health.body.mostCalled.length > 0 && health.body.mostCalled.length <= 5);
     assert.equal(health.body.timeline.length, 30);
   });
 

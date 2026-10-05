@@ -28,9 +28,9 @@ export class Health {
     const count = (test) => recent.filter((e) => test(e.status)).length;
     const byOp = new Map();
     for (const e of recent) if (e.op) (byOp.get(e.op) ?? byOp.set(e.op, []).get(e.op)).push(e.ms);
-    const slowest = [...byOp]
+    const mostCalled = [...byOp]
       .map(([op, ms]) => ({ op, calls: ms.length, avgMs: round(ms.reduce((a, b) => a + b, 0) / ms.length), maxMs: round(Math.max(...ms)) }))
-      .sort((a, b) => b.avgMs - a.avgMs)
+      .sort((a, b) => b.calls - a.calls || b.avgMs - a.avgMs)
       .slice(0, 5);
     // Oldest bucket first, so the last point is the current one.
     const buckets = Array.from({ length: WINDOW / BUCKET }, () => []);
@@ -52,7 +52,7 @@ export class Health {
         serverErrors: count((s) => s >= 500),
         rateLimited: count((s) => s === 429),
       },
-      slowest,
+      mostCalled,
       timeline,
     };
   }

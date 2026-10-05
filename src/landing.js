@@ -204,7 +204,7 @@ details.headers summary { cursor: pointer; font-size: 13px; color: var(--muted);
         <p class="note" id="h-note">Counts API calls to <code>/api/v1</code> from any client. <a href="/healthz">/healthz</a> has the same numbers as JSON.</p>
       </div>
       <div>
-        <label>Slowest operations</label>
+        <label>Most called operations</label>
         <table class="slow"><tbody id="h-slow"><tr><td class="note">No API calls in the last 5 minutes.</td></tr></tbody></table>
       </div>
     </div>
@@ -472,8 +472,8 @@ async function loadHealth() {
     $('h-limited').textContent = w.rateLimited;
     $('h-limited').className = 'v' + (w.rateLimited ? ' warn' : '');
     spark(h.timeline);
-    $('h-slow').innerHTML = h.slowest.length
-      ? h.slowest.map((s) => '<tr><td><button type="button" data-op="' + escHtml(s.op) + '">' + escHtml(s.op) + '</button></td><td class="n">' + fmtMs(s.avgMs) + ' avg</td><td class="n">' + s.calls + (s.calls === 1 ? ' call' : ' calls') + '</td></tr>').join('')
+    $('h-slow').innerHTML = h.mostCalled.length
+      ? h.mostCalled.map((s) => '<tr><td><button type="button" data-op="' + escHtml(s.op) + '">' + escHtml(s.op) + '</button></td><td class="n">' + s.calls + (s.calls === 1 ? ' call' : ' calls') + '</td><td class="n">' + fmtMs(s.avgMs) + ' avg</td></tr>').join('')
       : '<tr><td class="note">No API calls in the last 5 minutes.</td></tr>';
   } catch {}
 }
