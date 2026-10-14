@@ -18,9 +18,9 @@ httpx==0.28.1 \
 idna==3.20 \
     --hash=sha256:a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44 \
     --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
-meraki==4.5.0 \
-    --hash=sha256:a1dfe36cb1dfce901adbbfd0574feb7536bd669efaadc2890f18d2d909d65319 \
-    --hash=sha256:c59fecff326e156c1ba6a19d0be597d4dcd405a9db20e32c0a722c2ab809ec5e
+meraki==4.6.0 \
+    --hash=sha256:3632592c8ca7b4abc884cf275a695a35097d667a5dc72c3197171bf859e2f795 \
+    --hash=sha256:cedc042f70241c7ef627907b9bf43e67a9c7035d91e5c7e23fd78eecfc3d344a
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
     --hash=sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5
