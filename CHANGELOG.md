@@ -2,6 +2,13 @@
 
 Versions follow [semantic versioning](https://semver.org/). While the version starts with `0.`, a new minor version can change responses, IDs or defaults, and a patch version only fixes bugs.
 
+## 0.5.2
+
+A rebuilt Docker image with current Alpine packages. The emulator still answers 991 operations, and no answer changes.
+
+- The image is built on Alpine 3.24.4 and picks up the fixes for musl (CVE-2026-107891) and zlib (CVE-2026-85091), which the weekly scan flagged in the 0.5.1 image.
+- The build upgrades the base packages, so a later Alpine fix doesn't wait for a new Node image.
+
 ## 0.5.1
 
 A reworked landing page and response times for the API. The emulator still answers 991 operations, and no answer changes.
